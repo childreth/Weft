@@ -2,9 +2,7 @@ import { createElement, memo, useLayoutEffect, useRef, type CSSProperties } from
 import { VOID_TAGS, type SceneNode } from '@gridforge/core';
 import { doc, history, run, useChildren, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
-
-/** Live DOM element for each node id, used for hit-testing and overlays. */
-export const nodeElements = new Map<string, HTMLElement>();
+import { nodeElements } from './elements';
 
 function registerRef(id: string) {
   return (el: HTMLElement | null) => {

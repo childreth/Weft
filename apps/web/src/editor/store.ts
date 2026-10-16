@@ -8,6 +8,24 @@ export interface Camera {
   zoom: number;
 }
 
+export type ConnectionStatus = 'local' | 'connecting' | 'connected' | 'disconnected';
+
+export interface Collaborator {
+  clientId: number;
+  kind: 'human' | 'agent';
+  name: string;
+  color: string;
+}
+
+/** The nodes an agent touched in its latest tool call, highlighted briefly. */
+export interface AgentActivity {
+  seq: number;
+  tool: string;
+  ids: string[];
+  name: string;
+  color: string;
+}
+
 export const MIN_ZOOM = 0.05;
 export const MAX_ZOOM = 32;
 
@@ -19,6 +37,9 @@ interface EditorState {
   editingTextId: string | null;
   spaceHeld: boolean;
   notice: string | null;
+  connection: ConnectionStatus;
+  collaborators: Collaborator[];
+  agentActivity: AgentActivity | null;
   setTool(tool: Tool): void;
   setCamera(camera: Camera): void;
   /** Zoom by `factor` keeping the screen point (px, py) fixed. */
@@ -28,6 +49,9 @@ interface EditorState {
   setEditingText(id: string | null): void;
   setSpaceHeld(held: boolean): void;
   setNotice(notice: string | null): void;
+  setConnection(connection: ConnectionStatus): void;
+  setCollaborators(collaborators: Collaborator[]): void;
+  setAgentActivity(activity: AgentActivity | null): void;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -41,6 +65,9 @@ export const useEditor = create<EditorState>()((set, get) => ({
   editingTextId: null,
   spaceHeld: false,
   notice: null,
+  connection: 'local',
+  collaborators: [],
+  agentActivity: null,
   setTool: (tool) => set({ tool }),
   setCamera: (camera) => set({ camera }),
   zoomAt: (px, py, factor) => {
@@ -54,4 +81,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   setEditingText: (editingTextId) => set({ editingTextId }),
   setSpaceHeld: (spaceHeld) => set({ spaceHeld }),
   setNotice: (notice) => set({ notice }),
+  setConnection: (connection) => set({ connection }),
+  setCollaborators: (collaborators) => set({ collaborators }),
+  setAgentActivity: (agentActivity) => set({ agentActivity }),
 }));

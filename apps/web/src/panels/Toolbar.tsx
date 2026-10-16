@@ -9,10 +9,20 @@ const TOOLS: Array<{ tool: Tool; label: string; key: string }> = [
   { tool: 'text', label: 'Text', key: 'T' },
 ];
 
+const STATUS_LABEL = {
+  local: 'Local only',
+  connecting: 'Connecting…',
+  connected: 'Live',
+  disconnected: 'Offline',
+} as const;
+
 export function Toolbar() {
   const tool = useEditor((s) => s.tool);
   const zoom = useEditor((s) => s.camera.zoom);
   const notice = useEditor((s) => s.notice);
+  const connection = useEditor((s) => s.connection);
+  const collaborators = useEditor((s) => s.collaborators);
+  const activity = useEditor((s) => s.agentActivity);
   // Re-render when the document changes so undo/redo enablement stays current.
   useSyncExternalStore(scene.subscribe, () => scene.nodes);
 
@@ -40,12 +50,28 @@ export function Toolbar() {
           Redo
         </button>
       </div>
+      {activity && (
+        <span className="gf-activity" role="status" data-testid="agent-activity">
+          {activity.name} · {activity.tool.replace(/_/g, ' ')} · {activity.ids.length} node{activity.ids.length === 1 ? '' : 's'}
+        </span>
+      )}
       {notice && (
         <span className="gf-notice" role="status">
           {notice}
         </span>
       )}
       <div className="gf-tool-group gf-push-right">
+        {collaborators.map((c) => (
+          <span key={c.clientId} className="gf-avatar" style={{ background: c.color }} title={`${c.name} (${c.kind})`}>
+            {c.kind === 'agent' ? 'AI' : c.name.charAt(0)}
+          </span>
+        ))}
+        <span className="gf-status" data-status={connection} data-testid="connection" title={STATUS_LABEL[connection]}>
+          <span className="gf-status-dot" />
+          {STATUS_LABEL[connection]}
+        </span>
+      </div>
+      <div className="gf-tool-group">
         <button className="gf-tool" onClick={() => zoomToFit()} title="Zoom to fit (⇧1)">
           Fit
         </button>

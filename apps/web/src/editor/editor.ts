@@ -16,11 +16,22 @@ export const history = new History(doc);
 export const scene = new SceneStore(doc);
 export const { useNode, useChildren } = makeSceneHooks(scene);
 
+/**
+ * - server (default): synced with the local GridForge server, which owns
+ *   seeding and persistence and hosts the MCP bridge. See connection.ts.
+ * - offline (?offline): browser-only, persisted to IndexedDB.
+ * - ephemeral (?ephemeral): fresh in-memory seed; used by tests.
+ */
+export type DocumentMode = 'server' | 'offline' | 'ephemeral';
+
 const params = new URLSearchParams(location.search);
-if (params.has('ephemeral')) {
+export const mode: DocumentMode = params.has('ephemeral') ? 'ephemeral' : params.has('offline') ? 'offline' : 'server';
+export const docName = params.get('doc') ?? 'default';
+
+if (mode === 'ephemeral') {
   seedLandingPage(doc);
-} else {
-  const persistence = new IndexeddbPersistence(`gridforge:${params.get('doc') ?? 'default'}`, doc.ydoc);
+} else if (mode === 'offline') {
+  const persistence = new IndexeddbPersistence(`gridforge:${docName}`, doc.ydoc);
   persistence.once('synced', () => {
     if (doc.nodes.size === 0) seedLandingPage(doc);
   });

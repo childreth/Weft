@@ -216,3 +216,48 @@ body {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* Agent activity + presence */
+.gf-box-agent {
+  box-shadow: 0 0 0 2px var(--agent-color), 0 0 0 6px color-mix(in srgb, var(--agent-color) 25%, transparent);
+  animation: gf-agent-fade 2.4s ease-out forwards;
+}
+.gf-agent-tag {
+  position: absolute;
+  right: -2px;
+  bottom: 100%;
+  margin-bottom: 4px;
+  background: var(--agent-color);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+@keyframes gf-agent-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.gf-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ui-text-muted);
+  white-space: nowrap;
+}
+.gf-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ui-text-muted); }
+.gf-status[data-status='connected'] .gf-status-dot { background: #34d399; }
+.gf-status[data-status='connecting'] .gf-status-dot { background: var(--ui-warn); }
+.gf-status[data-status='disconnected'] .gf-status-dot { background: #f87171; }
+.gf-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+}
+.gf-activity { color: #c4b5fd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -1,7 +1,7 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { scene } from '../editor/editor';
 import { useEditor } from '../editor/store';
-import { nodeElements } from './NodeView';
+import { nodeElements } from './elements';
 
 export interface Box {
   x: number;
@@ -21,6 +21,7 @@ function handlePosition(box: Box, h: Handle): { left: number; top: number } {
 
 const sameBox = (a: Box | null, b: Box | null) =>
   a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+const sameBoxes = (a: Box[], b: Box[]) => a.length === b.length && a.every((box, i) => sameBox(box, b[i]!));
 
 interface Props {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -33,38 +34,51 @@ export function SelectionOverlay({ containerRef, draft }: Props) {
   const selection = useEditor((s) => s.selection);
   const hoveredId = useEditor((s) => s.hoveredId);
   const zoom = useEditor((s) => s.camera.zoom);
-  const [boxes, setBoxes] = useState<{ selected: Box[]; hover: Box | null }>({ selected: [], hover: null });
+  const activity = useEditor((s) => s.agentActivity);
+  const [boxes, setBoxes] = useState<{ selected: Box[]; hover: Box | null; agent: Box[] }>({
+    selected: [],
+    hover: null,
+    agent: [],
+  });
 
-  // Layout can change from any source (text reflow, agent edits, resizes), so
-  // measure live DOM every frame rather than tracking every cause.
-  useEffect(() => {
-    let raf = 0;
-    let last = boxes;
+  const lastRef = useRef(boxes);
+  const measureAll = () => {
+    const container = containerRef.current;
+    if (!container) return;
+    const c = container.getBoundingClientRect();
     const measure = (id: string | null): Box | null => {
       const el = id ? nodeElements.get(id) : undefined;
-      const container = containerRef.current;
-      if (!el || !container) return null;
+      if (!el) return null;
       const r = el.getBoundingClientRect();
-      const c = container.getBoundingClientRect();
       return { x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height };
     };
+    const selected = selection.map(measure).filter((b): b is Box => b !== null);
+    const hover = hoveredId && !selection.includes(hoveredId) ? measure(hoveredId) : null;
+    const agent = (activity?.ids ?? []).map(measure).filter((b): b is Box => b !== null);
+    const last = lastRef.current;
+    if (!sameBoxes(selected, last.selected) || !sameBox(hover, last.hover) || !sameBoxes(agent, last.agent)) {
+      lastRef.current = { selected, hover, agent };
+      setBoxes(lastRef.current);
+    }
+  };
+  const measureRef = useRef(measureAll);
+  measureRef.current = measureAll;
+
+  // The canvas re-renders this overlay on every camera change; measuring in a
+  // layout effect keeps chrome in lockstep with the viewport (no 1-frame lag).
+  useLayoutEffect(() => measureRef.current());
+
+  // Layout can also change without a render here (text reflow, remote edits,
+  // font loading), so keep sampling every frame.
+  useEffect(() => {
+    let raf = 0;
     const tick = () => {
-      const selected = selection.map(measure).filter((b): b is Box => b !== null);
-      const hover = hoveredId && !selection.includes(hoveredId) ? measure(hoveredId) : null;
-      const changed =
-        selected.length !== last.selected.length ||
-        selected.some((b, i) => !sameBox(b, last.selected[i]!)) ||
-        !sameBox(hover, last.hover);
-      if (changed) {
-        last = { selected, hover };
-        setBoxes(last);
-      }
+      measureRef.current();
       raf = requestAnimationFrame(tick);
     };
-    tick();
+    raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, hoveredId, containerRef]);
+  }, []);
 
   const single = selection.length === 1 ? scene.nodes.get(selection[0]!) : undefined;
   const singleBox = boxes.selected.length === 1 ? boxes.selected[0] : undefined;
@@ -72,6 +86,17 @@ export function SelectionOverlay({ containerRef, draft }: Props) {
 
   return (
     <div className="gf-overlay">
+      {activity &&
+        boxes.agent.map((b, i) => (
+          <div
+            key={`${activity.seq}-${i}`}
+            className="gf-box gf-box-agent"
+            data-testid="agent-highlight"
+            style={{ ...boxStyle(b), ['--agent-color' as string]: activity.color }}
+          >
+            {i === 0 && <span className="gf-agent-tag">{activity.name}</span>}
+          </div>
+        ))}
       {boxes.hover && <div className="gf-box gf-box-hover" style={boxStyle(boxes.hover)} />}
       {boxes.selected.map((b, i) => (
         <div key={i} className="gf-box gf-box-selected" style={boxStyle(b)} />
