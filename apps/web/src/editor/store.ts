@@ -1,0 +1,57 @@
+import { create } from 'zustand';
+
+export type Tool = 'select' | 'frame' | 'text';
+
+export interface Camera {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export const MIN_ZOOM = 0.05;
+export const MAX_ZOOM = 32;
+
+interface EditorState {
+  tool: Tool;
+  camera: Camera;
+  selection: string[];
+  hoveredId: string | null;
+  editingTextId: string | null;
+  spaceHeld: boolean;
+  notice: string | null;
+  setTool(tool: Tool): void;
+  setCamera(camera: Camera): void;
+  /** Zoom by `factor` keeping the screen point (px, py) fixed. */
+  zoomAt(px: number, py: number, factor: number): void;
+  select(ids: string[]): void;
+  setHovered(id: string | null): void;
+  setEditingText(id: string | null): void;
+  setSpaceHeld(held: boolean): void;
+  setNotice(notice: string | null): void;
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Local, per-viewer UI state. Document state lives in the GridDocument. */
+export const useEditor = create<EditorState>()((set, get) => ({
+  tool: 'select',
+  camera: { x: 80, y: 80, zoom: 0.6 },
+  selection: [],
+  hoveredId: null,
+  editingTextId: null,
+  spaceHeld: false,
+  notice: null,
+  setTool: (tool) => set({ tool }),
+  setCamera: (camera) => set({ camera }),
+  zoomAt: (px, py, factor) => {
+    const c = get().camera;
+    const zoom = clamp(c.zoom * factor, MIN_ZOOM, MAX_ZOOM);
+    const k = zoom / c.zoom;
+    set({ camera: { zoom, x: px - (px - c.x) * k, y: py - (py - c.y) * k } });
+  },
+  select: (selection) => set({ selection }),
+  setHovered: (hoveredId) => set({ hoveredId }),
+  setEditingText: (editingTextId) => set({ editingTextId }),
+  setSpaceHeld: (spaceHeld) => set({ spaceHeld }),
+  setNotice: (notice) => set({ notice }),
+}));

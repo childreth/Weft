@@ -1,0 +1,28 @@
+{
+  "name": "@gridforge/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p .",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@gridforge/core": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "y-indexeddb": "^9.0.12",
+    "yjs": "^13.6.33",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
+}
