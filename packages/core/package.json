@@ -1,5 +1,5 @@
 {
-  "name": "@gridforge/core",
+  "name": "@weft/core",
   "version": "0.0.0",
   "private": true,
   "type": "module",

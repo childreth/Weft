@@ -52,7 +52,7 @@ export interface NodePatch {
 }
 
 export interface Snapshot {
-  format: 'gridforge';
+  format: 'weft';
   version: 1;
   nodes: SceneNode[];
 }
@@ -330,11 +330,12 @@ export class GridDocument {
   }
 
   toSnapshot(): Snapshot {
-    return { format: 'gridforge', version: 1, nodes: sortSiblings(this.getNodes()) };
+    return { format: 'weft', version: 1, nodes: sortSiblings(this.getNodes()) };
   }
 
   loadSnapshot(snapshot: Snapshot, origin: Origin = ORIGIN_LOCAL): void {
-    if (snapshot.format !== 'gridforge' || snapshot.version !== 1) throw new GridError('Unsupported snapshot');
+    // 'gridforge' is the pre-rename format tag; still accepted on load.
+    if ((snapshot.format as string) !== 'weft' && (snapshot.format as string) !== 'gridforge' || snapshot.version !== 1) throw new GridError('Unsupported snapshot');
     this.transact(() => {
       this.nodes.clear();
       const byParent = new Map<string | null, SceneNode[]>();

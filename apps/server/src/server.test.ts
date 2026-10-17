@@ -6,12 +6,12 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { GridDocument } from '@gridforge/core';
+import { GridDocument } from '@weft/core';
 import { startGridServer, type GridServer } from './server';
 
 let server: GridServer;
 let client: Client;
-const dataDir = mkdtempSync(join(tmpdir(), 'gridforge-test-'));
+const dataDir = mkdtempSync(join(tmpdir(), 'weft-test-'));
 
 async function call<T = any>(name: string, args: Record<string, unknown> = {}): Promise<{ data: T; isError: boolean; text: string }> {
   const res = (await client.callTool({ name, arguments: args })) as { content: Array<{ text: string }>; isError?: boolean };
@@ -143,7 +143,7 @@ describe('MCP tools', () => {
   it('reports a helpful error when no editor is open for layout', async () => {
     const res = await call('get_layout', { doc: 'nolayout' });
     expect(res.isError).toBe(true);
-    expect(res.text).toMatch(/No GridForge editor is open/);
+    expect(res.text).toMatch(/No Weft editor is open/);
   });
 });
 
@@ -182,8 +182,8 @@ describe('sync relay', () => {
   it('persists documents as CRDT state and a JSON snapshot', async () => {
     const room = server.rooms.get('persist');
     room.flush();
-    const snapshot = JSON.parse(readFileSync(join(dataDir, 'persist.gridforge.json'), 'utf8'));
-    expect(snapshot).toMatchObject({ format: 'gridforge', version: 1 });
+    const snapshot = JSON.parse(readFileSync(join(dataDir, 'persist.weft.json'), 'utf8'));
+    expect(snapshot).toMatchObject({ format: 'weft', version: 1 });
     expect(snapshot.nodes.length).toBe(room.doc.nodes.size);
   });
 

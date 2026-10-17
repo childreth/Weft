@@ -5,7 +5,7 @@ import {
   DEFAULT_TEXT_STYLES,
   VOID_TAGS,
   type ArtboardFrame,
-} from '@gridforge/core';
+} from '@weft/core';
 import { doc, history, run, scene, useChildren } from '../editor/editor';
 import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';

@@ -24,7 +24,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
     const header = frame(page, 'header', 'Header', {
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     });
-    text(header, 'p', 'GridForge', { fontWeight: 'var(--font-weight-bold)', fontSize: 'var(--font-size-xl)' });
+    text(header, 'p', 'Weft', { fontWeight: 'var(--font-weight-bold)', fontSize: 'var(--font-size-xl)' });
     const nav = frame(header, 'nav', 'Nav', { display: 'flex', gap: 'var(--space-6)' });
     for (const label of ['Product', 'Docs', 'Pricing']) {
       text(nav, 'a', label, { color: 'var(--color-text-muted)' });

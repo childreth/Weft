@@ -1,5 +1,5 @@
 {
-  "name": "@gridforge/server",
+  "name": "@weft/server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@gridforge/core": "workspace:*",
+    "@weft/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "lib0": "^0.2.119",
     "ws": "^8.22.0",

@@ -7,7 +7,7 @@ import {
   seedLandingPage,
   type CreateNodeInput,
   type NodePatch,
-} from '@gridforge/core';
+} from '@weft/core';
 import { SceneStore, makeSceneHooks } from './scene';
 import { useEditor } from './store';
 
@@ -17,7 +17,7 @@ export const scene = new SceneStore(doc);
 export const { useNode, useChildren } = makeSceneHooks(scene);
 
 /**
- * - server (default): synced with the local GridForge server, which owns
+ * - server (default): synced with the local Weft server, which owns
  *   seeding and persistence and hosts the MCP bridge. See connection.ts.
  * - offline (?offline): browser-only, persisted to IndexedDB.
  * - ephemeral (?ephemeral): fresh in-memory seed; used by tests.
@@ -31,7 +31,7 @@ export const docName = params.get('doc') ?? 'default';
 if (mode === 'ephemeral') {
   seedLandingPage(doc);
 } else if (mode === 'offline') {
-  const persistence = new IndexeddbPersistence(`gridforge:${docName}`, doc.ydoc);
+  const persistence = new IndexeddbPersistence(`weft:${docName}`, doc.ydoc);
   persistence.once('synced', () => {
     if (doc.nodes.size === 0) seedLandingPage(doc);
   });
@@ -78,7 +78,7 @@ export const agentApi = {
 
 declare global {
   interface Window {
-    gridforge: {
+    weft: {
       doc: GridDocument;
       history: History;
       scene: SceneStore;
@@ -88,4 +88,4 @@ declare global {
   }
 }
 
-window.gridforge = { doc, history, scene, editor: useEditor, agent: agentApi };
+window.weft = { doc, history, scene, editor: useEditor, agent: agentApi };

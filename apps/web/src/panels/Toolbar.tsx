@@ -28,7 +28,7 @@ export function Toolbar() {
 
   return (
     <header className="gf-toolbar">
-      <span className="gf-brand">GridForge</span>
+      <span className="gf-brand">Weft</span>
       <div className="gf-tool-group" role="toolbar" aria-label="Tools">
         {TOOLS.map((t) => (
           <button

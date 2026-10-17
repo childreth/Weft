@@ -20,7 +20,7 @@ async function call(name: string, args: Record<string, unknown>) {
 async function openLive(page: Page, doc: string) {
   await page.goto(`/?doc=${doc}`);
   await expect(page.getByTestId('connection')).toHaveText('Live');
-  await page.waitForFunction(() => window.gridforge.scene.nodes.size > 0);
+  await page.waitForFunction(() => window.weft.scene.nodes.size > 0);
 }
 
 test('agent edits stream onto the canvas with a highlight', async ({ page }, info) => {
@@ -56,7 +56,7 @@ test('agent edits stream onto the canvas with a highlight', async ({ page }, inf
 
   // The agent can point the user at its work.
   await call('select_nodes', { doc, ids: [created[0].id] });
-  await expect.poll(() => page.evaluate(() => window.gridforge.editor.getState().selection)).toEqual([created[0].id]);
+  await expect.poll(() => page.evaluate(() => window.weft.editor.getState().selection)).toEqual([created[0].id]);
 
   // Agent undo reverts only the agent's change.
   await call('undo_agent_change', { doc });

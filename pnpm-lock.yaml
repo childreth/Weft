@@ -10,7 +10,7 @@ importers:
 
   apps/server:
     dependencies:
-      '@gridforge/core':
+      '@weft/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@modelcontextprotocol/sdk':
@@ -53,7 +53,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@gridforge/core':
+      '@weft/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@modelcontextprotocol/sdk':

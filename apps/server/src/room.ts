@@ -6,7 +6,7 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import type { WebSocket } from 'ws';
-import { GridDocument, ORIGIN_AGENT, seedLandingPage } from '@gridforge/core';
+import { GridDocument, ORIGIN_AGENT, seedLandingPage } from '@weft/core';
 
 // y-websocket wire protocol message types.
 const MESSAGE_SYNC = 0;
@@ -195,7 +195,7 @@ export class Room {
   callEditor<T>(method: string, params: unknown): Promise<T> {
     const ws = [...this.rpcClients].reverse().find((c) => c.readyState === c.OPEN);
     if (!ws) {
-      return Promise.reject(new Error(`No GridForge editor is open for document "${this.name}". Ask the user to open it.`));
+      return Promise.reject(new Error(`No Weft editor is open for document "${this.name}". Ask the user to open it.`));
     }
     const id = ++this.rpcSeq;
     return new Promise<T>((resolve, reject) => {
@@ -223,7 +223,7 @@ export class Room {
 
   private get files() {
     return this.dataDir
-      ? { ydoc: join(this.dataDir, `${this.name}.ydoc`), json: join(this.dataDir, `${this.name}.gridforge.json`) }
+      ? { ydoc: join(this.dataDir, `${this.name}.ydoc`), json: join(this.dataDir, `${this.name}.weft.json`) }
       : null;
   }
 

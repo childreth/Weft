@@ -5,7 +5,7 @@ import { useEditor, type AgentActivity, type Collaborator } from './store';
 import { zoomToNodes } from './viewport';
 import { nodeElements } from '../canvas/elements';
 
-export const SERVER_URL: string = import.meta.env.VITE_GRIDFORGE_SERVER ?? 'ws://127.0.0.1:4510';
+export const SERVER_URL: string = import.meta.env.VITE_WEFT_SERVER ?? 'ws://127.0.0.1:4510';
 
 const AGENT_HIGHLIGHT_MS = 2400;
 const LAYOUT_LIMIT = 400;
@@ -18,7 +18,7 @@ interface PresenceState {
   activity?: { seq: number; tool: string; ids: string[] } | null;
 }
 
-/** Connects the document to the GridForge server (sync, presence, agent RPC). */
+/** Connects the document to the Weft server (sync, presence, agent RPC). */
 export function startConnection(): () => void {
   const editor = useEditor.getState();
   if (mode !== 'server') {
@@ -27,7 +27,7 @@ export function startConnection(): () => void {
   }
 
   // Local cache so the document opens instantly and survives server restarts.
-  const cache = new IndexeddbPersistence(`gridforge:server:${docName}`, doc.ydoc);
+  const cache = new IndexeddbPersistence(`weft:server:${docName}`, doc.ydoc);
   const provider = new WebsocketProvider(SERVER_URL, docName, doc.ydoc);
   const { awareness } = provider;
 

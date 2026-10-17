@@ -12,10 +12,10 @@ import {
   type SceneTree,
   type SemanticTag,
   type StyleMap,
-} from '@gridforge/core';
+} from '@weft/core';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
 
-export const SERVER_INSTRUCTIONS = `GridForge is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.
+export const SERVER_INSTRUCTIONS = `Weft is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.
 
 Model:
 - Top-level nodes are artboards (type "frame" with a canvas "frame" {x, y, width, height}). Everything inside is laid out by CSS (flex/grid), not absolute coordinates.
@@ -158,7 +158,7 @@ interface LayoutBox {
 }
 
 export function createMcpServer(rooms: RoomRegistry): McpServer {
-  const server = new McpServer({ name: 'gridforge', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
+  const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
 
   server.registerTool(
     'get_canvas',

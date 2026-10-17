@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { changedNodeIds, readNode, sortSiblings, type GridDocument, type SceneNode } from '@gridforge/core';
+import { changedNodeIds, readNode, sortSiblings, type GridDocument, type SceneNode } from '@weft/core';
 
 const ROOT_KEY = '\u0000root';
 const EMPTY: readonly string[] = [];

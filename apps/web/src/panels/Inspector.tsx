@@ -9,7 +9,7 @@ import {
   type ArtboardFrame,
   type SemanticTag,
   type StyleProp,
-} from '@gridforge/core';
+} from '@weft/core';
 import { doc, run, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { CommitInput, Row, Section } from './controls';

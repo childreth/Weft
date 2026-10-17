@@ -1,5 +1,5 @@
 import { createElement, memo, useLayoutEffect, useRef, type CSSProperties } from 'react';
-import { VOID_TAGS, type SceneNode } from '@gridforge/core';
+import { VOID_TAGS, type SceneNode } from '@weft/core';
 import { doc, history, run, useChildren, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { nodeElements } from './elements';

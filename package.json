@@ -1,12 +1,12 @@
 {
-  "name": "gridforge",
+  "name": "weft",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --parallel --filter @gridforge/server --filter @gridforge/web dev",
+    "dev": "pnpm --parallel --filter @weft/server --filter @weft/web dev",
     "test": "pnpm -r test",
-    "test:e2e": "pnpm --filter @gridforge/web test:e2e",
+    "test:e2e": "pnpm --filter @weft/web test:e2e",
     "typecheck": "pnpm -r typecheck",
-    "server": "pnpm --filter @gridforge/server start"
+    "server": "pnpm --filter @weft/server start"
   }
 }

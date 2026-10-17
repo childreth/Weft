@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ARTBOARD_RESET_CSS, compileTokensCSS, defaultTokens } from '@gridforge/core';
+import { ARTBOARD_RESET_CSS, compileTokensCSS, defaultTokens } from '@weft/core';
 import { useNode } from '../editor/editor';
 import { NodeView } from './NodeView';
 
