@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   DEFAULT_ARTBOARD_STYLES,
   GridError,
-  ORIGIN_AGENT,
   STYLE_PROPS,
   defaultTokens,
   flattenTokens,
@@ -13,6 +12,7 @@ import {
   type SemanticTag,
   type StyleMap,
 } from '@weft/core';
+import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
 
 export const SERVER_INSTRUCTIONS = `Weft is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.
@@ -24,11 +24,18 @@ Model:
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 
+Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
+
 Workflow: get_selection or get_canvas to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_layout to verify the real rendered boxes → select_nodes to show the user what you changed.`;
 
 const AUTHORED_STYLES = `camelCase CSS properties. Allowed: ${STYLE_PROPS.join(', ')}`;
 
 const docParam = z.string().regex(ROOM_NAME).default('default').describe('Document name; omit for the default document');
+const modelParam = z
+  .string()
+  .max(60)
+  .optional()
+  .describe('Your model name, e.g. "Claude Opus 5.5" — shown on your cursor in the editor');
 const frameSchema = z
   .object({ x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() })
   .partial();
@@ -82,24 +89,50 @@ function compact(tree: SceneTree, depth: number): Record<string, unknown> {
  * Runs an agent mutation as one atomic, undoable step. If it throws halfway,
  * the partial transaction is reverted so the document never sees half an edit.
  */
-function mutate<T>(room: Room, tool: string, fn: (touched: Set<string>) => T): ToolResult {
+/** What an edit tells the editors: label, cursor path and what to flash (default: everything touched). */
+interface EditReport {
+  action: string;
+  kind: FocusKind;
+  focus?: string[];
+  flash?: string[];
+  roots?: string[];
+}
+
+function mutate<T>(
+  room: Room,
+  agent: AgentPresence,
+  tool: string,
+  fn: (touched: Set<string>, report: EditReport) => T,
+): ToolResult {
   const touched = new Set<string>();
-  room.agentUndo.stopCapturing();
-  const before = room.agentUndo.undoStack.length;
+  const report: EditReport = { action: tool.replace(/_/g, ' '), kind: 'edit' };
+  const { undo } = agent;
+  undo.stopCapturing();
+  const before = undo.undoStack.length;
   try {
-    const result = room.doc.transact(() => fn(touched), ORIGIN_AGENT);
-    room.agentUndo.stopCapturing();
-    room.reportActivity(tool, [...touched].filter((id) => room.doc.has(id)));
+    const result = room.doc.transact(() => fn(touched, report), agent.identity.origin);
+    undo.stopCapturing();
+    const alive = (ids: Iterable<string>) => [...ids].filter((id) => room.doc.has(id));
+    agent.reportEdit(
+      tool,
+      report.action,
+      alive(report.flash ?? touched),
+      alive(report.focus ?? touched),
+      report.kind,
+      report.roots && alive(report.roots),
+    );
     return ok(result);
   } catch (err) {
-    if (room.agentUndo.undoStack.length > before) {
-      room.agentUndo.undo();
-      room.agentUndo.redoStack.pop();
+    if (undo.undoStack.length > before) {
+      undo.undo();
+      undo.redoStack.pop();
     }
     if (err instanceof GridError) return fail(`${err.message} (no changes were applied)`);
     throw err;
   }
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function nextArtboardPosition(room: Room): { x: number; y: number } {
   const frames = room.doc.getChildren(null).flatMap((n) => (n.frame ? [n.frame] : []));
@@ -115,6 +148,7 @@ interface CreatedNode {
 
 function createTree(
   room: Room,
+  origin: string,
   spec: NodeSpec,
   parentId: string | null,
   beforeId: string | null,
@@ -141,12 +175,12 @@ function createTree(
       parentId,
       beforeId,
     },
-    ORIGIN_AGENT,
+    origin,
   );
   touched.add(id);
   const node = room.doc.getNode(id)!;
   const created: CreatedNode = { id, name: node.name };
-  if (spec.children?.length) created.children = spec.children.map((c) => createTree(room, c, id, null, touched));
+  if (spec.children?.length) created.children = spec.children.map((c) => createTree(room, origin, c, id, null, touched));
   return created;
 }
 
@@ -157,8 +191,19 @@ interface LayoutBox {
   [key: string]: unknown;
 }
 
-export function createMcpServer(rooms: RoomRegistry): McpServer {
+/** One MCP server per agent session; `identity` is who the editors see. */
+export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): McpServer {
   const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
+
+  /** Resolves the document and this agent's presence in it (its cursor). */
+  const nameOf = (room: Room, id: string | null | undefined) => (id && room.doc.getNode(id)?.name) || 'node';
+  const open = (doc: string, model?: string) => {
+    const room = rooms.get(doc);
+    const client = server.server.getClientVersion();
+    identity.client ??= client?.title ?? client?.name ?? null;
+    identity.setModel(model);
+    return { room, agent: room.agent(identity) };
+  };
 
   server.registerTool(
     'get_canvas',
@@ -170,13 +215,16 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
         doc: docParam,
         rootId: z.string().optional().describe('Return only this node and its descendants'),
         maxDepth: z.number().int().min(0).max(50).default(12),
+        model: modelParam,
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, rootId, maxDepth }) => {
+    async ({ doc, rootId, maxDepth, model }) => {
       try {
-        const room = rooms.get(doc);
-        return ok({ document: doc, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth)) });
+        const { room, agent } = open(doc, model);
+        const nodes = room.doc.getTree(rootId).map((t) => compact(t, maxDepth));
+        agent.look(rootId ? [rootId] : [], rootId ? `Looking at ${nameOf(room, rootId)}` : 'Reading the canvas');
+        return ok({ document: doc, nodes });
       } catch (err) {
         return fail((err as Error).message);
       }
@@ -188,11 +236,12 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
     {
       title: 'Get user selection',
       description: 'Returns what each person with the document open has selected, with each selected subtree.',
-      inputSchema: { doc: docParam, maxDepth: z.number().int().min(0).max(50).default(6) },
+      inputSchema: { doc: docParam, maxDepth: z.number().int().min(0).max(50).default(6), model: modelParam },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, maxDepth }) => {
-      const room = rooms.get(doc);
+    async ({ doc, maxDepth, model }) => {
+      const { room, agent } = open(doc, model);
+      agent.look(room.humans().flatMap((h) => h.selection.filter((id) => room.doc.has(id))), 'Looking at your selection');
       const users = room.humans().map((h) => ({
         user: h.user.name,
         selection: h.selection.filter((id) => room.doc.has(id)).map((id) => compact(room.doc.getTree(id)[0]!, maxDepth)),
@@ -213,12 +262,26 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
         parentId: z.string().nullable().default(null).describe('Container to insert into; null for new artboards'),
         beforeId: z.string().nullable().default(null).describe('Insert before this sibling; null appends'),
         nodes: z.array(nodeSpec).min(1),
+        model: modelParam,
       },
     },
-    async ({ doc, parentId, beforeId, nodes }) =>
-      mutate(rooms.get(doc), 'create_nodes', (touched) => ({
-        created: nodes.map((spec) => createTree(rooms.get(doc), spec, parentId, beforeId, touched)),
-      })),
+    async ({ doc, parentId, beforeId, nodes, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'create_nodes', (touched, report) => {
+        const created = nodes.map((spec) => createTree(room, agent.identity.origin, spec, parentId, beforeId, touched));
+        const roots = created.map((c) => c.id);
+        // `touched` is in creation (document) order, so the cursor visits parents before children.
+        Object.assign(report, {
+          kind: 'create',
+          roots,
+          flash: roots,
+          action: parentId
+            ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, parentId)}`
+            : `Creating ${created.map((c) => c.name).join(', ')}`,
+        });
+        return { created };
+      });
+    },
   );
 
   server.registerTool(
@@ -244,13 +307,18 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
             }),
           )
           .min(1),
+        model: modelParam,
       },
     },
-    async ({ doc, updates }) => {
-      const room = rooms.get(doc);
-      return mutate(room, 'update_nodes', (touched) => {
+    async ({ doc, updates, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'update_nodes', (touched, report) => {
+        const only = updates.length === 1 ? updates[0]! : undefined;
+        if (only?.text !== undefined) Object.assign(report, { kind: 'text', action: `Writing ${nameOf(room, only.id)}` });
+        else if (only) report.action = `${only.styles ? 'Styling' : 'Editing'} ${nameOf(room, only.id)}`;
+        else report.action = `${updates.every((u) => u.styles) ? 'Styling' : 'Editing'} ${plural(updates.length, 'node')}`;
         for (const { id, ...patch } of updates) {
-          room.doc.updateNode(id, patch as NodePatch, ORIGIN_AGENT);
+          room.doc.updateNode(id, patch as NodePatch, agent.identity.origin);
           touched.add(id);
         }
         return { updated: updates.map((u) => u.id) };
@@ -268,12 +336,14 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
         id: z.string(),
         parentId: z.string().nullable().describe('New parent; null makes it a top-level artboard'),
         beforeId: z.string().nullable().default(null).describe('Insert before this sibling; null appends'),
+        model: modelParam,
       },
     },
-    async ({ doc, id, parentId, beforeId }) => {
-      const room = rooms.get(doc);
-      return mutate(room, 'move_node', (touched) => {
-        room.doc.moveNode(id, parentId, beforeId, ORIGIN_AGENT);
+    async ({ doc, id, parentId, beforeId, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'move_node', (touched, report) => {
+        report.action = `Moving ${nameOf(room, id)}`;
+        room.doc.moveNode(id, parentId, beforeId, agent.identity.origin);
         touched.add(id);
         return { moved: id };
       });
@@ -285,15 +355,18 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
     {
       title: 'Delete nodes',
       description: 'Deletes nodes and all their descendants in one atomic step.',
-      inputSchema: { doc: docParam, ids: z.array(z.string()).min(1) },
+      inputSchema: { doc: docParam, ids: z.array(z.string()).min(1), model: modelParam },
       annotations: { destructiveHint: true },
     },
-    async ({ doc, ids }) => {
-      const room = rooms.get(doc);
+    async ({ doc, ids, model }) => {
+      const { room, agent } = open(doc, model);
       const missing = ids.filter((id) => !room.doc.has(id));
       if (missing.length) return fail(`Unknown node ids: ${missing.join(', ')}`);
-      return mutate(room, 'delete_nodes', () => {
-        room.doc.deleteNodes(ids, ORIGIN_AGENT);
+      return mutate(room, agent, 'delete_nodes', (_touched, report) => {
+        // The cursor lands on whatever contained the deleted nodes.
+        report.focus = [...new Set(ids.flatMap((id) => room.doc.getNode(id)?.parentId ?? []))];
+        report.action = `Deleting ${plural(ids.length, 'node')}`;
+        room.doc.deleteNodes(ids, agent.identity.origin);
         return { deleted: ids };
       });
     },
@@ -303,14 +376,16 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
     'undo_agent_change',
     {
       title: 'Undo last agent change',
-      description: 'Reverts the most recent agent tool call (create/update/move/delete). People’s own edits are not affected.',
-      inputSchema: { doc: docParam },
+      description:
+        'Reverts your most recent tool call (create/update/move/delete). Edits by people and by other agents are not affected.',
+      inputSchema: { doc: docParam, model: modelParam },
     },
-    async ({ doc }) => {
-      const room = rooms.get(doc);
-      if (!room.agentUndo.canUndo()) return fail('Nothing to undo');
-      room.agentUndo.undo();
-      return ok({ undone: true, remaining: room.agentUndo.undoStack.length });
+    async ({ doc, model }) => {
+      const { agent } = open(doc, model);
+      agent.look([], 'Undoing last change');
+      if (!agent.undo.canUndo()) return fail('Nothing to undo');
+      agent.undo.undo();
+      return ok({ undone: true, remaining: agent.undo.undoStack.length });
     },
   );
 
@@ -340,12 +415,15 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
         doc: docParam,
         ids: z.array(z.string()).optional(),
         includeDescendants: z.boolean().default(false),
+        model: modelParam,
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, ids, includeDescendants }) => {
+    async ({ doc, ids, includeDescendants, model }) => {
       try {
-        const layout = await rooms.get(doc).callEditor<LayoutBox[]>('getLayout', { ids, includeDescendants });
+        const { room, agent } = open(doc, model);
+        agent.look(ids ?? [], ids?.length === 1 ? `Measuring ${nameOf(room, ids[0])}` : 'Measuring layout');
+        const layout = await room.callEditor<LayoutBox[]>('getLayout', { ids, includeDescendants });
         return ok({ nodes: layout });
       } catch (err) {
         return fail((err as Error).message);
@@ -358,12 +436,13 @@ export function createMcpServer(rooms: RoomRegistry): McpServer {
     {
       title: 'Select and show nodes',
       description: 'Selects nodes in every open editor and (by default) zooms the viewport to them, to show the user your work.',
-      inputSchema: { doc: docParam, ids: z.array(z.string()), focus: z.boolean().default(true) },
+      inputSchema: { doc: docParam, ids: z.array(z.string()), focus: z.boolean().default(true), model: modelParam },
     },
-    async ({ doc, ids, focus }) => {
-      const room = rooms.get(doc);
+    async ({ doc, ids, focus, model }) => {
+      const { room, agent } = open(doc, model);
       const missing = ids.filter((id) => !room.doc.has(id));
       if (missing.length) return fail(`Unknown node ids: ${missing.join(', ')}`);
+      agent.look(ids, 'Showing you the result');
       const editors = room.notifyEditors('select', { ids, focus });
       return ok({ selected: ids, editors });
     },

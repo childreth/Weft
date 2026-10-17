@@ -6,7 +6,8 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import type { WebSocket } from 'ws';
-import { GridDocument, ORIGIN_AGENT, seedLandingPage } from '@weft/core';
+import { GridDocument, seedLandingPage } from '@weft/core';
+import { AgentPresence, type AgentIdentity } from './agents';
 
 // y-websocket wire protocol message types.
 const MESSAGE_SYNC = 0;
@@ -14,9 +15,10 @@ const MESSAGE_AWARENESS = 1;
 const MESSAGE_QUERY_AWARENESS = 3;
 
 export const ROOM_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
-export const AGENT_COLOR = '#a855f7';
 const SAVE_DEBOUNCE_MS = 300;
 const RPC_TIMEOUT_MS = 4000;
+/** An agent's cursor leaves a document after this long without a tool call there. */
+export const AGENT_IDLE_MS = 2 * 60 * 1000;
 
 export interface HumanPresence {
   clientId: number;
@@ -36,18 +38,17 @@ function send(ws: WebSocket, message: Uint8Array): void {
 
 /**
  * One shared document: the authoritative Y.Doc, connected editors (Yjs sync +
- * awareness), browser RPC channels, and an undo stack for agent edits.
+ * awareness), browser RPC channels, and the agents working in it.
  */
 export class Room {
   readonly ydoc = new Y.Doc();
   readonly doc = new GridDocument(this.ydoc);
   readonly awareness = new awarenessProtocol.Awareness(this.ydoc);
-  readonly agentUndo: Y.UndoManager;
+  private readonly agents = new Map<string, AgentPresence>();
   private readonly conns = new Map<WebSocket, Set<number>>();
   private readonly rpcClients: WebSocket[] = [];
   private readonly pending = new Map<number, PendingCall>();
   private rpcSeq = 0;
-  private activitySeq = 0;
   private saveTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -56,8 +57,8 @@ export class Room {
   ) {
     const loaded = this.load();
     if (!loaded) seedLandingPage(this.doc);
-    this.agentUndo = new Y.UndoManager(this.doc.nodes, { trackedOrigins: new Set([ORIGIN_AGENT]), captureTimeout: 0 });
-    this.awareness.setLocalState({ kind: 'agent', user: { name: 'Agent', color: AGENT_COLOR }, activity: null });
+    // The room itself is not a participant; agents get their own awareness clients.
+    this.awareness.setLocalState(null);
 
     this.ydoc.on('update', (update: Uint8Array) => {
       const enc = encoding.createEncoder();
@@ -158,9 +159,29 @@ export class Room {
     return out;
   }
 
-  /** Broadcasts what the agent just touched so editors can highlight it. */
-  reportActivity(tool: string, ids: string[]): void {
-    this.awareness.setLocalStateField('activity', { seq: ++this.activitySeq, tool, ids });
+  // ── Agents ───────────────────────────────────────────────────────────────
+
+  /** The agent's presence in this document, created on its first call here. */
+  agent(identity: AgentIdentity): AgentPresence {
+    let presence = this.agents.get(identity.key);
+    if (!presence) {
+      presence = new AgentPresence(identity, this.doc.nodes, this.awareness);
+      this.agents.set(identity.key, presence);
+    }
+    return presence;
+  }
+
+  removeAgent(key: string): void {
+    this.agents.get(key)?.destroy();
+    this.agents.delete(key);
+  }
+
+  get agentCount(): number {
+    return this.agents.size;
+  }
+
+  sweepAgents(now = Date.now()): void {
+    for (const [key, p] of this.agents) if (now - p.lastSeen > AGENT_IDLE_MS) this.removeAgent(key);
   }
 
   // ── Browser RPC (computed layout, viewport control) ──────────────────────
@@ -262,6 +283,7 @@ export class Room {
       call.reject(new Error('Server shutting down'));
     }
     this.pending.clear();
+    for (const key of [...this.agents.keys()]) this.removeAgent(key);
     this.awareness.destroy();
   }
 }
@@ -280,8 +302,14 @@ function writeAtomic(path: string, data: Uint8Array | string): void {
 
 export class RoomRegistry {
   private readonly rooms = new Map<string, Room>();
+  private readonly sweep = setInterval(() => this.rooms.forEach((r) => r.sweepAgents()), 30_000).unref();
 
   constructor(private readonly dataDir: string | null) {}
+
+  /** Removes an agent's cursor from every document (its MCP session ended). */
+  removeAgent(key: string): void {
+    for (const room of this.rooms.values()) room.removeAgent(key);
+  }
 
   get(name: string): Room {
     if (!ROOM_NAME.test(name)) throw new Error(`Invalid document name "${name}"`);
@@ -298,6 +326,7 @@ export class RoomRegistry {
   }
 
   close(): void {
+    clearInterval(this.sweep);
     for (const room of this.rooms.values()) room.close();
     this.rooms.clear();
   }

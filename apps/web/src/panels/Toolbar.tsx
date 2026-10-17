@@ -52,7 +52,7 @@ export function Toolbar() {
       </div>
       {activity && (
         <span className="gf-activity" role="status" data-testid="agent-activity">
-          {activity.name} · {activity.tool.replace(/_/g, ' ')} · {activity.ids.length} node{activity.ids.length === 1 ? '' : 's'}
+          {activity.name} · {activity.action ?? activity.tool.replace(/_/g, ' ')}
         </span>
       )}
       {notice && (
@@ -62,8 +62,14 @@ export function Toolbar() {
       )}
       <div className="gf-tool-group gf-push-right">
         {collaborators.map((c) => (
-          <span key={c.clientId} className="gf-avatar" style={{ background: c.color }} title={`${c.name} (${c.kind})`}>
-            {c.kind === 'agent' ? 'AI' : c.name.charAt(0)}
+          <span
+            key={c.clientId}
+            className="gf-avatar"
+            data-kind={c.kind}
+            style={{ background: c.color }}
+            title={c.agent ? [c.name, c.agent.model, c.agent.client].filter(Boolean).join(' · ') : c.name}
+          >
+            {c.name.charAt(0)}
           </span>
         ))}
         <span className="gf-status" data-status={connection} data-testid="connection" title={STATUS_LABEL[connection]}>

@@ -15,6 +15,24 @@ export interface Collaborator {
   kind: 'human' | 'agent';
   name: string;
   color: string;
+  /** Agents only. */
+  agent?: AgentPresenceView;
+}
+
+export type FocusKind = 'read' | 'edit' | 'create' | 'text';
+
+/** What an agent is doing, as seen by this editor. Times are local `performance.now()`. */
+export interface AgentPresenceView {
+  /** The model it reports, shown on its cursor. */
+  model?: string;
+  /** Its MCP client's name. */
+  client?: string;
+  /** What its latest tool call did, e.g. "Styling Hero". */
+  action?: string;
+  /** When its latest tool call arrived here; -Infinity if it predates this editor. */
+  activeAt: number;
+  /** The nodes its cursor follows: for creates, every new node in document order. */
+  focus?: { seq: number; ids: string[]; roots?: string[]; kind: FocusKind; at: number };
 }
 
 /** The nodes an agent touched in its latest tool call, highlighted briefly. */
@@ -22,6 +40,7 @@ export interface AgentActivity {
   seq: number;
   tool: string;
   ids: string[];
+  action?: string;
   name: string;
   color: string;
 }

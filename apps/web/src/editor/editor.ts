@@ -9,6 +9,7 @@ import {
   type NodePatch,
 } from '@weft/core';
 import { SceneStore, makeSceneHooks } from './scene';
+import { agentTiming } from '../canvas/agentCursors';
 import { useEditor } from './store';
 
 export const doc = new GridDocument();
@@ -84,8 +85,9 @@ declare global {
       scene: SceneStore;
       editor: typeof useEditor;
       agent: typeof agentApi;
+      agentTiming: typeof agentTiming;
     };
   }
 }
 
-window.weft = { doc, history, scene, editor: useEditor, agent: agentApi };
+window.weft = { doc, history, scene, editor: useEditor, agent: agentApi, agentTiming };

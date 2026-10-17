@@ -1,7 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { AgentRoster, type AgentIdentity } from './agents';
 import { ROOM_NAME, RoomRegistry } from './room';
 import { createMcpServer } from './tools';
 
@@ -22,6 +26,15 @@ export interface GridServer {
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const SESSION_IDLE_MS = 30 * 60 * 1000;
+
+/** One connected agent: an MCP session with its own identity (cursor). */
+interface AgentSession {
+  transport: StreamableHTTPServerTransport;
+  mcp: McpServer;
+  identity: AgentIdentity;
+  lastSeen: number;
+}
 
 function hostnameOf(value: string | undefined, withScheme: boolean): string | null {
   if (!value) return null;
@@ -64,6 +77,63 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 export async function startGridServer(options: GridServerOptions = {}): Promise<GridServer> {
   const host = options.host ?? '127.0.0.1';
   const rooms = new RoomRegistry(options.dataDir ?? null);
+  const roster = new AgentRoster();
+  const sessions = new Map<string, AgentSession>();
+  // Clients that skip sessions share one identity.
+  let sessionless: AgentIdentity | null = null;
+
+  const endSession = (id: string) => {
+    const session = sessions.get(id);
+    if (!session) return;
+    sessions.delete(id);
+    rooms.removeAgent(session.identity.key);
+    void session.mcp.close();
+  };
+  const sweep = setInterval(() => {
+    for (const [id, s] of sessions) if (Date.now() - s.lastSeen > SESSION_IDLE_MS) endSession(id);
+  }, 60_000).unref();
+
+  async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const sessionId = req.headers['mcp-session-id'];
+    const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+    if (sessionId && !existing) {
+      // Unknown or expired session: the client must re-initialize.
+      return json(res, 404, { jsonrpc: '2.0', error: { code: -32001, message: 'Session not found' }, id: null });
+    }
+    if (existing) {
+      existing.lastSeen = Date.now();
+      const body = req.method === 'POST' ? await readJson(req) : undefined;
+      return existing.transport.handleRequest(req, res, body);
+    }
+    if (req.method !== 'POST') {
+      return json(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
+    }
+    const body = await readJson(req);
+
+    if (isInitializeRequest(body)) {
+      const identity = roster.next();
+      const mcp = createMcpServer(rooms, identity);
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: true,
+        onsessioninitialized: (id) => void sessions.set(id, { transport, mcp, identity, lastSeen: Date.now() }),
+      });
+      transport.onclose = () => transport.sessionId && endSession(transport.sessionId);
+      await mcp.connect(transport);
+      return transport.handleRequest(req, res, body);
+    }
+
+    // Stateless fallback: a fresh server + transport per request.
+    sessionless ??= roster.next();
+    const mcp = createMcpServer(rooms, sessionless);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => {
+      void transport.close();
+      void mcp.close();
+    });
+    await mcp.connect(transport);
+    await transport.handleRequest(req, res, body);
+  }
 
   const http = createServer(async (req, res) => {
     if (!hostAllowed(req)) return json(res, 403, { error: 'Forbidden host' });
@@ -72,26 +142,12 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     if (pathname === '/health') return json(res, 200, { ok: true, documents: rooms.names() });
 
     if (pathname === '/mcp') {
-      if (req.method !== 'POST') {
-        return json(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
-      }
-      let body: unknown;
       try {
-        body = await readJson(req);
+        await handleMcp(req, res);
       } catch (err) {
-        return json(res, 400, { jsonrpc: '2.0', error: { code: -32700, message: (err as Error).message }, id: null });
-      }
-      // Stateless: a fresh server + transport per request.
-      const mcp = createMcpServer(rooms);
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-      res.on('close', () => {
-        void transport.close();
-        void mcp.close();
-      });
-      try {
-        await mcp.connect(transport);
-        await transport.handleRequest(req, res, body);
-      } catch (err) {
+        if (err instanceof SyntaxError || (err as Error).message === 'Request body too large') {
+          return json(res, 400, { jsonrpc: '2.0', error: { code: -32700, message: (err as Error).message }, id: null });
+        }
         console.error('[mcp]', err);
         if (!res.headersSent) json(res, 500, { jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
       }
@@ -131,10 +187,15 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     wsUrl: `ws://${host}:${port}`,
     rooms,
     close: async () => {
+      clearInterval(sweep);
+      for (const id of [...sessions.keys()]) endSession(id);
       for (const client of wss.clients) client.terminate();
       wss.close();
       rooms.close();
-      await new Promise<void>((resolve) => http.close(() => resolve()));
+      await new Promise<void>((resolve) => {
+        http.close(() => resolve());
+        http.closeAllConnections(); // open SSE streams from agents
+      });
     },
   };
 }

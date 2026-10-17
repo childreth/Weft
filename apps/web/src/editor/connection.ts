@@ -1,7 +1,7 @@
 import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { doc, docName, mode, scene } from './editor';
-import { useEditor, type AgentActivity, type Collaborator } from './store';
+import { useEditor, type AgentActivity, type Collaborator, type FocusKind } from './store';
 import { zoomToNodes } from './viewport';
 import { nodeElements } from '../canvas/elements';
 
@@ -15,7 +15,22 @@ interface PresenceState {
   kind?: 'human' | 'agent';
   user?: { name: string; color: string };
   selection?: string[];
-  activity?: { seq: number; tool: string; ids: string[] } | null;
+  model?: string | null;
+  client?: string | null;
+  beat?: number;
+  action?: string | null;
+  activity?: { seq: number; tool: string; ids: string[]; action?: string } | null;
+  focus?: { seq: number; ids: string[]; roots?: string[]; kind: FocusKind } | null;
+}
+
+type SeenMap = Map<number, { value: number; at: number }>;
+
+/** When a counter last changed here: -Infinity the first time we see it, else when it moved. */
+function since(seen: SeenMap, clientId: number, value: number): number {
+  const prev = seen.get(clientId);
+  const next = !prev ? { value, at: -Infinity } : prev.value !== value ? { value, at: performance.now() } : prev;
+  seen.set(clientId, next);
+  return next.at;
 }
 
 /** Connects the document to the Weft server (sync, presence, agent RPC). */
@@ -46,14 +61,28 @@ export function startConnection(): () => void {
   });
 
   const seenActivity = new Map<number, number>();
+  // Local arrival times of each agent's latest call and focus change. Whatever an
+  // agent did before this editor connected counts as old (-Infinity).
+  const seenBeat: SeenMap = new Map();
+  const seenFocus: SeenMap = new Map();
   let highlightTimer: ReturnType<typeof setTimeout> | undefined;
   const onAwareness = () => {
     const collaborators: Collaborator[] = [];
     for (const [clientId, state] of awareness.getStates() as Map<number, PresenceState>) {
       if (clientId === awareness.clientID || !state.user) continue;
-      collaborators.push({ clientId, kind: state.kind ?? 'human', name: state.user.name, color: state.user.color });
+      const collaborator: Collaborator = { clientId, kind: state.kind ?? 'human', name: state.user.name, color: state.user.color };
+      collaborators.push(collaborator);
       const activity = state.activity;
       if (state.kind !== 'agent') continue;
+      const beat = since(seenBeat, clientId, state.beat ?? 0);
+      const focusAt = since(seenFocus, clientId, state.focus?.seq ?? 0);
+      collaborator.agent = {
+        model: state.model ?? undefined,
+        client: state.client ?? undefined,
+        action: state.action ?? undefined,
+        activeAt: beat,
+        focus: state.focus ? { ...state.focus, at: focusAt } : undefined,
+      };
       const seq = activity?.seq ?? 0;
       const previous = seenActivity.get(clientId);
       seenActivity.set(clientId, seq);

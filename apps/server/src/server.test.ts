@@ -169,13 +169,55 @@ describe('sync relay', () => {
     const id = data.created[0].id;
     await until(() => replica.getNode(id)?.text === 'from the agent');
 
-    const agent = [...provider.awareness.getStates().values()].find((s) => s.kind === 'agent');
-    await until(() => provider.awareness.getStates().get(server.rooms.get('sync').ydoc.clientID)?.activity?.ids?.includes(id));
-    expect(agent).toBeDefined();
+    const agentState = () => [...provider.awareness.getStates().values()].find((s) => s.kind === 'agent');
+    await until(() => agentState()?.activity?.ids?.includes(id));
+    expect(agentState()).toMatchObject({
+      user: { name: 'Drift' },
+      client: 'test',
+      action: 'Adding 1 node to Landing — Desktop',
+      focus: { ids: [id], kind: 'create', roots: [id] },
+    });
 
     // Editor-side edits reach the server too.
     replica.updateNode(id, { text: 'edited by a person' });
     await until(() => server.rooms.get('sync').doc.getNode(id)?.text === 'edited by a person');
+    provider.destroy();
+  });
+
+  it('gives each agent session its own cursor, model label and undo stack', async () => {
+    const ydoc = new Y.Doc();
+    const provider = new WebsocketProvider(server.wsUrl, 'multi', ydoc);
+    await until(() => provider.synced);
+    const agents = () =>
+      [...provider.awareness.getStates().values()].filter((s) => s.kind === 'agent').sort((a, b) => a.user.name.localeCompare(b.user.name));
+
+    const second = new Client({ name: 'qwen-host', version: '1.0.0' });
+    const secondTransport = new StreamableHTTPClientTransport(new URL(`${server.httpUrl}/mcp`));
+    await second.connect(secondTransport);
+    const room = server.rooms.get('multi');
+    const root = room.doc.getChildren(null)[0]!;
+
+    await call('update_nodes', { doc: 'multi', updates: [{ id: root.id, name: 'by first' }] });
+    await second.callTool({
+      name: 'create_nodes',
+      arguments: { doc: 'multi', parentId: root.id, nodes: [{ type: 'text', text: 'by second' }], model: 'Qwen3 Coder 30B' },
+    });
+    await until(() => agents().length === 2);
+    const [a, b] = agents();
+    expect(a.user.name).not.toBe(b.user.name);
+    expect(a.user.color).not.toBe(b.user.color);
+    expect(agents().map((s) => s.model)).toContain('Qwen3 Coder 30B');
+
+    // Undo is per agent: the first agent's undo leaves the second agent's text alone.
+    await call('undo_agent_change', { doc: 'multi' });
+    expect(room.doc.getNode(root.id)!.name).not.toBe('by first');
+    expect(room.doc.getChildren(root.id).some((n) => n.text === 'by second')).toBe(true);
+
+    // Ending a session removes that agent's cursor.
+    await secondTransport.terminateSession();
+    await second.close();
+    await until(() => agents().length === 1);
+    expect(room.agentCount).toBe(1);
     provider.destroy();
   });
 
