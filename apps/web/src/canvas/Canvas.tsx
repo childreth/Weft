@@ -9,12 +9,23 @@ import {
 import { doc, history, run, scene, useChildren } from '../editor/editor';
 import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';
+import { nodeElements } from './elements';
 import { commitActiveText } from './NodeView';
 import { SelectionOverlay, type Box, type Handle } from './SelectionOverlay';
 
 type Gesture =
   | { kind: 'pan'; sx: number; sy: number; camera: Camera }
-  | { kind: 'move'; id: string; sx: number; sy: number; frame: ArtboardFrame; active: boolean }
+  | {
+      kind: 'move';
+      sx: number;
+      sy: number;
+      /** Every artboard that moves with the drag: the whole selection when the grabbed node is part of it. */
+      frames: Map<string, ArtboardFrame>;
+      active: boolean;
+      /** A plain click on a node inside a multi-selection narrows to it on release. */
+      collapseTo: string | null;
+    }
+  | { kind: 'marquee'; sx: number; sy: number; cx: number; cy: number; base: string[]; additive: boolean }
   | { kind: 'resize'; id: string; handle: Handle; sx: number; sy: number; frame: ArtboardFrame }
   | { kind: 'create'; sx: number; sy: number; cx: number; cy: number };
 
@@ -94,6 +105,16 @@ export function Canvas() {
       return { x: (clientX - rect.left - c.x) / c.zoom, y: (clientY - rect.top - c.y) / c.zoom };
     };
 
+    /** Top-level artboards whose rendered box intersects a marquee given in container space. */
+    const artboardsIn = (box: Box, container: DOMRect): string[] =>
+      scene.children(null).filter((id) => {
+        const r = nodeElements.get(id)?.getBoundingClientRect();
+        if (!r) return false;
+        const x = r.left - container.left;
+        const y = r.top - container.top;
+        return x < box.x + box.w && x + r.width > box.x && y < box.y + box.h && y + r.height > box.y;
+      });
+
     const begin = (g: Gesture, e: PointerEvent) => {
       gesture = g;
       el.setPointerCapture(e.pointerId);
@@ -165,7 +186,11 @@ export function Canvas() {
       }
 
       if (!hit.id) {
-        state.select([]);
+        if (!e.shiftKey) state.select([]);
+        begin(
+          { kind: 'marquee', sx: e.clientX, sy: e.clientY, cx: e.clientX, cy: e.clientY, base: e.shiftKey ? state.selection : [], additive: e.shiftKey },
+          e,
+        );
         return;
       }
       if (e.shiftKey) {
@@ -174,10 +199,17 @@ export function Canvas() {
         );
         return;
       }
-      state.select([hit.id]);
-      const node = scene.nodes.get(hit.id);
-      if (node?.frame && !node.locked) {
-        begin({ kind: 'move', id: node.id, sx: e.clientX, sy: e.clientY, frame: node.frame, active: false }, e);
+      const inGroup = state.selection.length > 1 && state.selection.includes(hit.id);
+      if (!inGroup) state.select([hit.id]);
+      const frames = new Map<string, ArtboardFrame>();
+      for (const id of inGroup ? useEditor.getState().selection : [hit.id]) {
+        const n = scene.nodes.get(id);
+        if (n?.frame && !n.locked) frames.set(id, n.frame);
+      }
+      if (frames.size > 0) {
+        begin({ kind: 'move', sx: e.clientX, sy: e.clientY, frames, active: false, collapseTo: inGroup ? hit.id : null }, e);
+      } else if (inGroup) {
+        state.select([hit.id]);
       }
     };
 
@@ -202,12 +234,24 @@ export function Canvas() {
             g.active = true;
             history.beginGesture();
           }
-          run(() =>
-            doc.updateNode(g.id, {
-              frame: { x: Math.round(g.frame.x + dx / zoom), y: Math.round(g.frame.y + dy / zoom) },
-            }),
-          );
+          run(() => {
+            for (const [id, f] of g.frames) {
+              doc.updateNode(id, { frame: { x: Math.round(f.x + dx / zoom), y: Math.round(f.y + dy / zoom) } });
+            }
+          });
           break;
+        case 'marquee': {
+          g.cx = e.clientX;
+          g.cy = e.clientY;
+          const rect = el.getBoundingClientRect();
+          const box = { x: Math.min(g.sx, g.cx) - rect.left, y: Math.min(g.sy, g.cy) - rect.top, w: Math.abs(dx), h: Math.abs(dy) };
+          if (box.w < DRAG_THRESHOLD && box.h < DRAG_THRESHOLD) return;
+          setDraft(box);
+          const hits = artboardsIn(box, rect);
+          const next = g.additive ? [...g.base, ...hits.filter((id) => !g.base.includes(id))] : hits;
+          if (next.length !== state.selection.length || next.some((id, i) => id !== state.selection[i])) state.select(next);
+          break;
+        }
         case 'resize':
           run(() => doc.updateNode(g.id, { frame: resizeFrame(g.frame, g.handle, dx / zoom, dy / zoom) }));
           break;
@@ -233,6 +277,10 @@ export function Canvas() {
           break;
         case 'move':
           if (g.active) history.endGesture();
+          else if (g.collapseTo) state.select([g.collapseTo]);
+          break;
+        case 'marquee':
+          setDraft(null);
           break;
         case 'resize':
           history.endGesture();

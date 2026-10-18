@@ -190,6 +190,7 @@ body {
 .gf-box { position: absolute; left: 0; top: 0; }
 .gf-box-hover { box-shadow: 0 0 0 1px var(--ui-accent); }
 .gf-box-selected { box-shadow: 0 0 0 1.5px var(--ui-accent); }
+.gf-box-group { box-shadow: 0 0 0 1px var(--ui-accent); outline: 1px dashed var(--ui-accent); outline-offset: 3px; pointer-events: none; }
 .gf-box-draft { box-shadow: 0 0 0 1px var(--ui-accent); background: var(--ui-accent-soft); }
 .gf-handle {
   position: absolute;

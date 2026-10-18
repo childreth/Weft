@@ -69,11 +69,16 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 - [x] **M1 — Canvas foundation:** scene graph, shadow-DOM artboards, editing tools
 - [x] **M2 — AI bridge:** MCP server, live sync, agent presence and cursors
-- [ ] **M3 — Single-user editing:** layers, alignment, snapping, multi-select
+- [ ] **M3 — Single-user editing** (in progress)
+  - [x] Multi-select: marquee, shift-click, ⌘A, group move
+  - [ ] Layers panel: rename, hide/lock, collapse, drag to reorder
+  - [ ] Align and distribute
+  - [ ] Snapping and smart guides
 - [ ] Components and variants
 - [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
 - [ ] Desktop shell (Electron)
 
 ## Changelog
 
+- **2026-10-17:** M3 started. Multi-select: marquee on empty canvas, group move as one undo step, ⌘A, group outline.
 - **2026-10-17:** Renamed from GridForge to Weft. M2 complete: per-session agent identity, agent cursors, MCP tools.

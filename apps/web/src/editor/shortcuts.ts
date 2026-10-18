@@ -30,6 +30,12 @@ function onKeyDown(e: KeyboardEvent) {
   if (mod && key === '0') return void (e.preventDefault(), zoomTo(1));
   if (e.shiftKey && e.code === 'Digit1') return void (e.preventDefault(), zoomToFit());
   if (e.shiftKey && e.code === 'Digit2') return void (e.preventDefault(), zoomToFit(state.selection));
+  if (mod && key === 'a') {
+    e.preventDefault();
+    const first = state.selection[0] ? scene.nodes.get(state.selection[0]) : undefined;
+    state.select([...scene.children(first ? first.parentId : null)]);
+    return;
+  }
   if (mod) return;
 
   switch (key) {
