@@ -2,7 +2,7 @@
 
 An AI-native design canvas where the canvas *is* the browser's DOM and CSS engine. Edit pages the way you would in Figma, but every artboard is real HTML and CSS, so what you design is what you ship. People and AI agents edit the same live document.
 
-> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select and responsive breakpoints are in, layers panel is next. See [Roadmap](#roadmap).
+> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select, responsive breakpoints and the layers panel are in; align and distribute is next. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -74,7 +74,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [x] Responsive breakpoints: per-node tablet (≤ 1024px) and mobile (≤ 600px) overrides, previewed by artboard width, with Desktop/Tablet/Mobile width presets
   - [ ] Clone an artboard at mobile/tablet width to compare layouts side by side
   - [ ] Per-breakpoint text, visibility and tag (overrides are styles-only today)
-  - [ ] Layers panel: rename, hide/lock, collapse, drag to reorder
+  - [x] Layers panel: double-click rename, hide/lock toggles (locked layers are click-through on the canvas), collapse/expand, drag to reorder and reparent, shift-click range and ⌘-click toggle
   - [ ] Align and distribute
   - [ ] Snapping and smart guides
 - [ ] Components and variants
@@ -84,6 +84,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-17:** Layers panel. Double-click to rename, hide and lock toggles per row (locked layers can't be picked or moved on the canvas), collapse/expand with auto-reveal of selected layers, drag to reorder or reparent (multi-selection moves together, one undo step), shift-click range select and ⌘-click toggle.
 - **2026-10-17:** Responsive breakpoints. Nodes carry `breakpoints.tablet` (≤ 1024px) and `breakpoints.mobile` (≤ 600px) style overrides, desktop-first (narrower wins), edited in the Inspector's Tablet/Mobile sections or via `create_nodes`/`update_nodes`. Artboards have Desktop/Tablet/Mobile width presets. On the canvas they follow the artboard's width (container query); `compileBreakpointCSS` emits the same rules as `@media` for export.
 - **2026-10-17:** M3 started. Multi-select: marquee on empty canvas, group move as one undo step, ⌘A, group outline.
 - **2026-10-17:** Renamed from GridForge to Weft. M2 complete: per-session agent identity, agent cursors, MCP tools.
