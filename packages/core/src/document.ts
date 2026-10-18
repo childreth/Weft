@@ -2,10 +2,14 @@ import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
 import {
+  BREAKPOINTS,
   VOID_TAGS,
+  isBreakpointId,
   isStyleProp,
   isValidTag,
   type ArtboardFrame,
+  type BreakpointId,
+  type BreakpointStyles,
   type NodeType,
   type SceneNode,
   type SceneTree,
@@ -35,6 +39,7 @@ export interface CreateNodeInput {
   beforeId?: string | null;
   text?: string;
   styles?: StyleMap;
+  breakpoints?: BreakpointStyles;
   attributes?: Record<string, string>;
   frame?: ArtboardFrame;
 }
@@ -48,6 +53,8 @@ export interface NodePatch {
   frame?: Partial<ArtboardFrame>;
   /** null or '' removes the property. */
   styles?: Partial<Record<StyleProp, string | null>>;
+  /** Merged per breakpoint like `styles`; a null breakpoint clears all its overrides. */
+  breakpoints?: Partial<Record<BreakpointId, Partial<Record<StyleProp, string | null>> | null>>;
   attributes?: Record<string, string | null>;
 }
 
@@ -81,6 +88,12 @@ export function readNode(y: YNode): SceneNode {
     styles: styles ? (styles.toJSON() as StyleMap) : {},
     attributes: attributes ? (attributes.toJSON() as Record<string, string>) : {},
   };
+  const breakpoints = y.get('breakpoints') as Y.Map<Y.Map<string>> | undefined;
+  if (breakpoints) {
+    const out: BreakpointStyles = {};
+    for (const [bp, map] of breakpoints) if (map.size > 0) out[bp as BreakpointId] = map.toJSON() as StyleMap;
+    if (Object.keys(out).length) node.breakpoints = out;
+  }
   const text = y.get('text');
   if (typeof text === 'string') node.text = text;
   const frame = y.get('frame') as ArtboardFrame | undefined;
@@ -129,6 +142,41 @@ function assertStyles(styles: Partial<Record<string, string | null>>): void {
     if (typeof value !== 'string') throw new GridError(`Style "${key}" must be a string`);
     if (UNSAFE_STYLE_VALUE.test(value)) throw new GridError(`Style "${key}" contains forbidden characters`);
   }
+}
+
+function assertBreakpoints(breakpoints: Record<string, Partial<Record<string, string | null>> | null | undefined>): void {
+  for (const [bp, styles] of Object.entries(breakpoints)) {
+    if (!isBreakpointId(bp)) throw new GridError(`Unknown breakpoint "${bp}"`);
+    if (styles) assertStyles(styles);
+  }
+}
+
+/**
+ * CSS for breakpoint overrides, keyed by `[data-gf-id]`. `!important` is
+ * needed on the canvas, where base styles are inline. `at` wraps each block:
+ * the canvas uses an artboard container query, export uses a media query.
+ */
+export function compileBreakpointCSS(
+  nodes: Iterable<SceneNode>,
+  at: (maxWidth: number) => string = (w) => `@media (max-width: ${w}px)`,
+): string {
+  const blocks: string[] = [];
+  const list = [...nodes];
+  for (const bp of BREAKPOINTS) {
+    const rules: string[] = [];
+    for (const node of list) {
+      const styles = node.breakpoints?.[bp.id];
+      // Ids go into a selector; generated ids are always safe, imported ones may not be.
+      if (!styles || !/^[\w-]+$/.test(node.id)) continue;
+      const decls = Object.entries(styles)
+        // Hidden layers stay hidden whatever the breakpoint says.
+        .filter(([prop]) => !(node.hidden && prop === 'display'))
+        .map(([prop, value]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${value} !important;`);
+      if (decls.length) rules.push(`  [data-gf-id="${node.id}"] { ${decls.join(' ')} }`);
+    }
+    if (rules.length) blocks.push(`${at(bp.maxWidth)} {\n${rules.join('\n')}\n}`);
+  }
+  return blocks.join('\n');
 }
 
 function assertAttributes(attributes: Record<string, string | null>): void {
@@ -226,6 +274,7 @@ export class GridDocument {
     const tag = input.tag ?? (input.type === 'text' ? 'p' : 'div');
     if (!isValidTag(input.type, tag)) throw new GridError(`Tag <${tag}> is not valid for a ${input.type} node`);
     if (input.styles) assertStyles(input.styles);
+    if (input.breakpoints) assertBreakpoints(input.breakpoints);
     if (input.attributes) assertAttributes(input.attributes);
     const id = input.id ?? createId(input.type === 'text' ? 't' : 'f');
     if (this.nodes.has(id)) throw new GridError(`Node ${id} already exists`);
@@ -245,6 +294,7 @@ export class GridDocument {
       const styles = new Y.Map<string>();
       y.set('styles', styles);
       for (const [k, v] of Object.entries(input.styles ?? {})) if (v) styles.set(k, v.trim());
+      if (input.breakpoints) writeBreakpoints(y, input.breakpoints);
       const attributes = new Y.Map<string>();
       y.set('attributes', attributes);
       for (const [k, v] of Object.entries(input.attributes ?? {})) attributes.set(k, v);
@@ -264,6 +314,7 @@ export class GridDocument {
     if (patch.text !== undefined && type !== 'text') throw new GridError('Only text nodes have text');
     if (patch.frame && y.get('parentId') !== null) throw new GridError('Only artboards have a canvas frame');
     if (patch.styles) assertStyles(patch.styles);
+    if (patch.breakpoints) assertBreakpoints(patch.breakpoints);
     if (patch.attributes) assertAttributes(patch.attributes);
 
     this.transact(() => {
@@ -284,6 +335,7 @@ export class GridDocument {
           else styles.set(k, v.trim());
         }
       }
+      if (patch.breakpoints) writeBreakpoints(y, patch.breakpoints);
       if (patch.attributes) {
         const attributes = y.get('attributes') as Y.Map<string>;
         for (const [k, v] of Object.entries(patch.attributes)) {
@@ -396,6 +448,31 @@ export class GridDocument {
     const next = siblings[i]!.index;
     // Concurrent inserts can produce equal keys; fall back to appending.
     return prev !== null && prev >= next ? generateKeyBetween(last, null) : generateKeyBetween(prev, next);
+  }
+}
+
+function writeBreakpoints(y: YNode, patch: NonNullable<NodePatch['breakpoints']>): void {
+  let all = y.get('breakpoints') as Y.Map<Y.Map<string>> | undefined;
+  if (!all) {
+    all = new Y.Map<Y.Map<string>>();
+    y.set('breakpoints', all);
+  }
+  for (const [bp, styles] of Object.entries(patch)) {
+    if (styles === null) {
+      all.delete(bp);
+      continue;
+    }
+    if (!styles) continue;
+    let map = all.get(bp);
+    if (!map) {
+      map = new Y.Map<string>();
+      all.set(bp, map);
+    }
+    for (const [k, v] of Object.entries(styles)) {
+      if (v === null || v === undefined || v.trim() === '') map.delete(k);
+      else map.set(k, v.trim());
+    }
+    if (map.size === 0) all.delete(bp);
   }
 }
 

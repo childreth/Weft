@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { GridDocument, GridError, ORIGIN_AGENT } from './document';
+import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS } from './document';
 import { History } from './history';
 import { seedLandingPage } from './seed';
 import { compileTokensCSS, flattenTokens } from './tokens';
@@ -33,6 +33,42 @@ describe('GridDocument', () => {
     expect(() => doc.updateNode(root, { attributes: { onclick: 'x()' } })).toThrow(/Event handler/);
     expect(() => doc.updateNode(t, { attributes: { href: 'javascript:alert(1)' } })).toThrow(/Unsafe/);
     doc.createNode({ type: 'frame', parentId: root, tag: 'ds-card' });
+  });
+
+  it('stores, merges and compiles breakpoint overrides', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const grid = doc.createNode({
+      type: 'frame',
+      parentId: root,
+      styles: { display: 'grid', gridTemplateColumns: '1fr 1fr' },
+      breakpoints: { mobile: { gridTemplateColumns: '1fr' } },
+    });
+    expect(doc.getNode(grid)?.breakpoints).toEqual({ mobile: { gridTemplateColumns: '1fr' } });
+    doc.updateNode(grid, { breakpoints: { mobile: { gap: 'var(--space-4)', gridTemplateColumns: null } } });
+    expect(doc.getNode(grid)?.breakpoints).toEqual({ mobile: { gap: 'var(--space-4)' } });
+    expect(compileBreakpointCSS(doc.getNodes())).toBe(
+      `@media (max-width: 600px) {\n  [data-gf-id="${grid}"] { gap: var(--space-4) !important; }\n}`,
+    );
+    expect(() => doc.updateNode(grid, { breakpoints: { watch: {} } as never })).toThrow(/Unknown breakpoint/);
+    expect(() => doc.updateNode(grid, { breakpoints: { mobile: { gap: '1px} *{color:red' } } })).toThrow(/forbidden/);
+    doc.updateNode(grid, { breakpoints: { mobile: null } });
+    expect(doc.getNode(grid)?.breakpoints).toBeUndefined();
+    expect(compileBreakpointCSS(doc.getNodes())).toBe('');
+  });
+
+  it('emits wider breakpoints first so narrower ones win the cascade', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const box = doc.createNode({
+      type: 'frame',
+      parentId: root,
+      breakpoints: { mobile: { gap: '1px' }, tablet: { gap: '2px' } },
+    });
+    const css = compileBreakpointCSS(doc.getNodes());
+    expect(css.indexOf('max-width: 1024px')).toBeGreaterThanOrEqual(0);
+    expect(css.indexOf('max-width: 1024px')).toBeLessThan(css.indexOf('max-width: 600px'));
+    expect(css).toContain(`[data-gf-id="${box}"] { gap: 2px !important; }`);
   });
 
   it('updates and removes styles', () => {

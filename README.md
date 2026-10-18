@@ -2,7 +2,7 @@
 
 An AI-native design canvas where the canvas *is* the browser's DOM and CSS engine. Edit pages the way you would in Figma, but every artboard is real HTML and CSS, so what you design is what you ship. People and AI agents edit the same live document.
 
-> Status: early, local-only. See [Roadmap](#roadmap).
+> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select and responsive breakpoints are in, layers panel is next. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -39,8 +39,8 @@ The repo's `.mcp.json` already registers it for Claude Code. Each MCP connection
 | `get_selection` | What each person has selected |
 | `list_tokens` | Design tokens and the CSS value to use |
 | `get_layout` | Real rendered boxes and computed styles (needs an editor open) |
-| `create_nodes` | Create node subtrees or new artboards, atomically |
-| `update_nodes` | Patch names, text, styles, attributes, frames |
+| `create_nodes` | Create node subtrees or new artboards, atomically (with optional `breakpoints` overrides) |
+| `update_nodes` | Patch names, text, styles, breakpoint overrides, attributes, frames |
 | `move_node` | Reparent or reorder |
 | `delete_nodes` | Delete nodes and descendants |
 | `undo_agent_change` | Revert that agent's last call |
@@ -69,11 +69,21 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 - [x] **M1 — Canvas foundation:** scene graph, shadow-DOM artboards, editing tools
 - [x] **M2 — AI bridge:** MCP server, live sync, agent presence and cursors
-- [ ] **M3 — Single-user editing:** layers, alignment, snapping, multi-select
+- [ ] **M3 — Single-user editing** (in progress)
+  - [x] Multi-select: marquee, shift-click, ⌘A, group move
+  - [x] Responsive breakpoints: per-node tablet (≤ 1024px) and mobile (≤ 600px) overrides, previewed by artboard width, with Desktop/Tablet/Mobile width presets
+  - [ ] Clone an artboard at mobile/tablet width to compare layouts side by side
+  - [ ] Per-breakpoint text, visibility and tag (overrides are styles-only today)
+  - [ ] Layers panel: rename, hide/lock, collapse, drag to reorder
+  - [ ] Align and distribute
+  - [ ] Snapping and smart guides
 - [ ] Components and variants
 - [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
+- [ ] Code export (HTML/CSS with the artboard reset and `@media` breakpoints)
 - [ ] Desktop shell (Electron)
 
 ## Changelog
 
+- **2026-10-17:** Responsive breakpoints. Nodes carry `breakpoints.tablet` (≤ 1024px) and `breakpoints.mobile` (≤ 600px) style overrides, desktop-first (narrower wins), edited in the Inspector's Tablet/Mobile sections or via `create_nodes`/`update_nodes`. Artboards have Desktop/Tablet/Mobile width presets. On the canvas they follow the artboard's width (container query); `compileBreakpointCSS` emits the same rules as `@media` for export.
+- **2026-10-17:** M3 started. Multi-select: marquee on empty canvas, group move as one undo step, ⌘A, group outline.
 - **2026-10-17:** Renamed from GridForge to Weft. M2 complete: per-session agent identity, agent cursors, MCP tools.

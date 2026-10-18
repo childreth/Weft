@@ -180,6 +180,7 @@ export function SelectionOverlay({ containerRef, draft }: Props) {
       {boxes.selected.map((b, i) => (
         <div key={i} className="gf-box gf-box-selected" style={boxStyle(b)} />
       ))}
+      {boxes.selected.length > 1 && <div className="gf-box gf-box-group" data-testid="group-box" style={boxStyle(unionBox(boxes.selected))} />}
       {single && singleBox && resizable &&
         HANDLES.map((h) => (
           <div
@@ -198,6 +199,12 @@ export function SelectionOverlay({ containerRef, draft }: Props) {
       {draft && <div className="gf-box gf-box-draft" style={boxStyle(draft)} />}
     </div>
   );
+}
+
+function unionBox(boxes: Box[]): Box {
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  return { x, y, w: Math.max(...boxes.map((b) => b.x + b.w)) - x, h: Math.max(...boxes.map((b) => b.y + b.h)) - y };
 }
 
 function boxStyle(b: Box) {
