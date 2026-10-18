@@ -53,7 +53,7 @@ describe('MCP tools', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
-        'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'get_canvas', 'get_layout', 'get_selection',
+        'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_selection',
         'list_tokens', 'move_node', 'select_nodes', 'undo_agent_change', 'update_nodes',
       ].sort(),
     );
@@ -181,6 +181,18 @@ describe('MCP tools', () => {
     const ids = [page!.id, ...created.created.map((c: { id: string }) => c.id)];
     await call('align_nodes', { doc: 'arrange', ids, align: 'top' });
     expect(ids.map((id) => room.doc.getNode(id)!.frame!.y)).toEqual([0, 0, 0]);
+  });
+
+  it('clones an artboard at mobile width beside the original', async () => {
+    const room = server.rooms.get('clone');
+    const [page] = room.doc.getTree();
+    const { data } = await call('duplicate_node', { doc: 'clone', id: page!.id, name: 'Mobile', frame: { width: 390 } });
+    const copy = room.doc.getNode(data.id)!;
+    expect(copy).toMatchObject({ name: 'Mobile', frame: { width: 390, y: page!.frame!.y, height: page!.frame!.height } });
+    expect(copy.frame!.x).toBeGreaterThan(page!.frame!.x + page!.frame!.width);
+    expect(room.doc.getDescendantIds(copy.id)).toHaveLength(room.doc.getDescendantIds(page!.id).length);
+    await call('undo_agent_change', { doc: 'clone' });
+    expect(room.doc.has(copy.id)).toBe(false);
   });
 
   it('lists tokens as ready-to-use CSS values', async () => {

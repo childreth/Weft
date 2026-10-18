@@ -30,6 +30,7 @@ Model:
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 
+- Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
 - Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
 
 Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
@@ -365,6 +366,32 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
         room.doc.moveNode(id, parentId, beforeId, agent.identity.origin);
         touched.add(id);
         return { moved: id };
+      });
+    },
+  );
+
+  server.registerTool(
+    'duplicate_node',
+    {
+      title: 'Duplicate node',
+      description:
+        'Deep-copies a node and its subtree with fresh ids. A copied artboard lands to the right of the artboards on its row; pass frame (e.g. {"width": 390}) to clone it at another width, which previews its breakpoint overrides. Other nodes are inserted right after the original.',
+      inputSchema: {
+        doc: docParam,
+        id: z.string(),
+        name: z.string().optional().describe("Name for the copy; defaults to the original's"),
+        frame: frameSchema.optional().describe('Artboards only: placement/size overrides for the copy'),
+        model: modelParam,
+      },
+    },
+    async ({ doc, id, name, frame, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'duplicate_node', (touched, report) => {
+        const copy = room.doc.duplicateNode(id, { name, frame }, agent.identity.origin);
+        touched.add(copy);
+        for (const d of room.doc.getDescendantIds(copy)) touched.add(d);
+        Object.assign(report, { kind: 'create', roots: [copy], flash: [copy], action: `Duplicating ${nameOf(room, id)}` });
+        return { id: copy };
       });
     },
   );

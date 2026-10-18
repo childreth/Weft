@@ -82,6 +82,8 @@ export class GridError extends Error {
 const ATTRIBUTE_NAME = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
 const UNSAFE_STYLE_VALUE = /[;{}<>]/;
 const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800 };
+/** Space left between an artboard and a duplicate placed beside it. */
+const ARTBOARD_GAP = 100;
 
 export function readNode(y: YNode): SceneNode {
   const styles = y.get('styles') as Y.Map<string> | undefined;
@@ -471,6 +473,54 @@ export class GridDocument {
       plan.style(parent.id, 'justifyContent', 'space-between');
     }
     return plan.list();
+  }
+
+  /**
+   * Deep-copies a node and its subtree with fresh ids, returning the copy's id.
+   * A copied artboard lands to the right of the artboards on its row unless
+   * `frame` places it (pass just `width` to clone it at another breakpoint's
+   * width); any other node is inserted right after the original.
+   */
+  duplicateNode(
+    id: string,
+    options: { name?: string; frame?: Partial<ArtboardFrame> } = {},
+    origin: Origin = ORIGIN_LOCAL,
+  ): string {
+    const [tree] = this.getTree(id);
+    const source = this.getNode(id)!;
+    if (options.frame && source.parentId !== null) throw new GridError('Only artboards have a canvas frame');
+    const siblings = this.getChildren(source.parentId);
+    const beforeId = siblings[siblings.findIndex((n) => n.id === id) + 1]?.id ?? null;
+    let frame: ArtboardFrame | undefined;
+    if (source.frame) {
+      frame = { ...source.frame, ...options.frame };
+      if (options.frame?.x === undefined) {
+        const f = frame;
+        const row = siblings.flatMap((n) => (n.frame && n.frame.y < f.y + f.height && n.frame.y + n.frame.height > f.y ? [n.frame] : []));
+        frame.x = Math.max(...row.map((r) => r.x + r.width)) + ARTBOARD_GAP;
+      }
+    }
+    const copy = (node: SceneTree, parentId: string | null, before: string | null, root: boolean): string => {
+      const newId = this.createNode(
+        {
+          type: node.type,
+          tag: node.tag,
+          name: root ? (options.name ?? node.name) : node.name,
+          parentId,
+          beforeId: before,
+          text: node.text,
+          styles: node.styles,
+          breakpoints: node.breakpoints,
+          attributes: node.attributes,
+          frame: root ? frame : node.frame,
+        },
+        origin,
+      );
+      if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
+      for (const child of node.children) copy(child, newId, null, false);
+      return newId;
+    };
+    return this.transact(() => copy(tree!, source.parentId, beforeId, true), origin);
   }
 
   toSnapshot(): Snapshot {

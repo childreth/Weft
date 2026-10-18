@@ -6,6 +6,7 @@ import {
   ORIGIN_AGENT,
   seedLandingPage,
   type Alignment,
+  type ArtboardFrame,
   type Axis,
   type CreateNodeInput,
   type NodePatch,
@@ -84,6 +85,8 @@ export const agentApi = {
   moveNode: (id: string, parentId: string | null, beforeId: string | null = null) =>
     doc.moveNode(id, parentId, beforeId, ORIGIN_AGENT),
   deleteNodes: (ids: string[]) => doc.deleteNodes(ids, ORIGIN_AGENT),
+  duplicateNode: (id: string, options?: { name?: string; frame?: Partial<ArtboardFrame> }) =>
+    doc.duplicateNode(id, options, ORIGIN_AGENT),
   alignNodes: (ids: string[], align: Alignment) => doc.alignNodes(ids, align, ORIGIN_AGENT),
   distributeNodes: (ids: string[], axis: Axis) => doc.distributeNodes(ids, axis, ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),

@@ -2,7 +2,7 @@
 
 An AI-native design canvas where the canvas *is* the browser's DOM and CSS engine. Edit pages the way you would in Figma, but every artboard is real HTML and CSS, so what you design is what you ship. People and AI agents edit the same live document.
 
-> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select, responsive breakpoints, the layers panel, align/distribute and snapping are in; cloning artboards at breakpoint widths is next. See [Roadmap](#roadmap).
+> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select, responsive breakpoints, the layers panel, align/distribute, snapping and artboard cloning are in. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -42,6 +42,7 @@ The repo's `.mcp.json` already registers it for Claude Code. Each MCP connection
 | `create_nodes` | Create node subtrees or new artboards, atomically (with optional `breakpoints` overrides) |
 | `update_nodes` | Patch names, text, styles, breakpoint overrides, attributes, frames |
 | `move_node` | Reparent or reorder |
+| `duplicate_node` | Deep-copy a node; clone an artboard at another width (`frame: {width: 390}`) beside the original |
 | `align_nodes` | Align left/center/right/top/middle/bottom: artboards by frame, elements via flex/grid CSS (`justifyContent`, `alignSelf`, `justifySelf`) |
 | `distribute_nodes` | Even spacing: artboard gaps, or `justifyContent: space-between` on a flex parent |
 | `delete_nodes` | Delete nodes and descendants |
@@ -74,7 +75,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 - [ ] **M3 — Single-user editing** (in progress)
   - [x] Multi-select: marquee, shift-click, ⌘A, group move
   - [x] Responsive breakpoints: per-node tablet (≤ 1024px) and mobile (≤ 600px) overrides, previewed by artboard width, with Desktop/Tablet/Mobile width presets
-  - [ ] Clone an artboard at mobile/tablet width to compare layouts side by side
+  - [x] Clone an artboard at mobile/tablet width to compare layouts side by side (Inspector "+ Mobile"/"+ Tablet"); ⌘D duplicates the selection
   - [ ] Per-breakpoint text, visibility and tag (overrides are styles-only today)
   - [x] Layers panel: double-click rename, hide/lock toggles (locked layers are click-through on the canvas), collapse/expand, drag to reorder and reparent, shift-click range and ⌘-click toggle
   - [x] Align and distribute: artboards by frame; elements in flex/grid parents get CSS alignment, not coordinates (Inspector buttons, ⌥A/H/D/W/V/S, ⌥⇧H/V)
@@ -86,6 +87,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-17:** Duplicate and clone at width. `GridDocument.duplicateNode` deep-copies a subtree; artboard copies land to the right of their row. The Inspector's Artboard section clones at Desktop/Tablet/Mobile width beside the original (named "— Mobile" etc.) so breakpoint layouts compare side by side. ⌘D duplicates the selection. New MCP tool `duplicate_node` and `window.weft.agent.duplicateNode`.
 - **2026-10-17:** Snapping and smart guides. Dragging artboards snaps the selection's edges and centers to other visible artboards within 6 screen px, and resizing snaps the edges being dragged; guides show what lined up. Hold ⌘/Ctrl to move freely.
 - **2026-10-17:** Align and distribute. Artboards align and distribute by their canvas frames. Elements are aligned through CSS: the flex main axis sets the parent's `justifyContent`, the cross axis the child's `alignSelf`, grid children get `justifySelf`/`alignSelf`; distribute sets `space-between` on a flex parent. Inspector Align section (inapplicable buttons are disabled with the reason), ⌥ shortcuts, new MCP tools `align_nodes` and `distribute_nodes`, and `window.weft.agent.alignNodes`/`distributeNodes`.
 - **2026-10-17:** Layers panel. Double-click to rename, hide and lock toggles per row (locked layers can't be picked or moved on the canvas), collapse/expand with auto-reveal of selected layers, drag to reorder or reparent (multi-selection moves together, one undo step), shift-click range select and ⌘-click toggle.

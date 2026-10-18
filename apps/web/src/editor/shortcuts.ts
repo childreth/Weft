@@ -8,6 +8,15 @@ const ALIGN_KEYS: Record<string, Alignment> = {
 };
 const DISTRIBUTE_KEYS: Record<string, Axis> = { KeyH: 'horizontal', KeyV: 'vertical' };
 
+/** Drops ids whose ancestor is also in the list. */
+function outermost(ids: readonly string[]): string[] {
+  const set = new Set(ids);
+  return ids.filter((id) => {
+    for (let p = scene.nodes.get(id)?.parentId; p; p = scene.nodes.get(p)?.parentId) if (set.has(p)) return false;
+    return true;
+  });
+}
+
 function isTyping(e: KeyboardEvent): boolean {
   const target = e.composedPath()[0];
   if (!(target instanceof HTMLElement)) return false;
@@ -36,6 +45,12 @@ function onKeyDown(e: KeyboardEvent) {
   if (mod && key === '0') return void (e.preventDefault(), zoomTo(1));
   if (e.shiftKey && e.code === 'Digit1') return void (e.preventDefault(), zoomToFit());
   if (e.shiftKey && e.code === 'Digit2') return void (e.preventDefault(), zoomToFit(state.selection));
+  if (mod && key === 'd') {
+    e.preventDefault();
+    const copies = run(() => doc.transact(() => outermost(state.selection).map((id) => doc.duplicateNode(id))));
+    if (copies?.length) state.select(copies);
+    return;
+  }
   if (mod && key === 'a') {
     e.preventDefault();
     const first = state.selection[0] ? scene.nodes.get(state.selection[0]) : undefined;

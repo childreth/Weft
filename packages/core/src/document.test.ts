@@ -232,3 +232,35 @@ describe('align and distribute', () => {
     expect(styles(col).justifyContent).toBe('start');
   });
 });
+
+describe('duplicateNode', () => {
+  it('deep-copies a subtree with fresh ids right after the original, as one undo step', () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    const root = artboard(doc);
+    const card = doc.createNode({ type: 'frame', parentId: root, name: 'Card', styles: { gap: '4px' }, breakpoints: { mobile: { gap: '2px' } } });
+    doc.createNode({ type: 'text', parentId: card, text: 'hi', attributes: { title: 't' } });
+    const last = doc.createNode({ type: 'text', parentId: root, text: 'end' });
+    doc.updateNode(card, { hidden: true });
+
+    const copy = doc.duplicateNode(card);
+    expect(doc.getChildren(root).map((n) => n.id)).toEqual([card, copy, last]);
+    const [tree] = doc.getTree(copy);
+    expect(tree).toMatchObject({ name: 'Card', hidden: true, styles: { gap: '4px' }, breakpoints: { mobile: { gap: '2px' } } });
+    expect(tree!.children[0]).toMatchObject({ text: 'hi', attributes: { title: 't' } });
+    expect(tree!.children[0]!.id).not.toBe(doc.getChildren(card)[0]!.id);
+    expect(() => doc.duplicateNode(card, { frame: { width: 10 } })).toThrow(/Only artboards/);
+
+    history.undo();
+    expect(doc.getChildren(root).map((n) => n.id)).toEqual([card, last]);
+  });
+
+  it('clones an artboard at another width, beside the artboards on its row', () => {
+    const doc = new GridDocument();
+    const a = doc.createNode({ type: 'frame', name: 'Page', frame: { x: 0, y: 0, width: 1440, height: 900 } });
+    doc.createNode({ type: 'frame', name: 'Other row', frame: { x: 5000, y: 2000, width: 100, height: 100 } });
+    doc.createNode({ type: 'frame', name: 'Same row', frame: { x: 1600, y: 400, width: 400, height: 900 } });
+    const mobile = doc.duplicateNode(a, { name: 'Page — Mobile', frame: { width: 390 } });
+    expect(doc.getNode(mobile)).toMatchObject({ name: 'Page — Mobile', frame: { x: 2100, y: 0, width: 390, height: 900 } });
+  });
+});

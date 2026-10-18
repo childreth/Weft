@@ -15,11 +15,24 @@ import {
 } from '@weft/core';
 import { doc, run, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
+import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
 
 const TOKENS = flattenTokens(defaultTokens.tokens);
 const TOKEN_SCOPE_CSS = compileTokensCSS(defaultTokens, '.gf-token-scope');
+
+const PRESET_SUFFIX = new RegExp(` — (${ARTBOARD_PRESETS.map((p) => p.label).join('|')})$`);
+
+/** Copies an artboard at a preset's width beside the original, then shows both. */
+function cloneAtPreset(id: string, name: string, preset: (typeof ARTBOARD_PRESETS)[number]) {
+  const copy = run(() =>
+    doc.duplicateNode(id, { name: `${name.replace(PRESET_SUFFIX, '')} — ${preset.label}`, frame: { width: preset.width } }),
+  );
+  if (!copy) return;
+  useEditor.getState().select([copy]);
+  zoomToFit([id, copy]);
+}
 
 const label = (prop: string) => prop.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
 
@@ -106,6 +119,19 @@ function NodeInspector({ id }: { id: string }) {
                 onClick={() => run(() => doc.updateNode(id, { frame: { width: p.width } }))}
               >
                 {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="gf-presets" role="group" aria-label="Clone at width">
+            {ARTBOARD_PRESETS.filter((p) => p.width !== node.frame!.width).map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                className="gf-input gf-preset"
+                title={`Duplicate this artboard at ${p.width}px, beside it`}
+                onClick={() => cloneAtPreset(id, node.name, p)}
+              >
+                + {p.label}
               </button>
             ))}
           </div>
