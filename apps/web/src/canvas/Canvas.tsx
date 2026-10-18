@@ -6,10 +6,10 @@ import {
   VOID_TAGS,
   type ArtboardFrame,
 } from '@weft/core';
-import { doc, history, isLocked, run, scene, useChildren } from '../editor/editor';
+import { doc, history, isLocked, recordHugHeight, run, scene, useChildren } from '../editor/editor';
 import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';
-import { nodeElements } from './elements';
+import { artboardHeight, nodeElements } from './elements';
 import { commitActiveText } from './NodeView';
 import { SelectionOverlay, type Box, type Handle } from './SelectionOverlay';
 import { SNAP_DISTANCE, snapMove, snapResize, unionFrames, type Guide } from './snapping';
@@ -76,12 +76,20 @@ function resizeFrame(f: ArtboardFrame, handle: Handle, dx: number, dy: number): 
 }
 
 
+/** An artboard's frame with its rendered height when it hugs its content (the stored one may be stale). */
+function liveFrame(id: string): ArtboardFrame | undefined {
+  const frame = scene.nodes.get(id)?.frame;
+  if (frame?.heightMode !== 'hug') return frame;
+  return { ...frame, height: artboardHeight(id) ?? frame.height };
+}
+
 /** Frames of the visible artboards other than `ids`: what a drag can snap to. */
 function snapTargets(ids: Iterable<string>): ArtboardFrame[] {
   const skip = new Set(ids);
   return scene.children(null).flatMap((id) => {
     const n = scene.nodes.get(id);
-    return n?.frame && !n.hidden && !skip.has(id) ? [n.frame] : [];
+    const frame = n && !n.hidden && !skip.has(id) ? liveFrame(id) : undefined;
+    return frame ? [frame] : [];
   });
 }
 
@@ -167,7 +175,7 @@ export function Canvas() {
 
       const handle = handleFromEvent(e);
       if (handle) {
-        const frame = scene.nodes.get(handle.id)?.frame;
+        const frame = liveFrame(handle.id);
         if (!frame) return;
         history.beginGesture();
         begin({ kind: 'resize', ...handle, sx: e.clientX, sy: e.clientY, frame, others: snapTargets([handle.id]) }, e);
@@ -221,7 +229,7 @@ export function Canvas() {
       const frames = new Map<string, ArtboardFrame>();
       for (const id of inGroup ? useEditor.getState().selection : [hit.id]) {
         const n = scene.nodes.get(id);
-        if (n?.frame && !n.locked) frames.set(id, n.frame);
+        if (n?.frame && !n.locked) frames.set(id, liveFrame(id)!);
       }
       if (frames.size > 0) {
         begin(
@@ -303,7 +311,10 @@ export function Canvas() {
             frame = snap.frame;
             showGuides(snap.guides);
           }
-          run(() => doc.updateNode(g.id, { frame }));
+          // A hugging artboard keeps hugging while only its width changes; dragging
+          // a top or bottom edge sets a height, which makes it fixed.
+          const keepHug = g.frame.heightMode === 'hug' && !/[ns]/.test(g.handle);
+          run(() => doc.updateNode(g.id, { frame: keepHug ? { x: frame.x, width: frame.width } : { ...frame, heightMode: 'fixed' } }));
           break;
         }
         case 'create': {
@@ -334,10 +345,17 @@ export function Canvas() {
         case 'marquee':
           setDraft(null);
           break;
-        case 'resize':
+        case 'resize': {
           showGuides([]);
-          history.endGesture();
+          // Record the content height a hugging artboard settled at, in the same undo step,
+          // after the last width change has rendered.
+          const id = g.id;
+          requestAnimationFrame(() => {
+            recordHugHeight(id);
+            history.endGesture();
+          });
           break;
+        }
         case 'create': {
           setDraft(null);
           const a = toCanvas(g.sx, g.sy);

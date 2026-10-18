@@ -81,7 +81,7 @@ export class GridError extends Error {
 
 const ATTRIBUTE_NAME = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
 const UNSAFE_STYLE_VALUE = /[;{}<>]/;
-const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800 };
+const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800, heightMode: 'hug' };
 /** Space left between an artboard and a duplicate placed beside it. */
 const ARTBOARD_GAP = 100;
 
@@ -134,15 +134,26 @@ export function changedNodeIds(events: ReadonlyArray<Y.YEvent<any>>, nodes: Y.Ma
 }
 
 function normalizeFrame(frame: ArtboardFrame): ArtboardFrame {
-  for (const v of Object.values(frame)) {
-    if (!Number.isFinite(v)) throw new GridError('Artboard frame values must be finite numbers');
+  for (const key of ['x', 'y', 'width', 'height'] as const) {
+    if (!Number.isFinite(frame[key])) throw new GridError('Artboard frame values must be finite numbers');
   }
-  return {
+  if (frame.heightMode !== undefined && frame.heightMode !== 'fixed' && frame.heightMode !== 'hug') {
+    throw new GridError(`Artboard heightMode must be "fixed" or "hug"`);
+  }
+  const out: ArtboardFrame = {
     x: frame.x,
     y: frame.y,
     width: Math.max(1, frame.width),
     height: Math.max(1, frame.height),
   };
+  if (frame.heightMode === 'hug') out.heightMode = 'hug';
+  return out;
+}
+
+/** Merges a frame patch. Setting a height without a mode makes the artboard fixed. */
+function patchFrame(frame: ArtboardFrame, patch: Partial<ArtboardFrame>): ArtboardFrame {
+  const heightMode = patch.heightMode ?? (patch.height !== undefined ? 'fixed' : frame.heightMode);
+  return normalizeFrame({ ...frame, ...patch, heightMode });
 }
 
 function assertStyles(styles: Partial<Record<string, string | null>>): void {
@@ -336,7 +347,7 @@ export class GridDocument {
         else if (patch[flag] === false) y.delete(flag);
       }
       if (patch.frame) {
-        y.set('frame', normalizeFrame({ ...(y.get('frame') as ArtboardFrame), ...patch.frame }));
+        y.set('frame', patchFrame(y.get('frame') as ArtboardFrame, patch.frame));
       }
       if (patch.styles) {
         const styles = y.get('styles') as Y.Map<string>;
@@ -493,7 +504,10 @@ export class GridDocument {
     const beforeId = siblings[siblings.findIndex((n) => n.id === id) + 1]?.id ?? null;
     let frame: ArtboardFrame | undefined;
     if (source.frame) {
-      frame = { ...source.frame, ...options.frame };
+      const patch = { ...options.frame };
+      // A copy at another width can't keep the original's content height: hug it.
+      if (patch.width !== undefined && patch.height === undefined) patch.heightMode ??= 'hug';
+      frame = patchFrame(source.frame, patch);
       if (options.frame?.x === undefined) {
         const f = frame;
         const row = siblings.flatMap((n) => (n.frame && n.frame.y < f.y + f.height && n.frame.y + n.frame.height > f.y ? [n.frame] : []));

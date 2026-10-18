@@ -23,6 +23,8 @@ URL parameters:
 | `?offline` | Browser-only document stored in IndexedDB, no server |
 | `?ephemeral` | Fresh in-memory seed (used by tests) |
 
+![The Weft editor: layers, a dark-mode mobile dashboard artboard with an agent cursor, and the Inspector](docs/images/editor.jpg)
+
 ## Connect an AI agent (MCP)
 
 The server speaks MCP over Streamable HTTP at `http://127.0.0.1:4510/mcp`. With the server running:
@@ -79,6 +81,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [ ] Per-breakpoint text, visibility and tag (overrides are styles-only today)
   - [x] Layers panel: double-click rename, hide/lock toggles (locked layers are click-through on the canvas), collapse/expand, drag to reorder and reparent, shift-click range and ⌘-click toggle
   - [x] Align and distribute: artboards by frame; elements in flex/grid parents get CSS alignment, not coordinates (Inspector buttons, ⌥A/H/D/W/V/S, ⌥⇧H/V)
+  - [x] Artboard height: Hug (fits content, follows width changes live; default for new artboards and clones at another width) or Fixed (clips overflow, marked with a dashed red edge)
   - [x] Snapping and smart guides: artboard move and resize snap edges and centers to other artboards (hold ⌘/Ctrl to move freely)
 - [ ] Components and variants
 - [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
@@ -89,6 +92,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-18:** Artboard Hug/Fixed height. `frame.heightMode: 'hug'` sizes an artboard to its content, so narrowing it grows it live; dragging a top/bottom handle or setting a height makes it fixed, and fixed artboards mark clipped content. New artboards, the seeded page and clones at another width hug by default. Inspector Fixed/Hug toggle; `create_nodes`/`update_nodes`/`duplicate_node` accept `heightMode` (new MCP artboards hug unless given a height).
 - **2026-10-18:** Roadmap: Google Fonts typeface picker (self-hosted fonts later, for offline use) and in-app local model assist (suggested breakpoint overrides), separate from MCP agents. Layers panel is resizable by dragging its right edge (240–340px, remembered per browser). Fix: `create_nodes`/`update_nodes` accept a single breakpoint (e.g. only `mobile`); Zod 4 records with enum keys were requiring every breakpoint, pushing agents to pass `tablet: null`, which clears tablet overrides.
 - **2026-10-17:** Duplicate and clone at width. `GridDocument.duplicateNode` deep-copies a subtree; artboard copies land to the right of their row. The Inspector's Artboard section clones at Desktop/Tablet/Mobile width beside the original (named "— Mobile" etc.) so breakpoint layouts compare side by side. ⌘D duplicates the selection. New MCP tool `duplicate_node` and `window.weft.agent.duplicateNode`.
 - **2026-10-17:** Snapping and smart guides. Dragging artboards snaps the selection's edges and centers to other visible artboards within 6 screen px, and resizing snaps the edges being dragged; guides show what lined up. Hold ⌘/Ctrl to move freely.

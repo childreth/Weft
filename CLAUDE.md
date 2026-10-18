@@ -11,6 +11,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 ## Commands
 - `pnpm dev` — server + editor at http://localhost:5173. URL params: `?doc=name` (document), `?offline` (browser-only IndexedDB), `?ephemeral` (fresh in-memory seed, used by tests)
 - MCP: `.mcp.json` registers `http://127.0.0.1:4510/mcp`; the server must be running
+- In this repo, "the selection", "this section", "the canvas" etc. mean the Weft editor: use the `weft` MCP tools (`get_selection`, `get_canvas`). Use Figma tools only when the user names Figma. If the `weft` tools are missing, say so (start `pnpm dev`, then `/mcp` to connect) instead of falling back to another design tool.
 - `pnpm test` — core unit tests (vitest)
 - `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`)
 - `pnpm typecheck`
@@ -24,6 +25,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - Overlay chrome measures in a layout effect (camera changes) plus a rAF loop (other layout changes); never only one.
 - Canvas pointer handling uses native listeners: React dispatches events from portals into shadow roots twice.
 - Artboard CSS = compiled tokens + `ARTBOARD_RESET_CSS`; exported code must ship the same reset.
+- Artboard `frame.heightMode: 'hug'` renders with no height (content decides). Its stored `height` is only a last-measured value, written by `recordHugHeight` at the end of local gestures, never on render (every open editor would write it). Canvas code that needs the real box (snapping, resize) reads the DOM via `artboardHeight`.
 - Responsive: per-node `breakpoints` overrides (`BREAKPOINTS` in `schema.ts`, widest first so narrower wins) compile through `compileBreakpointCSS`. The canvas feeds it an artboard container query (resize an artboard to preview), export must use `@media`. A new breakpoint needs only a `BREAKPOINTS` entry; the Inspector, MCP schema and instructions derive from it.
 - Verify UI changes with Playwright (screenshots) before calling them done.
 - Keep `README.md` current: when a change adds or alters a command, URL param, MCP tool, package, or roadmap item, update the README in the same commit and add a dated line to its Changelog.

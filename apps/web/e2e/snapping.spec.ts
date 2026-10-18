@@ -8,6 +8,8 @@ async function open(page: Page) {
   await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
   const setup = await page.evaluate((zoom) => {
     const { doc, editor } = window.weft;
+    // Fixed height, so A's bottom edge is its stored frame.
+    doc.updateNode(doc.getChildren(null)[0]!.id, { frame: { height: 860 } });
     const a = doc.getChildren(null)[0]!;
     const right = a.frame!.x + a.frame!.width;
     const b = doc.createNode({ type: 'frame', name: 'B', frame: { x: right + 300, y: a.frame!.y + 200, width: 400, height: 300 }, styles: { backgroundColor: '#fff' } });

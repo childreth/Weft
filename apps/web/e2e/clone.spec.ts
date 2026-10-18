@@ -29,7 +29,7 @@ test('clone an artboard at mobile width beside the original; breakpoints preview
   expect(copy).not.toBe(original);
   const node = await page.evaluate((id) => window.weft.doc.getNode(id)!, copy);
   expect(node.name).toBe('Landing — Mobile');
-  expect(node.frame).toMatchObject({ width: 390, y: frame.y, height: frame.height });
+  expect(node.frame).toMatchObject({ width: 390, y: frame.y, heightMode: 'hug' });
   expect(node.frame!.x).toBeGreaterThan(frame.x + frame.width);
 
   expect(await heroColumns(page, original)).toBe(2);
