@@ -1,12 +1,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  BREAKPOINTS,
+  BREAKPOINT_IDS,
   DEFAULT_ARTBOARD_STYLES,
   GridError,
   STYLE_PROPS,
   defaultTokens,
   flattenTokens,
   type ArtboardFrame,
+  type BreakpointStyles,
   type NodePatch,
   type SceneTree,
   type SemanticTag,
@@ -23,6 +26,7 @@ Model:
 - styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor). Values are CSS strings. Unknown properties are rejected; pass null to remove one.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
+- Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 
 Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
 
@@ -36,6 +40,9 @@ const modelParam = z
   .max(60)
   .optional()
   .describe('Your model name, e.g. "Claude Opus 5.5" — shown on your cursor in the editor');
+const BREAKPOINT_STYLES = `Style overrides per breakpoint (${BREAKPOINT_IDS.join(', ')}), layered over styles`;
+const breakpointKey = z.enum(BREAKPOINT_IDS as [string, ...string[]]);
+
 const frameSchema = z
   .object({ x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() })
   .partial();
@@ -46,6 +53,7 @@ interface NodeSpec {
   name?: string;
   text?: string;
   styles?: Record<string, string>;
+  breakpoints?: Record<string, Record<string, string>>;
   attributes?: Record<string, string>;
   frame?: Partial<ArtboardFrame>;
   children?: NodeSpec[];
@@ -58,6 +66,7 @@ const nodeSpec: z.ZodType<NodeSpec> = z.lazy(() =>
     name: z.string().optional().describe('Layer name shown in the layers panel'),
     text: z.string().optional().describe('Text content (text nodes only)'),
     styles: z.record(z.string(), z.string()).optional().describe(AUTHORED_STYLES),
+    breakpoints: z.record(breakpointKey, z.record(z.string(), z.string())).optional().describe(BREAKPOINT_STYLES),
     attributes: z.record(z.string(), z.string()).optional().describe('HTML attributes such as aria-label, href, type, alt'),
     frame: frameSchema.optional().describe('Canvas placement; only for new artboards (parentId null)'),
     children: z.array(nodeSpec).optional().describe('Child nodes (frames only)'),
@@ -75,6 +84,7 @@ function compact(tree: SceneTree, depth: number): Record<string, unknown> {
   if (tree.text !== undefined) out.text = tree.text;
   if (tree.frame) out.frame = tree.frame;
   if (Object.keys(tree.styles).length) out.styles = tree.styles;
+  if (tree.breakpoints) out.breakpoints = tree.breakpoints;
   if (Object.keys(tree.attributes).length) out.attributes = tree.attributes;
   if (tree.hidden) out.hidden = true;
   if (tree.locked) out.locked = true;
@@ -170,6 +180,7 @@ function createTree(
       name: spec.name,
       text: spec.text,
       styles,
+      breakpoints: spec.breakpoints as BreakpointStyles | undefined,
       attributes: spec.attributes,
       frame,
       parentId,
@@ -303,6 +314,10 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
               locked: z.boolean().optional(),
               frame: frameSchema.optional(),
               styles: z.record(z.string(), z.string().nullable()).optional().describe(AUTHORED_STYLES),
+              breakpoints: z
+                .record(breakpointKey, z.record(z.string(), z.string().nullable()).nullable())
+                .optional()
+                .describe(`${BREAKPOINT_STYLES}; merged like styles, null clears a whole breakpoint`),
               attributes: z.record(z.string(), z.string().nullable()).optional(),
             }),
           )
@@ -315,8 +330,8 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
       return mutate(room, agent, 'update_nodes', (touched, report) => {
         const only = updates.length === 1 ? updates[0]! : undefined;
         if (only?.text !== undefined) Object.assign(report, { kind: 'text', action: `Writing ${nameOf(room, only.id)}` });
-        else if (only) report.action = `${only.styles ? 'Styling' : 'Editing'} ${nameOf(room, only.id)}`;
-        else report.action = `${updates.every((u) => u.styles) ? 'Styling' : 'Editing'} ${plural(updates.length, 'node')}`;
+        else if (only) report.action = `${only.styles || only.breakpoints ? 'Styling' : 'Editing'} ${nameOf(room, only.id)}`;
+        else report.action = `${updates.every((u) => u.styles || u.breakpoints) ? 'Styling' : 'Editing'} ${plural(updates.length, 'node')}`;
         for (const { id, ...patch } of updates) {
           room.doc.updateNode(id, patch as NodePatch, agent.identity.origin);
           touched.add(id);

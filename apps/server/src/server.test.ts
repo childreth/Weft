@@ -98,6 +98,27 @@ describe('MCP tools', () => {
     expect(room.doc.getNode(pricing.children[1].children[0].id)!.text).toBe('Free');
   });
 
+  it('creates, updates and reads back breakpoint overrides', async () => {
+    const { data } = await call('create_nodes', {
+      doc: 'bp',
+      nodes: [
+        {
+          type: 'frame',
+          name: 'Cards',
+          frame: { width: 1200, height: 400 },
+          styles: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' },
+          breakpoints: { tablet: { gridTemplateColumns: 'repeat(2, 1fr)' }, mobile: { gridTemplateColumns: '1fr' } },
+        },
+      ],
+    });
+    const id = data.created[0].id;
+    await call('update_nodes', { doc: 'bp', updates: [{ id, breakpoints: { mobile: { gap: 'var(--space-2)' }, tablet: null } }] });
+    const { data: canvas } = await call('get_canvas', { doc: 'bp', rootId: id });
+    expect(canvas.nodes[0].breakpoints).toEqual({ mobile: { gridTemplateColumns: '1fr', gap: 'var(--space-2)' } });
+    const bad = await call('update_nodes', { doc: 'bp', updates: [{ id, breakpoints: { watch: { gap: '1px' } } }] });
+    expect(bad.isError).toBe(true);
+  });
+
   it('rolls back a batch that fails validation partway', async () => {
     const room = server.rooms.get('atomic');
     const before = room.doc.nodes.size;

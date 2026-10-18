@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import {
+  ARTBOARD_PRESETS,
+  BREAKPOINTS,
   STYLE_PROPS,
   compileTokensCSS,
   defaultTokens,
@@ -7,6 +9,7 @@ import {
   getStyleMeta,
   tagsFor,
   type ArtboardFrame,
+  type BreakpointId,
   type SemanticTag,
   type StyleProp,
 } from '@weft/core';
@@ -55,8 +58,6 @@ function TokenDatalists() {
 function NodeInspector({ id }: { id: string }) {
   const node = useNode(id);
   if (!node) return null;
-  const present = STYLE_PROPS.filter((p) => node.styles[p] !== undefined);
-  const missing = STYLE_PROPS.filter((p) => node.styles[p] === undefined);
 
   const setFrame = (key: keyof ArtboardFrame, value: string) => {
     const n = Number(value);
@@ -93,6 +94,19 @@ function NodeInspector({ id }: { id: string }) {
               </Row>
             ))}
           </div>
+          <div className="gf-presets" role="group" aria-label="Preview width">
+            {ARTBOARD_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                className={`gf-input gf-preset${node.frame!.width === p.width ? ' is-active' : ''}`}
+                title={`Resize to ${p.width}px`}
+                onClick={() => run(() => doc.updateNode(id, { frame: { width: p.width } }))}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </Section>
       )}
 
@@ -107,40 +121,78 @@ function NodeInspector({ id }: { id: string }) {
         </Section>
       )}
 
-      <Section
-        title="Styles"
-        actions={
-          <select
-            className="gf-input gf-add-style"
-            aria-label="Add style property"
-            value=""
-            onChange={(e) => {
-              const prop = e.target.value as StyleProp;
-              const meta = getStyleMeta(prop);
-              const initial = meta.options?.[0] ?? (tokenOptions(prop)[0] ? `var(${tokenOptions(prop)[0]!.cssVar})` : 'auto');
-              run(() => doc.updateNode(id, { styles: { [prop]: initial } }));
-            }}
-          >
-            <option value="">+ Add</option>
-            {missing.map((p) => (
-              <option key={p} value={p}>{label(p)}</option>
-            ))}
-          </select>
-        }
-      >
-        {present.length === 0 && <p className="gf-empty">No styles</p>}
-        {present.map((prop) => (
-          <StyleRow key={prop} id={id} prop={prop} value={node.styles[prop]!} />
-        ))}
-      </Section>
+      <StyleSection title="Styles" styles={node.styles} set={(prop, v) => run(() => doc.updateNode(id, { styles: { [prop]: v } }))} />
+
+      {BREAKPOINTS.map((bp) => (
+        <StyleSection
+          key={bp.id}
+          title={`${bp.label} ≤ ${bp.maxWidth}px`}
+          breakpoint={bp.id}
+          styles={node.breakpoints?.[bp.id] ?? {}}
+          set={(prop, v) => run(() => doc.updateNode(id, { breakpoints: { [bp.id]: { [prop]: v } } }))}
+          initialFor={(prop) => node.styles[prop]}
+        />
+      ))}
     </>
   );
 }
 
-function StyleRow({ id, prop, value }: { id: string; prop: StyleProp; value: string }) {
+type SetStyle = (prop: StyleProp, value: string | null) => void;
+
+function StyleSection({
+  title,
+  styles,
+  set,
+  breakpoint,
+  initialFor,
+}: {
+  title: string;
+  styles: Partial<Record<StyleProp, string>>;
+  set: SetStyle;
+  breakpoint?: BreakpointId;
+  /** Starting value for a newly added property (breakpoints start from the base style). */
+  initialFor?: (prop: StyleProp) => string | undefined;
+}) {
+  const present = STYLE_PROPS.filter((p) => styles[p] !== undefined);
+  const missing = STYLE_PROPS.filter((p) => styles[p] === undefined);
+  return (
+    <Section
+      title={title}
+      actions={
+        <select
+          className="gf-input gf-add-style"
+          aria-label={breakpoint ? `Add ${breakpoint} override` : 'Add style property'}
+          value=""
+          onChange={(e) => {
+            const prop = e.target.value as StyleProp;
+            const meta = getStyleMeta(prop);
+            const initial =
+              initialFor?.(prop) ??
+              meta.options?.[0] ??
+              (tokenOptions(prop)[0] ? `var(${tokenOptions(prop)[0]!.cssVar})` : 'auto');
+            set(prop, initial);
+          }}
+        >
+          <option value="">+ Add</option>
+          {missing.map((p) => (
+            <option key={p} value={p}>{label(p)}</option>
+          ))}
+        </select>
+      }
+    >
+      <div data-breakpoint={breakpoint ?? 'base'}>
+        {present.length === 0 && <p className="gf-empty">{breakpoint ? 'No overrides' : 'No styles'}</p>}
+        {present.map((prop) => (
+          <StyleRow key={prop} prop={prop} value={styles[prop]!} set={(v) => set(prop, v)} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (v: string | null) => void }) {
   const meta = getStyleMeta(prop);
   const bound = value.includes('var(--');
-  const set = (v: string | null) => run(() => doc.updateNode(id, { styles: { [prop]: v } }));
   return (
     <div className="gf-style-row" data-style-prop={prop}>
       <span className="gf-row-label" title={prop}>{label(prop)}</span>

@@ -106,6 +106,31 @@ export function getStyleMeta(prop: StyleProp): StylePropMeta {
   return STYLE_PROP_META[prop];
 }
 
+/**
+ * Responsive breakpoints (desktop-first). A node's override styles for a
+ * breakpoint apply when the artboard (canvas) or viewport (export) is at most
+ * `maxWidth` wide. Keep this widest-first: later blocks win the cascade, so a
+ * narrower breakpoint overrides a wider one.
+ */
+export const BREAKPOINTS = [
+  { id: 'tablet', label: 'Tablet', maxWidth: 1024 },
+  { id: 'mobile', label: 'Mobile', maxWidth: 600 },
+] as const;
+
+/** Artboard widths that preview each layout, for quick resizing. */
+export const ARTBOARD_PRESETS = [
+  { label: 'Desktop', width: 1440 },
+  { label: 'Tablet', width: 768 },
+  { label: 'Mobile', width: 390 },
+] as const;
+export type BreakpointId = (typeof BREAKPOINTS)[number]['id'];
+export const BREAKPOINT_IDS = BREAKPOINTS.map((b) => b.id) as BreakpointId[];
+export type BreakpointStyles = Partial<Record<BreakpointId, StyleMap>>;
+
+export function isBreakpointId(key: string): key is BreakpointId {
+  return (BREAKPOINT_IDS as string[]).includes(key);
+}
+
 /** Canvas-space placement; only top-level nodes (artboards) have one. */
 export interface ArtboardFrame {
   x: number;
@@ -125,6 +150,8 @@ export interface SceneNode {
   index: string;
   text?: string;
   styles: StyleMap;
+  /** Style overrides per breakpoint, layered over `styles`. */
+  breakpoints?: BreakpointStyles;
   attributes: Record<string, string>;
   frame?: ArtboardFrame;
   hidden?: boolean;

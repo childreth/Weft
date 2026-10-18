@@ -291,3 +291,7 @@ body {
   font-weight: 700;
 }
 .gf-activity { color: #c4b5fd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.gf-presets { display: flex; gap: 6px; margin-top: 8px; }
+.gf-preset { flex: 1; cursor: pointer; text-align: center; }
+.gf-preset.is-active { border-color: var(--ui-accent); color: var(--ui-accent); }

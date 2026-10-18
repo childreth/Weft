@@ -24,6 +24,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - Overlay chrome measures in a layout effect (camera changes) plus a rAF loop (other layout changes); never only one.
 - Canvas pointer handling uses native listeners: React dispatches events from portals into shadow roots twice.
 - Artboard CSS = compiled tokens + `ARTBOARD_RESET_CSS`; exported code must ship the same reset.
+- Responsive: per-node `breakpoints` overrides (`BREAKPOINTS` in `schema.ts`, widest first so narrower wins) compile through `compileBreakpointCSS`. The canvas feeds it an artboard container query (resize an artboard to preview), export must use `@media`. A new breakpoint needs only a `BREAKPOINTS` entry; the Inspector, MCP schema and instructions derive from it.
 - Verify UI changes with Playwright (screenshots) before calling them done.
 - Keep `README.md` current: when a change adds or alters a command, URL param, MCP tool, package, or roadmap item, update the README in the same commit and add a dated line to its Changelog.
 

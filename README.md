@@ -39,8 +39,8 @@ The repo's `.mcp.json` already registers it for Claude Code. Each MCP connection
 | `get_selection` | What each person has selected |
 | `list_tokens` | Design tokens and the CSS value to use |
 | `get_layout` | Real rendered boxes and computed styles (needs an editor open) |
-| `create_nodes` | Create node subtrees or new artboards, atomically |
-| `update_nodes` | Patch names, text, styles, attributes, frames |
+| `create_nodes` | Create node subtrees or new artboards, atomically (with optional `breakpoints` overrides) |
+| `update_nodes` | Patch names, text, styles, breakpoint overrides, attributes, frames |
 | `move_node` | Reparent or reorder |
 | `delete_nodes` | Delete nodes and descendants |
 | `undo_agent_change` | Revert that agent's last call |
@@ -71,6 +71,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 - [x] **M2 — AI bridge:** MCP server, live sync, agent presence and cursors
 - [ ] **M3 — Single-user editing** (in progress)
   - [x] Multi-select: marquee, shift-click, ⌘A, group move
+  - [x] Responsive breakpoints: per-node tablet (≤ 1024px) and mobile (≤ 600px) overrides, previewed by artboard width, with Desktop/Tablet/Mobile width presets
   - [ ] Layers panel: rename, hide/lock, collapse, drag to reorder
   - [ ] Align and distribute
   - [ ] Snapping and smart guides
@@ -80,5 +81,6 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-17:** Responsive breakpoints. Nodes carry `breakpoints.tablet` (≤ 1024px) and `breakpoints.mobile` (≤ 600px) style overrides, desktop-first (narrower wins), edited in the Inspector's Tablet/Mobile sections or via `create_nodes`/`update_nodes`. Artboards have Desktop/Tablet/Mobile width presets. On the canvas they follow the artboard's width (container query); `compileBreakpointCSS` emits the same rules as `@media` for export.
 - **2026-10-17:** M3 started. Multi-select: marquee on empty canvas, group move as one undo step, ⌘A, group outline.
 - **2026-10-17:** Renamed from GridForge to Weft. M2 complete: per-session agent identity, agent cursors, MCP tools.
