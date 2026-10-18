@@ -28,6 +28,9 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - Verify UI changes with Playwright (screenshots) before calling them done.
 - Keep `README.md` current: when a change adds or alters a command, URL param, MCP tool, package, or roadmap item, update the README in the same commit and add a dated line to its Changelog.
 
+## Offline-first (product principle)
+Working offline with local models and local data is part of the value prop. Remote services (Google Fonts, model APIs, CDNs) may ship as an online first step, but every feature needs a planned local path (e.g. font files served from `.weft-data/`, local models) and must degrade gracefully without a network: bundled catalogs over live APIs, fallback stacks over missing assets. No hard network dependencies in the editor, canvas or export.
+
 ## Future: remote agents & hosting (not built — design around it)
 Goal: hosted Weft that outside agents (e.g. Muse, GrokBot) can connect to over MCP. Today everything is loopback-only; don't regress that, but don't paint into a corner either.
 - Hosting split: `apps/web` is static (Netlify-able). `apps/server` is a long-lived process (WebSocket Yjs relay + in-memory docs + disk persistence), so it needs a persistent host with a volume (Fly/Railway/Render/VPS), not Netlify functions.
