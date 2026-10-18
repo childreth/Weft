@@ -59,6 +59,8 @@ interface EditorState {
   connection: ConnectionStatus;
   collaborators: Collaborator[];
   agentActivity: AgentActivity | null;
+  /** Layers collapsed in the layers panel. */
+  collapsed: ReadonlySet<string>;
   setTool(tool: Tool): void;
   setCamera(camera: Camera): void;
   /** Zoom by `factor` keeping the screen point (px, py) fixed. */
@@ -71,6 +73,7 @@ interface EditorState {
   setConnection(connection: ConnectionStatus): void;
   setCollaborators(collaborators: Collaborator[]): void;
   setAgentActivity(activity: AgentActivity | null): void;
+  setCollapsed(id: string, collapsed: boolean): void;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -87,6 +90,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   connection: 'local',
   collaborators: [],
   agentActivity: null,
+  collapsed: new Set(),
   setTool: (tool) => set({ tool }),
   setCamera: (camera) => set({ camera }),
   zoomAt: (px, py, factor) => {
@@ -103,4 +107,11 @@ export const useEditor = create<EditorState>()((set, get) => ({
   setConnection: (connection) => set({ connection }),
   setCollaborators: (collaborators) => set({ collaborators }),
   setAgentActivity: (agentActivity) => set({ agentActivity }),
+  setCollapsed: (id, collapsed) => {
+    if (get().collapsed.has(id) === collapsed) return;
+    const next = new Set(get().collapsed);
+    if (collapsed) next.add(id);
+    else next.delete(id);
+    set({ collapsed: next });
+  },
 }));

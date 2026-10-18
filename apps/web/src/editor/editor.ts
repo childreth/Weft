@@ -5,6 +5,9 @@ import {
   History,
   ORIGIN_AGENT,
   seedLandingPage,
+  type Alignment,
+  type ArtboardFrame,
+  type Axis,
   type CreateNodeInput,
   type NodePatch,
 } from '@weft/core';
@@ -47,6 +50,14 @@ scene.subscribe(() => {
   if (editingTextId && !scene.nodes.has(editingTextId)) setEditingText(null);
 });
 
+/** True when the node or any ancestor is locked: it can't be picked or moved on the canvas. */
+export function isLocked(id: string): boolean {
+  for (let node = scene.nodes.get(id); node; node = node.parentId ? scene.nodes.get(node.parentId) : undefined) {
+    if (node.locked) return true;
+  }
+  return false;
+}
+
 /** Runs a document command, surfacing validation errors instead of throwing. */
 export function run<T>(fn: () => T): T | undefined {
   try {
@@ -74,6 +85,10 @@ export const agentApi = {
   moveNode: (id: string, parentId: string | null, beforeId: string | null = null) =>
     doc.moveNode(id, parentId, beforeId, ORIGIN_AGENT),
   deleteNodes: (ids: string[]) => doc.deleteNodes(ids, ORIGIN_AGENT),
+  duplicateNode: (id: string, options?: { name?: string; frame?: Partial<ArtboardFrame> }) =>
+    doc.duplicateNode(id, options, ORIGIN_AGENT),
+  alignNodes: (ids: string[], align: Alignment) => doc.alignNodes(ids, align, ORIGIN_AGENT),
+  distributeNodes: (ids: string[], axis: Axis) => doc.distributeNodes(ids, axis, ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),
 };
 

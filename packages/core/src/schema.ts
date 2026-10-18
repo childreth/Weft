@@ -131,6 +131,12 @@ export function isBreakpointId(key: string): key is BreakpointId {
   return (BREAKPOINT_IDS as string[]).includes(key);
 }
 
+/** Align commands, named by the edge or center they line up. */
+export const ALIGNMENTS = ['left', 'center', 'right', 'top', 'middle', 'bottom'] as const;
+export type Alignment = (typeof ALIGNMENTS)[number];
+export const AXES = ['horizontal', 'vertical'] as const;
+export type Axis = (typeof AXES)[number];
+
 /** Canvas-space placement; only top-level nodes (artboards) have one. */
 export interface ArtboardFrame {
   x: number;

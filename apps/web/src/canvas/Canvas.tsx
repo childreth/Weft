@@ -6,12 +6,13 @@ import {
   VOID_TAGS,
   type ArtboardFrame,
 } from '@weft/core';
-import { doc, history, run, scene, useChildren } from '../editor/editor';
+import { doc, history, isLocked, run, scene, useChildren } from '../editor/editor';
 import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';
 import { nodeElements } from './elements';
 import { commitActiveText } from './NodeView';
 import { SelectionOverlay, type Box, type Handle } from './SelectionOverlay';
+import { SNAP_DISTANCE, snapMove, snapResize, unionFrames, type Guide } from './snapping';
 
 type Gesture =
   | { kind: 'pan'; sx: number; sy: number; camera: Camera }
@@ -21,12 +22,15 @@ type Gesture =
       sy: number;
       /** Every artboard that moves with the drag: the whole selection when the grabbed node is part of it. */
       frames: Map<string, ArtboardFrame>;
+      /** Union of `frames` at the start, and the artboards it can snap to. */
+      bounds: ArtboardFrame;
+      others: ArtboardFrame[];
       active: boolean;
       /** A plain click on a node inside a multi-selection narrows to it on release. */
       collapseTo: string | null;
     }
   | { kind: 'marquee'; sx: number; sy: number; cx: number; cy: number; base: string[]; additive: boolean }
-  | { kind: 'resize'; id: string; handle: Handle; sx: number; sy: number; frame: ArtboardFrame }
+  | { kind: 'resize'; id: string; handle: Handle; sx: number; sy: number; frame: ArtboardFrame; others: ArtboardFrame[] }
   | { kind: 'create'; sx: number; sy: number; cx: number; cy: number };
 
 const DRAG_THRESHOLD = 3;
@@ -37,12 +41,12 @@ interface Hit {
   label: boolean;
 }
 
-/** Resolves the node under a pointer event, piercing artboard shadow roots. */
+/** Resolves the node under a pointer event, piercing artboard shadow roots. Locked layers are click-through. */
 export function hitTest(event: Event): Hit {
   for (const target of event.composedPath()) {
     if (!(target instanceof HTMLElement)) continue;
     if (target.dataset.artboardLabel) return { id: target.dataset.artboardLabel, label: true };
-    if (target.dataset.gfId) return { id: target.dataset.gfId, label: false };
+    if (target.dataset.gfId && !isLocked(target.dataset.gfId)) return { id: target.dataset.gfId, label: false };
     if (target.dataset.canvas !== undefined) break;
   }
   return { id: null, label: false };
@@ -72,6 +76,15 @@ function resizeFrame(f: ArtboardFrame, handle: Handle, dx: number, dy: number): 
 }
 
 
+/** Frames of the visible artboards other than `ids`: what a drag can snap to. */
+function snapTargets(ids: Iterable<string>): ArtboardFrame[] {
+  const skip = new Set(ids);
+  return scene.children(null).flatMap((id) => {
+    const n = scene.nodes.get(id);
+    return n?.frame && !n.hidden && !skip.has(id) ? [n.frame] : [];
+  });
+}
+
 function handleFromEvent(event: Event): { id: string; handle: Handle } | null {
   for (const target of event.composedPath()) {
     if (target instanceof HTMLElement && target.dataset.handle && target.dataset.handleNode) {
@@ -90,6 +103,7 @@ export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState<Box | null>(null);
   const [panning, setPanning] = useState(false);
+  const [guides, setGuides] = useState<Guide[]>([]);
   const camera = useEditor((s) => s.camera);
   const tool = useEditor((s) => s.tool);
   const spaceHeld = useEditor((s) => s.spaceHeld);
@@ -108,12 +122,15 @@ export function Canvas() {
     /** Top-level artboards whose rendered box intersects a marquee given in container space. */
     const artboardsIn = (box: Box, container: DOMRect): string[] =>
       scene.children(null).filter((id) => {
+        if (isLocked(id)) return false;
         const r = nodeElements.get(id)?.getBoundingClientRect();
         if (!r) return false;
         const x = r.left - container.left;
         const y = r.top - container.top;
         return x < box.x + box.w && x + r.width > box.x && y < box.y + box.h && y + r.height > box.y;
       });
+
+    const showGuides = (next: Guide[]) => setGuides((prev) => (prev.length === 0 && next.length === 0 ? prev : next));
 
     const begin = (g: Gesture, e: PointerEvent) => {
       gesture = g;
@@ -153,7 +170,7 @@ export function Canvas() {
         const frame = scene.nodes.get(handle.id)?.frame;
         if (!frame) return;
         history.beginGesture();
-        begin({ kind: 'resize', ...handle, sx: e.clientX, sy: e.clientY, frame }, e);
+        begin({ kind: 'resize', ...handle, sx: e.clientX, sy: e.clientY, frame, others: snapTargets([handle.id]) }, e);
         return;
       }
 
@@ -207,7 +224,19 @@ export function Canvas() {
         if (n?.frame && !n.locked) frames.set(id, n.frame);
       }
       if (frames.size > 0) {
-        begin({ kind: 'move', sx: e.clientX, sy: e.clientY, frames, active: false, collapseTo: inGroup ? hit.id : null }, e);
+        begin(
+          {
+            kind: 'move',
+            sx: e.clientX,
+            sy: e.clientY,
+            frames,
+            bounds: unionFrames(frames.values()),
+            others: snapTargets(frames.keys()),
+            active: false,
+            collapseTo: inGroup ? hit.id : null,
+          },
+          e,
+        );
       } else if (inGroup) {
         state.select([hit.id]);
       }
@@ -234,11 +263,24 @@ export function Canvas() {
             g.active = true;
             history.beginGesture();
           }
-          run(() => {
-            for (const [id, f] of g.frames) {
-              doc.updateNode(id, { frame: { x: Math.round(f.x + dx / zoom), y: Math.round(f.y + dy / zoom) } });
+          {
+            // Hold ⌘/Ctrl to move freely.
+            let mx = dx / zoom;
+            let my = dy / zoom;
+            if (e.metaKey || e.ctrlKey) {
+              showGuides([]);
+            } else {
+              const snap = snapMove({ ...g.bounds, x: g.bounds.x + mx, y: g.bounds.y + my }, g.others, SNAP_DISTANCE / zoom);
+              mx += snap.dx;
+              my += snap.dy;
+              showGuides(snap.guides);
             }
-          });
+            run(() => {
+              for (const [id, f] of g.frames) {
+                doc.updateNode(id, { frame: { x: Math.round(f.x + mx), y: Math.round(f.y + my) } });
+              }
+            });
+          }
           break;
         case 'marquee': {
           g.cx = e.clientX;
@@ -252,9 +294,18 @@ export function Canvas() {
           if (next.length !== state.selection.length || next.some((id, i) => id !== state.selection[i])) state.select(next);
           break;
         }
-        case 'resize':
-          run(() => doc.updateNode(g.id, { frame: resizeFrame(g.frame, g.handle, dx / zoom, dy / zoom) }));
+        case 'resize': {
+          let frame = resizeFrame(g.frame, g.handle, dx / zoom, dy / zoom);
+          if (e.metaKey || e.ctrlKey) {
+            showGuides([]);
+          } else {
+            const snap = snapResize(frame, g.handle, g.others, SNAP_DISTANCE / zoom, MIN_ARTBOARD);
+            frame = snap.frame;
+            showGuides(snap.guides);
+          }
+          run(() => doc.updateNode(g.id, { frame }));
           break;
+        }
         case 'create': {
           g.cx = e.clientX;
           g.cy = e.clientY;
@@ -276,6 +327,7 @@ export function Canvas() {
           setPanning(false);
           break;
         case 'move':
+          showGuides([]);
           if (g.active) history.endGesture();
           else if (g.collapseTo) state.select([g.collapseTo]);
           break;
@@ -283,6 +335,7 @@ export function Canvas() {
           setDraft(null);
           break;
         case 'resize':
+          showGuides([]);
           history.endGesture();
           break;
         case 'create': {
@@ -352,7 +405,27 @@ export function Canvas() {
           <Artboard key={id} id={id} />
         ))}
       </div>
+      <SnapGuides guides={guides} />
       <SelectionOverlay containerRef={containerRef} draft={draft} />
     </div>
+  );
+}
+
+/** Smart guides for the current drag, drawn in screen space. */
+function SnapGuides({ guides }: { guides: Guide[] }) {
+  const camera = useEditor((s) => s.camera);
+  if (guides.length === 0) return null;
+  const sx = (x: number) => x * camera.zoom + camera.x;
+  const sy = (y: number) => y * camera.zoom + camera.y;
+  return (
+    <svg className="gf-snap-guides" data-testid="snap-guides">
+      {guides.map((g) =>
+        g.axis === 'x' ? (
+          <line key={`x${g.at}`} x1={sx(g.at)} x2={sx(g.at)} y1={sy(g.from)} y2={sy(g.to)} />
+        ) : (
+          <line key={`y${g.at}`} x1={sx(g.from)} x2={sx(g.to)} y1={sy(g.at)} y2={sy(g.at)} />
+        ),
+      )}
+    </svg>
   );
 }

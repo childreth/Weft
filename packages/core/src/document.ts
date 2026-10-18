@@ -7,7 +7,9 @@ import {
   isBreakpointId,
   isStyleProp,
   isValidTag,
+  type Alignment,
   type ArtboardFrame,
+  type Axis,
   type BreakpointId,
   type BreakpointStyles,
   type NodeType,
@@ -64,6 +66,12 @@ export interface Snapshot {
   nodes: SceneNode[];
 }
 
+/** One node's share of an align or distribute command. */
+export interface PlannedPatch {
+  id: string;
+  patch: NodePatch;
+}
+
 export class GridError extends Error {
   constructor(message: string) {
     super(message);
@@ -74,6 +82,8 @@ export class GridError extends Error {
 const ATTRIBUTE_NAME = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
 const UNSAFE_STYLE_VALUE = /[;{}<>]/;
 const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800 };
+/** Space left between an artboard and a duplicate placed beside it. */
+const ARTBOARD_GAP = 100;
 
 export function readNode(y: YNode): SceneNode {
   const styles = y.get('styles') as Y.Map<string> | undefined;
@@ -381,6 +391,138 @@ export class GridDocument {
     }, origin);
   }
 
+  /**
+   * Aligns nodes. Artboards line up by their canvas frames (two or more).
+   * Elements are laid out by CSS, so alignment maps to their flex or grid
+   * parent: the flex main axis sets the parent's justifyContent, the cross
+   * axis the child's alignSelf, and grid children get justifySelf/alignSelf.
+   * Returns the ids it changed (which may include parents).
+   */
+  alignNodes(ids: readonly string[], align: Alignment, origin: Origin = ORIGIN_LOCAL): string[] {
+    return this.applyPlan(this.planAlign(ids, align), origin);
+  }
+
+  /**
+   * Spaces nodes evenly along an axis: artboards (three or more) get equal
+   * gaps between their frames, flex children get justifyContent:
+   * space-between on their parent when the axis is its main axis.
+   */
+  distributeNodes(ids: readonly string[], axis: Axis, origin: Origin = ORIGIN_LOCAL): string[] {
+    return this.applyPlan(this.planDistribute(ids, axis), origin);
+  }
+
+  /** The patches alignNodes would apply; throws a GridError when it doesn't apply. */
+  planAlign(ids: readonly string[], align: Alignment): PlannedPatch[] {
+    const { artboards, elements } = this.splitForLayout(ids);
+    const axis: Axis = align === 'left' || align === 'center' || align === 'right' ? 'horizontal' : 'vertical';
+    const edge = align === 'left' || align === 'top' ? 'start' : align === 'right' || align === 'bottom' ? 'end' : 'center';
+    const plan = new PatchPlan();
+
+    if (artboards.length === 1) throw new GridError('Select at least two artboards to align them');
+    if (artboards.length > 1) {
+      const [pos, size] = axis === 'horizontal' ? (['x', 'width'] as const) : (['y', 'height'] as const);
+      const lo = Math.min(...artboards.map((n) => n.frame![pos]));
+      const hi = Math.max(...artboards.map((n) => n.frame![pos] + n.frame![size]));
+      for (const n of artboards) {
+        const f = n.frame!;
+        const to = edge === 'start' ? lo : edge === 'end' ? hi - f[size] : Math.round((lo + hi - f[size]) / 2);
+        if (to !== f[pos]) plan.frame(n.id, { [pos]: to });
+      }
+    }
+    for (const el of elements) {
+      const parent = this.getNode(el.parentId!)!;
+      const layout = layoutOf(parent);
+      if (!layout) throw new GridError(notALayout(parent));
+      if (layout.kind === 'grid') plan.style(el.id, axis === 'horizontal' ? 'justifySelf' : 'alignSelf', edge);
+      else if (axis === layout.main) plan.style(parent.id, 'justifyContent', edge);
+      else plan.style(el.id, 'alignSelf', edge);
+    }
+    return plan.list();
+  }
+
+  /** The patches distributeNodes would apply; throws a GridError when it doesn't apply. */
+  planDistribute(ids: readonly string[], axis: Axis): PlannedPatch[] {
+    const { artboards, elements } = this.splitForLayout(ids);
+    const plan = new PatchPlan();
+
+    if (artboards.length > 0 && artboards.length < 3) throw new GridError('Select at least three artboards to distribute them');
+    if (artboards.length >= 3) {
+      const [pos, size] = axis === 'horizontal' ? (['x', 'width'] as const) : (['y', 'height'] as const);
+      const sorted = [...artboards].sort((a, b) => a.frame![pos] - b.frame![pos]);
+      const first = sorted[0]!.frame!;
+      const last = sorted.at(-1)!.frame!;
+      const total = sorted.reduce((sum, n) => sum + n.frame![size], 0);
+      const gap = (last[pos] + last[size] - first[pos] - total) / (sorted.length - 1);
+      let cursor = first[pos] + first[size] + gap;
+      for (const n of sorted.slice(1, -1)) {
+        const to = Math.round(cursor);
+        if (to !== n.frame![pos]) plan.frame(n.id, { [pos]: to });
+        cursor += n.frame![size] + gap;
+      }
+    }
+    for (const parentId of new Set(elements.map((el) => el.parentId!))) {
+      const parent = this.getNode(parentId)!;
+      const layout = layoutOf(parent);
+      if (!layout) throw new GridError(notALayout(parent));
+      if (layout.kind === 'grid') {
+        throw new GridError(`"${parent.name}" is a grid: its children follow the tracks, so adjust gap or column sizes instead`);
+      }
+      if (layout.main !== axis) {
+        throw new GridError(`"${parent.name}" lays its children out ${layout.main === 'horizontal' ? 'in a row' : 'in a column'}; distribute along that axis or change its flexDirection`);
+      }
+      plan.style(parent.id, 'justifyContent', 'space-between');
+    }
+    return plan.list();
+  }
+
+  /**
+   * Deep-copies a node and its subtree with fresh ids, returning the copy's id.
+   * A copied artboard lands to the right of the artboards on its row unless
+   * `frame` places it (pass just `width` to clone it at another breakpoint's
+   * width); any other node is inserted right after the original.
+   */
+  duplicateNode(
+    id: string,
+    options: { name?: string; frame?: Partial<ArtboardFrame> } = {},
+    origin: Origin = ORIGIN_LOCAL,
+  ): string {
+    const [tree] = this.getTree(id);
+    const source = this.getNode(id)!;
+    if (options.frame && source.parentId !== null) throw new GridError('Only artboards have a canvas frame');
+    const siblings = this.getChildren(source.parentId);
+    const beforeId = siblings[siblings.findIndex((n) => n.id === id) + 1]?.id ?? null;
+    let frame: ArtboardFrame | undefined;
+    if (source.frame) {
+      frame = { ...source.frame, ...options.frame };
+      if (options.frame?.x === undefined) {
+        const f = frame;
+        const row = siblings.flatMap((n) => (n.frame && n.frame.y < f.y + f.height && n.frame.y + n.frame.height > f.y ? [n.frame] : []));
+        frame.x = Math.max(...row.map((r) => r.x + r.width)) + ARTBOARD_GAP;
+      }
+    }
+    const copy = (node: SceneTree, parentId: string | null, before: string | null, root: boolean): string => {
+      const newId = this.createNode(
+        {
+          type: node.type,
+          tag: node.tag,
+          name: root ? (options.name ?? node.name) : node.name,
+          parentId,
+          beforeId: before,
+          text: node.text,
+          styles: node.styles,
+          breakpoints: node.breakpoints,
+          attributes: node.attributes,
+          frame: root ? frame : node.frame,
+        },
+        origin,
+      );
+      if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
+      for (const child of node.children) copy(child, newId, null, false);
+      return newId;
+    };
+    return this.transact(() => copy(tree!, source.parentId, beforeId, true), origin);
+  }
+
   toSnapshot(): Snapshot {
     return { format: 'weft', version: 1, nodes: sortSiblings(this.getNodes()) };
   }
@@ -413,6 +555,23 @@ export class GridDocument {
     const y = this.nodes.get(id);
     if (!y) throw new GridError(`Node ${id} not found`);
     return y;
+  }
+
+  private applyPlan(plan: PlannedPatch[], origin: Origin): string[] {
+    this.transact(() => {
+      for (const { id, patch } of plan) this.updateNode(id, patch, origin);
+    }, origin);
+    return plan.map((p) => p.id);
+  }
+
+  private splitForLayout(ids: readonly string[]): { artboards: SceneNode[]; elements: SceneNode[] } {
+    if (ids.length === 0) throw new GridError('Nothing to arrange');
+    const nodes = [...new Set(ids)].map((id) => {
+      const node = this.getNode(id);
+      if (!node) throw new GridError(`Node ${id} not found`);
+      return node;
+    });
+    return { artboards: nodes.filter((n) => n.parentId === null), elements: nodes.filter((n) => n.parentId !== null) };
   }
 
   private assertCanContain(parentId: string): void {
@@ -448,6 +607,44 @@ export class GridDocument {
     const next = siblings[i]!.index;
     // Concurrent inserts can produce equal keys; fall back to appending.
     return prev !== null && prev >= next ? generateKeyBetween(last, null) : generateKeyBetween(prev, next);
+  }
+}
+
+/** How a container lays out its children, for align and distribute. */
+function layoutOf(parent: SceneNode): { kind: 'flex' | 'grid'; main: Axis } | null {
+  const display = parent.styles.display ?? '';
+  if (display === 'grid' || display === 'inline-grid') return { kind: 'grid', main: 'horizontal' };
+  if (display === 'flex' || display === 'inline-flex') {
+    return { kind: 'flex', main: (parent.styles.flexDirection ?? 'row').startsWith('column') ? 'vertical' : 'horizontal' };
+  }
+  return null;
+}
+
+const notALayout = (parent: SceneNode) =>
+  `"${parent.name}" isn't a flex or grid container; set its display to flex or grid to arrange its children`;
+
+/** Collects per-node patches, merging several changes to one node. */
+class PatchPlan {
+  private patches = new Map<string, NodePatch>();
+
+  private get(id: string): NodePatch {
+    let patch = this.patches.get(id);
+    if (!patch) this.patches.set(id, (patch = {}));
+    return patch;
+  }
+
+  frame(id: string, frame: Partial<ArtboardFrame>): void {
+    const patch = this.get(id);
+    patch.frame = { ...patch.frame, ...frame };
+  }
+
+  style(id: string, prop: StyleProp, value: string): void {
+    const patch = this.get(id);
+    patch.styles = { ...patch.styles, [prop]: value };
+  }
+
+  list(): PlannedPatch[] {
+    return [...this.patches].map(([id, patch]) => ({ id, patch }));
   }
 }
 

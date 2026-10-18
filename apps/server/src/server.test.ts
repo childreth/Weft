@@ -53,7 +53,7 @@ describe('MCP tools', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
-        'create_nodes', 'delete_nodes', 'get_canvas', 'get_layout', 'get_selection',
+        'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_selection',
         'list_tokens', 'move_node', 'select_nodes', 'undo_agent_change', 'update_nodes',
       ].sort(),
     );
@@ -154,6 +154,45 @@ describe('MCP tools', () => {
     expect(room.doc.has(features.id)).toBe(false);
     const missing = await call('delete_nodes', { doc: 'edit', ids: ['nope'] });
     expect(missing.isError).toBe(true);
+  });
+
+  it('aligns artboards by frame and elements through CSS, undoably', async () => {
+    const room = server.rooms.get('arrange');
+    const [page] = room.doc.getTree();
+    const nav = room.doc.getTree(page!.id)[0]!.children.find((c) => c.name === 'Header')!.children.find((c) => c.name === 'Nav')!;
+    const header = room.doc.getNode(nav.id)!.parentId!;
+
+    const { data } = await call('align_nodes', { doc: 'arrange', ids: [nav.id], align: 'top' });
+    expect(data.changed).toEqual([nav.id]);
+    expect(room.doc.getNode(nav.id)!.styles.alignSelf).toBe('start');
+    await call('align_nodes', { doc: 'arrange', ids: [nav.id], align: 'center' });
+    expect(room.doc.getNode(header)!.styles.justifyContent).toBe('center');
+    await call('undo_agent_change', { doc: 'arrange' });
+    expect(room.doc.getNode(header)!.styles.justifyContent).toBe('space-between');
+
+    const bad = await call('distribute_nodes', { doc: 'arrange', ids: [nav.id], axis: 'vertical' });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toMatch(/in a row.*no changes were applied/);
+
+    const { data: created } = await call('create_nodes', {
+      doc: 'arrange',
+      nodes: [0, 1].map((i) => ({ type: 'frame', frame: { x: 3000 + i * 500, y: i * 100, width: 400, height: 300 } })),
+    });
+    const ids = [page!.id, ...created.created.map((c: { id: string }) => c.id)];
+    await call('align_nodes', { doc: 'arrange', ids, align: 'top' });
+    expect(ids.map((id) => room.doc.getNode(id)!.frame!.y)).toEqual([0, 0, 0]);
+  });
+
+  it('clones an artboard at mobile width beside the original', async () => {
+    const room = server.rooms.get('clone');
+    const [page] = room.doc.getTree();
+    const { data } = await call('duplicate_node', { doc: 'clone', id: page!.id, name: 'Mobile', frame: { width: 390 } });
+    const copy = room.doc.getNode(data.id)!;
+    expect(copy).toMatchObject({ name: 'Mobile', frame: { width: 390, y: page!.frame!.y, height: page!.frame!.height } });
+    expect(copy.frame!.x).toBeGreaterThan(page!.frame!.x + page!.frame!.width);
+    expect(room.doc.getDescendantIds(copy.id)).toHaveLength(room.doc.getDescendantIds(page!.id).length);
+    await call('undo_agent_change', { doc: 'clone' });
+    expect(room.doc.has(copy.id)).toBe(false);
   });
 
   it('lists tokens as ready-to-use CSS values', async () => {
