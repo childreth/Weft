@@ -105,3 +105,27 @@ test('layers screenshot', async ({ page }) => {
   await row(page, ids['Hero copy']!).hover();
   await page.screenshot({ path: 'test-results/m3-layers.png' });
 });
+
+test('layers panel resizes by dragging its edge, clamped to 240–340px', async ({ page }) => {
+  await open(page);
+  const panel = page.getByTestId('layers');
+  const handle = (await page.getByTestId('layers-resizer').boundingBox())!;
+  const width = async () => (await panel.boundingBox())!.width;
+  expect(await width()).toBe(240);
+
+  const drag = async (dx: number) => {
+    const box = (await page.getByTestId('layers-resizer').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + 200, { steps: 4 });
+    await page.mouse.up();
+  };
+  expect(handle.x + handle.width / 2).toBeCloseTo(240, 0);
+  await drag(60);
+  expect(await width()).toBe(300);
+  await page.screenshot({ path: 'test-results/m3-layers-resize.png' });
+  await drag(200);
+  expect(await width()).toBe(340);
+  await drag(-500);
+  expect(await width()).toBe(240);
+});

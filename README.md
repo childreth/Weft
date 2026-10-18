@@ -83,10 +83,12 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 - [ ] Components and variants
 - [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
 - [ ] Code export (HTML/CSS with the artboard reset and `@media` breakpoints)
+- [ ] In-app local model assist (to consider): a local model built into the editor, separate from MCP agents, for inline suggestions. First idea: on a breakpoint section's "+ Add", suggest mobile/tablet overrides for the selected section (e.g. stack a grid to one column, shrink gap and padding) that the user previews and accepts
 - [ ] Desktop shell (Electron)
 
 ## Changelog
 
+- **2026-10-18:** Roadmap: in-app local model assist (suggested breakpoint overrides), separate from MCP agents. Layers panel is resizable by dragging its right edge (240–340px, remembered per browser).
 - **2026-10-17:** Duplicate and clone at width. `GridDocument.duplicateNode` deep-copies a subtree; artboard copies land to the right of their row. The Inspector's Artboard section clones at Desktop/Tablet/Mobile width beside the original (named "— Mobile" etc.) so breakpoint layouts compare side by side. ⌘D duplicates the selection. New MCP tool `duplicate_node` and `window.weft.agent.duplicateNode`.
 - **2026-10-17:** Snapping and smart guides. Dragging artboards snaps the selection's edges and centers to other visible artboards within 6 screen px, and resizing snaps the edges being dragged; guides show what lined up. Hold ⌘/Ctrl to move freely.
 - **2026-10-17:** Align and distribute. Artboards align and distribute by their canvas frames. Elements are aligned through CSS: the flex main axis sets the parent's `justifyContent`, the cross axis the child's `alignSelf`, grid children get `justifySelf`/`alignSelf`; distribute sets `space-between` on a flex parent. Inspector Align section (inapplicable buttons are disabled with the reason), ⌥ shortcuts, new MCP tools `align_nodes` and `distribute_nodes`, and `window.weft.agent.alignNodes`/`distributeNodes`.
