@@ -58,7 +58,7 @@ interface NodeSpec {
   name?: string;
   text?: string;
   styles?: Record<string, string>;
-  breakpoints?: Record<string, Record<string, string>>;
+  breakpoints?: Partial<Record<string, Record<string, string>>>;
   attributes?: Record<string, string>;
   frame?: Partial<ArtboardFrame>;
   children?: NodeSpec[];
@@ -71,7 +71,7 @@ const nodeSpec: z.ZodType<NodeSpec> = z.lazy(() =>
     name: z.string().optional().describe('Layer name shown in the layers panel'),
     text: z.string().optional().describe('Text content (text nodes only)'),
     styles: z.record(z.string(), z.string()).optional().describe(AUTHORED_STYLES),
-    breakpoints: z.record(breakpointKey, z.record(z.string(), z.string())).optional().describe(BREAKPOINT_STYLES),
+    breakpoints: z.partialRecord(breakpointKey, z.record(z.string(), z.string())).optional().describe(BREAKPOINT_STYLES),
     attributes: z.record(z.string(), z.string()).optional().describe('HTML attributes such as aria-label, href, type, alt'),
     frame: frameSchema.optional().describe('Canvas placement; only for new artboards (parentId null)'),
     children: z.array(nodeSpec).optional().describe('Child nodes (frames only)'),
@@ -320,7 +320,7 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
               frame: frameSchema.optional(),
               styles: z.record(z.string(), z.string().nullable()).optional().describe(AUTHORED_STYLES),
               breakpoints: z
-                .record(breakpointKey, z.record(z.string(), z.string().nullable()).nullable())
+                .partialRecord(breakpointKey, z.record(z.string(), z.string().nullable()).nullable())
                 .optional()
                 .describe(`${BREAKPOINT_STYLES}; merged like styles, null clears a whole breakpoint`),
               attributes: z.record(z.string(), z.string().nullable()).optional(),
