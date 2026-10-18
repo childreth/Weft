@@ -23,6 +23,8 @@ URL parameters:
 | `?offline` | Browser-only document stored in IndexedDB, no server |
 | `?ephemeral` | Fresh in-memory seed (used by tests) |
 
+![The Weft editor: layers, a dark-mode mobile dashboard artboard with an agent cursor, and the Inspector](docs/images/editor.jpg)
+
 ## Connect an AI agent (MCP)
 
 The server speaks MCP over Streamable HTTP at `http://127.0.0.1:4510/mcp`. With the server running:
