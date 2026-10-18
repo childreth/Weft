@@ -2,7 +2,7 @@
 
 An AI-native design canvas where the canvas *is* the browser's DOM and CSS engine. Edit pages the way you would in Figma, but every artboard is real HTML and CSS, so what you design is what you ship. People and AI agents edit the same live document.
 
-> Status: early, local-only. See [Roadmap](#roadmap).
+> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select and responsive breakpoints are in, layers panel is next. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -72,11 +72,14 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 - [ ] **M3 — Single-user editing** (in progress)
   - [x] Multi-select: marquee, shift-click, ⌘A, group move
   - [x] Responsive breakpoints: per-node tablet (≤ 1024px) and mobile (≤ 600px) overrides, previewed by artboard width, with Desktop/Tablet/Mobile width presets
+  - [ ] Clone an artboard at mobile/tablet width to compare layouts side by side
+  - [ ] Per-breakpoint text, visibility and tag (overrides are styles-only today)
   - [ ] Layers panel: rename, hide/lock, collapse, drag to reorder
   - [ ] Align and distribute
   - [ ] Snapping and smart guides
 - [ ] Components and variants
 - [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
+- [ ] Code export (HTML/CSS with the artboard reset and `@media` breakpoints)
 - [ ] Desktop shell (Electron)
 
 ## Changelog
