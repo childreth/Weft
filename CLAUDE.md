@@ -12,7 +12,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - `pnpm dev` — server + editor at http://localhost:5173. URL params: `?doc=name` (document), `?offline` (browser-only IndexedDB), `?ephemeral` (fresh in-memory seed, used by tests)
 - MCP: `.mcp.json` registers `http://127.0.0.1:4510/mcp`; the server must be running
 - `pnpm test` — core unit tests (vitest)
-- `pnpm test:e2e` — Playwright against the editor; writes `apps/web/test-results/m1-editor.png`
+- `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`)
 - `pnpm typecheck`
 
 ## Rules
@@ -25,6 +25,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - Canvas pointer handling uses native listeners: React dispatches events from portals into shadow roots twice.
 - Artboard CSS = compiled tokens + `ARTBOARD_RESET_CSS`; exported code must ship the same reset.
 - Verify UI changes with Playwright (screenshots) before calling them done.
+- Keep `README.md` current: when a change adds or alters a command, URL param, MCP tool, package, or roadmap item, update the README in the same commit and add a dated line to its Changelog.
 
 ## Future: remote agents & hosting (not built — design around it)
 Goal: hosted Weft that outside agents (e.g. Muse, GrokBot) can connect to over MCP. Today everything is loopback-only; don't regress that, but don't paint into a corner either.
