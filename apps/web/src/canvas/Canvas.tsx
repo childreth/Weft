@@ -6,7 +6,7 @@ import {
   VOID_TAGS,
   type ArtboardFrame,
 } from '@weft/core';
-import { doc, history, run, scene, useChildren } from '../editor/editor';
+import { doc, history, isLocked, run, scene, useChildren } from '../editor/editor';
 import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';
 import { nodeElements } from './elements';
@@ -37,12 +37,12 @@ interface Hit {
   label: boolean;
 }
 
-/** Resolves the node under a pointer event, piercing artboard shadow roots. */
+/** Resolves the node under a pointer event, piercing artboard shadow roots. Locked layers are click-through. */
 export function hitTest(event: Event): Hit {
   for (const target of event.composedPath()) {
     if (!(target instanceof HTMLElement)) continue;
     if (target.dataset.artboardLabel) return { id: target.dataset.artboardLabel, label: true };
-    if (target.dataset.gfId) return { id: target.dataset.gfId, label: false };
+    if (target.dataset.gfId && !isLocked(target.dataset.gfId)) return { id: target.dataset.gfId, label: false };
     if (target.dataset.canvas !== undefined) break;
   }
   return { id: null, label: false };
@@ -108,6 +108,7 @@ export function Canvas() {
     /** Top-level artboards whose rendered box intersects a marquee given in container space. */
     const artboardsIn = (box: Box, container: DOMRect): string[] =>
       scene.children(null).filter((id) => {
+        if (isLocked(id)) return false;
         const r = nodeElements.get(id)?.getBoundingClientRect();
         if (!r) return false;
         const x = r.left - container.left;

@@ -47,6 +47,14 @@ scene.subscribe(() => {
   if (editingTextId && !scene.nodes.has(editingTextId)) setEditingText(null);
 });
 
+/** True when the node or any ancestor is locked: it can't be picked or moved on the canvas. */
+export function isLocked(id: string): boolean {
+  for (let node = scene.nodes.get(id); node; node = node.parentId ? scene.nodes.get(node.parentId) : undefined) {
+    if (node.locked) return true;
+  }
+  return false;
+}
+
 /** Runs a document command, surfacing validation errors instead of throwing. */
 export function run<T>(fn: () => T): T | undefined {
   try {
