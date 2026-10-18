@@ -2,7 +2,7 @@
 
 An AI-native design canvas where the canvas *is* the browser's DOM and CSS engine. Edit pages the way you would in Figma, but every artboard is real HTML and CSS, so what you design is what you ship. People and AI agents edit the same live document.
 
-> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select, responsive breakpoints, the layers panel and align/distribute are in; snapping is next. See [Roadmap](#roadmap).
+> Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select, responsive breakpoints, the layers panel, align/distribute and snapping are in; cloning artboards at breakpoint widths is next. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -78,7 +78,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [ ] Per-breakpoint text, visibility and tag (overrides are styles-only today)
   - [x] Layers panel: double-click rename, hide/lock toggles (locked layers are click-through on the canvas), collapse/expand, drag to reorder and reparent, shift-click range and ⌘-click toggle
   - [x] Align and distribute: artboards by frame; elements in flex/grid parents get CSS alignment, not coordinates (Inspector buttons, ⌥A/H/D/W/V/S, ⌥⇧H/V)
-  - [ ] Snapping and smart guides
+  - [x] Snapping and smart guides: artboard move and resize snap edges and centers to other artboards (hold ⌘/Ctrl to move freely)
 - [ ] Components and variants
 - [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
 - [ ] Code export (HTML/CSS with the artboard reset and `@media` breakpoints)
@@ -86,6 +86,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-17:** Snapping and smart guides. Dragging artboards snaps the selection's edges and centers to other visible artboards within 6 screen px, and resizing snaps the edges being dragged; guides show what lined up. Hold ⌘/Ctrl to move freely.
 - **2026-10-17:** Align and distribute. Artboards align and distribute by their canvas frames. Elements are aligned through CSS: the flex main axis sets the parent's `justifyContent`, the cross axis the child's `alignSelf`, grid children get `justifySelf`/`alignSelf`; distribute sets `space-between` on a flex parent. Inspector Align section (inapplicable buttons are disabled with the reason), ⌥ shortcuts, new MCP tools `align_nodes` and `distribute_nodes`, and `window.weft.agent.alignNodes`/`distributeNodes`.
 - **2026-10-17:** Layers panel. Double-click to rename, hide and lock toggles per row (locked layers can't be picked or moved on the canvas), collapse/expand with auto-reveal of selected layers, drag to reorder or reparent (multi-selection moves together, one undo step), shift-click range select and ⌘-click toggle.
 - **2026-10-17:** Responsive breakpoints. Nodes carry `breakpoints.tablet` (≤ 1024px) and `breakpoints.mobile` (≤ 600px) style overrides, desktop-first (narrower wins), edited in the Inspector's Tablet/Mobile sections or via `create_nodes`/`update_nodes`. Artboards have Desktop/Tablet/Mobile width presets. On the canvas they follow the artboard's width (container query); `compileBreakpointCSS` emits the same rules as `@media` for export.

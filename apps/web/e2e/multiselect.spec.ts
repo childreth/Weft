@@ -42,10 +42,12 @@ test('dragging one selected artboard moves the whole selection as one undo step'
   await page.evaluate(([b, c]) => window.weft.editor.getState().select([b!, c!]), [ids.b, ids.c]);
   const before = await frames(page);
   const grab = at(360, 70); // inside B
+  await page.keyboard.down('ControlOrMeta'); // no snapping
   await page.mouse.move(grab.x, grab.y);
   await page.mouse.down();
   await page.mouse.move(grab.x + 40, grab.y + 20, { steps: 5 });
   await page.mouse.up();
+  await page.keyboard.up('ControlOrMeta');
   const after = await frames(page);
   expect(after.B).toMatchObject({ x: before.B!.x + 200, y: before.B!.y + 100 });
   expect(after.C).toMatchObject({ x: before.C!.x + 200, y: before.C!.y + 100 });

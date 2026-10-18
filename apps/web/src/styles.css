@@ -209,6 +209,8 @@ body {
 
 /* Overlay (screen space) */
 .gf-overlay { position: absolute; inset: 0; pointer-events: none; }
+.gf-snap-guides { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.gf-snap-guides line { stroke: #f43f5e; stroke-width: 1; shape-rendering: crispEdges; }
 .gf-box { position: absolute; left: 0; top: 0; }
 .gf-box-hover { box-shadow: 0 0 0 1px var(--ui-accent); }
 .gf-box-selected { box-shadow: 0 0 0 1.5px var(--ui-accent); }
