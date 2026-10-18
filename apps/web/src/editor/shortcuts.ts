@@ -1,6 +1,12 @@
+import type { Alignment, Axis } from '@weft/core';
 import { doc, history, run, scene } from './editor';
 import { useEditor } from './store';
 import { zoomBy, zoomTo, zoomToFit } from './viewport';
+
+const ALIGN_KEYS: Record<string, Alignment> = {
+  KeyA: 'left', KeyH: 'center', KeyD: 'right', KeyW: 'top', KeyV: 'middle', KeyS: 'bottom',
+};
+const DISTRIBUTE_KEYS: Record<string, Axis> = { KeyH: 'horizontal', KeyV: 'vertical' };
 
 function isTyping(e: KeyboardEvent): boolean {
   const target = e.composedPath()[0];
@@ -35,6 +41,16 @@ function onKeyDown(e: KeyboardEvent) {
     const first = state.selection[0] ? scene.nodes.get(state.selection[0]) : undefined;
     state.select([...scene.children(first ? first.parentId : null)]);
     return;
+  }
+  if (e.altKey && !mod && state.selection.length > 0) {
+    // ⌥A/D/H left/right/center, ⌥W/S/V top/bottom/middle, ⌥⇧H/V distribute. Codes: ⌥ remaps e.key on macOS.
+    const axis = e.shiftKey ? DISTRIBUTE_KEYS[e.code] : undefined;
+    const align = e.shiftKey ? undefined : ALIGN_KEYS[e.code];
+    if (axis || align) {
+      e.preventDefault();
+      run(() => (axis ? doc.distributeNodes(state.selection, axis) : doc.alignNodes(state.selection, align!)));
+      return;
+    }
   }
   if (mod) return;
 

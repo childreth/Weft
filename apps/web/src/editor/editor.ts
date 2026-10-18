@@ -5,6 +5,8 @@ import {
   History,
   ORIGIN_AGENT,
   seedLandingPage,
+  type Alignment,
+  type Axis,
   type CreateNodeInput,
   type NodePatch,
 } from '@weft/core';
@@ -82,6 +84,8 @@ export const agentApi = {
   moveNode: (id: string, parentId: string | null, beforeId: string | null = null) =>
     doc.moveNode(id, parentId, beforeId, ORIGIN_AGENT),
   deleteNodes: (ids: string[]) => doc.deleteNodes(ids, ORIGIN_AGENT),
+  alignNodes: (ids: string[], align: Alignment) => doc.alignNodes(ids, align, ORIGIN_AGENT),
+  distributeNodes: (ids: string[], axis: Axis) => doc.distributeNodes(ids, axis, ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),
 };
 

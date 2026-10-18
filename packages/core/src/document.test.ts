@@ -163,3 +163,72 @@ describe('tokens', () => {
     expect(css).toContain(':host([data-theme="dark"])');
   });
 });
+
+describe('align and distribute', () => {
+  const board = (doc: GridDocument, x: number, y: number, width: number, height: number) =>
+    doc.createNode({ type: 'frame', frame: { x, y, width, height } });
+
+  it('aligns and distributes artboards by frame, as one undo step', () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    const a = board(doc, 0, 0, 100, 100);
+    const b = board(doc, 300, 40, 200, 50);
+    const c = board(doc, 900, 10, 100, 80);
+    const xs = () => [a, b, c].map((id) => doc.getNode(id)!.frame!.x);
+    const ys = () => [a, b, c].map((id) => doc.getNode(id)!.frame!.y);
+
+    expect(doc.alignNodes([a, b, c], 'bottom')).toEqual([b, c]);
+    expect(ys()).toEqual([0, 50, 20]);
+    history.undo();
+    expect(ys()).toEqual([0, 40, 10]);
+
+    doc.alignNodes([a, b, c], 'middle');
+    expect(ys()).toEqual([0, 25, 10]);
+    doc.alignNodes([a, b], 'right');
+    expect(xs()).toEqual([400, 300, 900]);
+
+    // b (0..200), a, c (900..1000): 600px of space left over makes 300px gaps; the outer two stay put.
+    doc.updateNode(a, { frame: { x: 300 } });
+    doc.updateNode(b, { frame: { x: 0 } });
+    doc.distributeNodes([a, b, c], 'horizontal');
+    expect(xs()).toEqual([500, 0, 900]);
+
+    expect(() => doc.alignNodes([a], 'left')).toThrow(/at least two/);
+    expect(() => doc.distributeNodes([a, b], 'vertical')).toThrow(/at least three/);
+  });
+
+  it('maps element alignment to flex and grid CSS on the child or parent', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const row = doc.createNode({ type: 'frame', parentId: root, styles: { display: 'flex' } });
+    const col = doc.createNode({ type: 'frame', parentId: root, styles: { display: 'flex', flexDirection: 'column' } });
+    const grid = doc.createNode({ type: 'frame', parentId: root, styles: { display: 'grid' } });
+    const block = doc.createNode({ type: 'frame', parentId: root, name: 'Plain' });
+    const inRow = doc.createNode({ type: 'text', parentId: row });
+    const inCol = doc.createNode({ type: 'text', parentId: col });
+    const inGrid = doc.createNode({ type: 'text', parentId: grid });
+    const inBlock = doc.createNode({ type: 'text', parentId: block });
+    const styles = (id: string) => doc.getNode(id)!.styles;
+
+    expect(doc.alignNodes([inRow], 'center')).toEqual([row]);
+    expect(styles(row).justifyContent).toBe('center');
+    doc.alignNodes([inRow], 'bottom');
+    expect(styles(inRow).alignSelf).toBe('end');
+    doc.alignNodes([inCol], 'right');
+    expect(styles(inCol).alignSelf).toBe('end');
+    doc.alignNodes([inCol], 'top');
+    expect(styles(col).justifyContent).toBe('start');
+    doc.alignNodes([inGrid], 'center');
+    doc.alignNodes([inGrid], 'middle');
+    expect(styles(inGrid)).toMatchObject({ justifySelf: 'center', alignSelf: 'center' });
+    expect(() => doc.alignNodes([inBlock], 'left')).toThrow(/"Plain" isn't a flex or grid/);
+
+    doc.distributeNodes([inRow], 'horizontal');
+    expect(styles(row).justifyContent).toBe('space-between');
+    expect(() => doc.distributeNodes([inRow], 'vertical')).toThrow(/in a row/);
+    expect(() => doc.distributeNodes([inGrid], 'horizontal')).toThrow(/grid/);
+    // planning never mutates
+    expect(doc.planAlign([inCol], 'bottom')).toEqual([{ id: col, patch: { styles: { justifyContent: 'end' } } }]);
+    expect(styles(col).justifyContent).toBe('start');
+  });
+});

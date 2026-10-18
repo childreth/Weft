@@ -15,6 +15,7 @@ import {
 } from '@weft/core';
 import { doc, run, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
+import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
 
 const TOKENS = flattenTokens(defaultTokens.tokens);
@@ -34,6 +35,7 @@ export function Inspector() {
       <style>{TOKEN_SCOPE_CSS}</style>
       <TokenDatalists />
       {selection.length === 0 && <p className="gf-empty">Select a layer to inspect it.</p>}
+      {selection.length > 0 && <AlignSection ids={selection} />}
       {selection.length > 1 && <p className="gf-empty">{selection.length} layers selected</p>}
       {selection.length === 1 && <NodeInspector key={selection[0]} id={selection[0]!} />}
     </aside>

@@ -1,6 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  ALIGNMENTS,
+  AXES,
   BREAKPOINTS,
   BREAKPOINT_IDS,
   DEFAULT_ARTBOARD_STYLES,
@@ -27,6 +29,8 @@ Model:
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
+
+- Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
 
 Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
 
@@ -361,6 +365,51 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
         room.doc.moveNode(id, parentId, beforeId, agent.identity.origin);
         touched.add(id);
         return { moved: id };
+      });
+    },
+  );
+
+  server.registerTool(
+    'align_nodes',
+    {
+      title: 'Align nodes',
+      description:
+        "Aligns nodes to an edge or center. Artboards (two or more) line up by canvas frame. Elements are aligned with CSS through their flex or grid parent: the flex main axis sets the parent's justifyContent (affecting all its children), the cross axis sets the child's alignSelf, and grid children get justifySelf/alignSelf. Fails if a parent is not a flex or grid container.",
+      inputSchema: {
+        doc: docParam,
+        ids: z.array(z.string()).min(1),
+        align: z.enum(ALIGNMENTS).describe('left/center/right are horizontal, top/middle/bottom vertical'),
+        model: modelParam,
+      },
+    },
+    async ({ doc, ids, align, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'align_nodes', (touched, report) => {
+        report.action = `Aligning ${ids.length === 1 ? nameOf(room, ids[0]) : plural(ids.length, 'node')} ${align}`;
+        report.focus = ids;
+        const changed = room.doc.alignNodes(ids, align, agent.identity.origin);
+        for (const id of changed) touched.add(id);
+        return { changed };
+      });
+    },
+  );
+
+  server.registerTool(
+    'distribute_nodes',
+    {
+      title: 'Distribute nodes',
+      description:
+        'Spaces nodes evenly along an axis. Artboards (three or more) get equal gaps between their frames, the outermost staying put. Flex children set justifyContent: space-between on their parent when the axis is its main axis. Fails for grid children and for the flex cross axis.',
+      inputSchema: { doc: docParam, ids: z.array(z.string()).min(1), axis: z.enum(AXES), model: modelParam },
+    },
+    async ({ doc, ids, axis, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'distribute_nodes', (touched, report) => {
+        report.action = `Distributing ${plural(ids.length, 'node')} ${axis}ly`;
+        report.focus = ids;
+        const changed = room.doc.distributeNodes(ids, axis, agent.identity.origin);
+        for (const id of changed) touched.add(id);
+        return { changed };
       });
     },
   );
