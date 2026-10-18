@@ -1,6 +1,6 @@
 # Weft
 
-An AI-native design canvas where the canvas *is* the browser's DOM and CSS engine. Edit pages the way you would in Figma, but every artboard is real HTML and CSS, so what you design is what you ship. People and AI agents edit the same live document.
+An AI-native design canvas where the canvas *is* the browser's DOM and CSS engine. Edit pages the way you would in any WYSIWYG editor, but every artboard is real HTML and CSS, so what you design is what you ship. People and AI agents edit the same live document.
 
 > Status: early, local-only. M1 and M2 done; M3 (single-user editing) in progress on branch `m3-editing`: multi-select, responsive breakpoints, the layers panel, align/distribute, snapping and artboard cloning are in. See [Roadmap](#roadmap).
 
