@@ -264,3 +264,31 @@ describe('duplicateNode', () => {
     expect(doc.getNode(mobile)).toMatchObject({ name: 'Page — Mobile', frame: { x: 2100, y: 0, width: 390, height: 900 } });
   });
 });
+
+describe('artboard heightMode', () => {
+  it('defaults new artboards without a frame to hug; explicit frames stay fixed', () => {
+    const doc = new GridDocument();
+    expect(doc.getNode(doc.createNode({ type: 'frame' }))?.frame?.heightMode).toBe('hug');
+    expect(doc.getNode(artboard(doc))?.frame).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+  });
+
+  it('setting a height without a mode makes the artboard fixed; width keeps hug', () => {
+    const doc = new GridDocument();
+    const a = doc.createNode({ type: 'frame' });
+    doc.updateNode(a, { frame: { width: 390 } });
+    expect(doc.getNode(a)?.frame?.heightMode).toBe('hug');
+    doc.updateNode(a, { frame: { height: 640, heightMode: 'hug' } });
+    expect(doc.getNode(a)?.frame).toMatchObject({ height: 640, heightMode: 'hug' });
+    doc.updateNode(a, { frame: { height: 500 } });
+    expect(doc.getNode(a)?.frame?.heightMode).toBeUndefined();
+    expect(() => doc.updateNode(a, { frame: { heightMode: 'auto' as never } })).toThrow(/heightMode/);
+  });
+
+  it('clones at another width hug their content unless a height is given', () => {
+    const doc = new GridDocument();
+    const a = artboard(doc);
+    expect(doc.getNode(doc.duplicateNode(a, { frame: { width: 390 } }))?.frame?.heightMode).toBe('hug');
+    expect(doc.getNode(doc.duplicateNode(a, { frame: { width: 390, height: 700 } }))?.frame?.heightMode).toBeUndefined();
+    expect(doc.getNode(doc.duplicateNode(a))?.frame?.heightMode).toBeUndefined();
+  });
+});

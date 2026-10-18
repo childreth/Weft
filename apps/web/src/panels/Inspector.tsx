@@ -13,7 +13,8 @@ import {
   type SemanticTag,
   type StyleProp,
 } from '@weft/core';
-import { doc, run, useNode } from '../editor/editor';
+import { artboardHeight } from '../canvas/elements';
+import { doc, history, recordHugHeight, run, updateArtboardFrame, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
@@ -26,9 +27,14 @@ const PRESET_SUFFIX = new RegExp(` — (${ARTBOARD_PRESETS.map((p) => p.label).j
 
 /** Copies an artboard at a preset's width beside the original, then shows both. */
 function cloneAtPreset(id: string, name: string, preset: (typeof ARTBOARD_PRESETS)[number]) {
+  history.beginGesture();
   const copy = run(() =>
     doc.duplicateNode(id, { name: `${name.replace(PRESET_SUFFIX, '')} — ${preset.label}`, frame: { width: preset.width } }),
   );
+  requestAnimationFrame(() => {
+    if (copy) recordHugHeight(copy);
+    history.endGesture();
+  });
   if (!copy) return;
   useEditor.getState().select([copy]);
   zoomToFit([id, copy]);
@@ -76,7 +82,7 @@ function NodeInspector({ id }: { id: string }) {
 
   const setFrame = (key: keyof ArtboardFrame, value: string) => {
     const n = Number(value);
-    if (Number.isFinite(n)) run(() => doc.updateNode(id, { frame: { [key]: n } }));
+    if (Number.isFinite(n)) updateArtboardFrame(id, { [key]: n });
   };
 
   return (
@@ -109,6 +115,25 @@ function NodeInspector({ id }: { id: string }) {
               </Row>
             ))}
           </div>
+          <div className="gf-presets" role="group" aria-label="Height">
+            {(['fixed', 'hug'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={`gf-input gf-preset${(node.frame!.heightMode ?? 'fixed') === mode ? ' is-active' : ''}`}
+                aria-pressed={(node.frame!.heightMode ?? 'fixed') === mode}
+                title={mode === 'hug' ? 'Height fits the content' : 'Fixed height; overflowing content is clipped'}
+                onClick={() =>
+                  updateArtboardFrame(
+                    id,
+                    mode === 'hug' ? { heightMode: 'hug' } : { height: artboardHeight(id) ?? node.frame!.height, heightMode: 'fixed' },
+                  )
+                }
+              >
+                {mode === 'hug' ? 'Hug height' : 'Fixed height'}
+              </button>
+            ))}
+          </div>
           <div className="gf-presets" role="group" aria-label="Preview width">
             {ARTBOARD_PRESETS.map((p) => (
               <button
@@ -116,7 +141,7 @@ function NodeInspector({ id }: { id: string }) {
                 type="button"
                 className={`gf-input gf-preset${node.frame!.width === p.width ? ' is-active' : ''}`}
                 title={`Resize to ${p.width}px`}
-                onClick={() => run(() => doc.updateNode(id, { frame: { width: p.width } }))}
+                onClick={() => updateArtboardFrame(id, { width: p.width })}
               >
                 {p.label}
               </button>

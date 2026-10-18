@@ -23,13 +23,20 @@ export const Artboard = memo(function Artboard({ id }: { id: string }) {
   }, []);
 
   if (!node?.frame) return null;
-  const { x, y, width, height } = node.frame;
+  const { x, y, width, height, heightMode } = node.frame;
+  const hug = heightMode === 'hug';
   return (
-    <div className="gf-artboard" style={{ left: x, top: y, width, height }} data-artboard-id={id}>
+    <div
+      className="gf-artboard"
+      style={{ left: x, top: y, width, height: hug ? undefined : height }}
+      data-artboard-id={id}
+      data-height-mode={hug ? 'hug' : 'fixed'}
+    >
       <div className="gf-artboard-label" data-artboard-label={id}>
         {node.name}
       </div>
       <div className="gf-artboard-host" ref={hostRef} data-testid={`artboard-${id}`} />
+      {!hug && root && <ClipMarker root={root} />}
       {root &&
         createPortal(
           <>
@@ -42,6 +49,38 @@ export const Artboard = memo(function Artboard({ id }: { id: string }) {
     </div>
   );
 });
+
+/**
+ * Marks a fixed-height artboard whose content is clipped at the bottom edge.
+ * Content can change size without a document change (fonts, images), so it
+ * watches the root and its children rather than the scene.
+ */
+function ClipMarker({ root }: { root: ShadowRoot }) {
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    let el: Element | null = null;
+    const check = () => {
+      if (el) setClipped(el.scrollHeight > el.clientHeight + 1);
+    };
+    const resize = new ResizeObserver(check);
+    const observe = () => {
+      resize.disconnect();
+      el = [...root.children].find((c) => c.tagName !== 'STYLE') ?? null;
+      if (!el) return setClipped(false);
+      resize.observe(el);
+      for (const child of el.children) resize.observe(child);
+      check();
+    };
+    const mutations = new MutationObserver(observe);
+    mutations.observe(root, { childList: true, subtree: true, characterData: true });
+    observe();
+    return () => {
+      resize.disconnect();
+      mutations.disconnect();
+    };
+  }, [root]);
+  return clipped ? <div className="gf-artboard-clipped" data-testid="artboard-clipped" title="Content is clipped: set height to Hug to fit it" /> : null;
+}
 
 /**
  * Breakpoint overrides for one artboard. They key off the artboard's own

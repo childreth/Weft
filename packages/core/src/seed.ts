@@ -15,7 +15,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
         type: 'frame',
         tag: 'main',
         name: 'Landing — Desktop',
-        frame: { x: 0, y: 0, width: 1280, height: 860 },
+        frame: { x: 0, y: 0, width: 1280, height: 860, heightMode: 'hug' },
         styles: { ...DEFAULT_ARTBOARD_STYLES, gap: 'var(--space-16)', padding: 'var(--space-12)' },
       },
       origin,

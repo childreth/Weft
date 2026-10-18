@@ -13,6 +13,7 @@ import {
 } from '@weft/core';
 import { SceneStore, makeSceneHooks } from './scene';
 import { agentTiming } from '../canvas/agentCursors';
+import { artboardHeight } from '../canvas/elements';
 import { useEditor } from './store';
 
 export const doc = new GridDocument();
@@ -59,6 +60,30 @@ export function isLocked(id: string): boolean {
 }
 
 /** Runs a document command, surfacing validation errors instead of throwing. */
+/**
+ * Stores the rendered height of a hugging artboard as its frame height, so
+ * code without a DOM (agents, align/distribute) sees a current value. Called
+ * at the end of local gestures rather than on every render: every open editor
+ * writing measurements would fight over the value and flood undo.
+ */
+export function recordHugHeight(id: string): void {
+  const frame = scene.nodes.get(id)?.frame;
+  const height = artboardHeight(id);
+  if (frame?.heightMode === 'hug' && height && height !== frame.height) {
+    run(() => doc.updateNode(id, { frame: { height, heightMode: 'hug' } }));
+  }
+}
+
+/** Applies a frame change as one undo step, recording the hug height once it has rendered. */
+export function updateArtboardFrame(id: string, frame: Partial<ArtboardFrame>): void {
+  history.beginGesture();
+  run(() => doc.updateNode(id, { frame }));
+  requestAnimationFrame(() => {
+    recordHugHeight(id);
+    history.endGesture();
+  });
+}
+
 export function run<T>(fn: () => T): T | undefined {
   try {
     const result = fn();

@@ -217,6 +217,17 @@ body {
   white-space: nowrap;
   cursor: default;
 }
+/* Fixed-height artboard whose content overflows: fade plus a dashed edge at the clip line. */
+.gf-artboard-clipped {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(24px / var(--gf-zoom));
+  background: linear-gradient(to bottom, transparent, rgb(244 63 94 / 0.18));
+  border-bottom: calc(2px / var(--gf-zoom)) dashed #f43f5e;
+  pointer-events: none;
+}
 
 /* Overlay (screen space) */
 .gf-overlay { position: absolute; inset: 0; pointer-events: none; }

@@ -23,7 +23,8 @@ import { ROOM_NAME, type Room, type RoomRegistry } from './room';
 export const SERVER_INSTRUCTIONS = `Weft is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.
 
 Model:
-- Top-level nodes are artboards (type "frame" with a canvas "frame" {x, y, width, height}). Everything inside is laid out by CSS (flex/grid), not absolute coordinates.
+- Top-level nodes are artboards (type "frame" with a canvas "frame" {x, y, width, height, heightMode}). Everything inside is laid out by CSS (flex/grid), not absolute coordinates.
+- Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
 - styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor). Values are CSS strings. Unknown properties are rejected; pass null to remove one.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
@@ -49,7 +50,15 @@ const BREAKPOINT_STYLES = `Style overrides per breakpoint (${BREAKPOINT_IDS.join
 const breakpointKey = z.enum(BREAKPOINT_IDS as [string, ...string[]]);
 
 const frameSchema = z
-  .object({ x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() })
+  .object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number().positive(),
+    height: z.number().positive().describe('Fixed height; setting it without heightMode makes the artboard fixed'),
+    heightMode: z
+      .enum(['fixed', 'hug'])
+      .describe('"hug" sizes the artboard to its content (height is then the last measured value); "fixed" clips overflow'),
+  })
   .partial();
 
 interface NodeSpec {
@@ -172,7 +181,8 @@ function createTree(
   let frame: ArtboardFrame | undefined;
   let styles = spec.styles as StyleMap | undefined;
   if (parentId === null) {
-    frame = { ...nextArtboardPosition(room), width: 1280, height: 800, ...spec.frame };
+    const heightMode = spec.frame?.heightMode ?? (spec.frame?.height === undefined ? 'hug' : 'fixed');
+    frame = { ...nextArtboardPosition(room), width: 1280, height: 800, ...spec.frame, heightMode };
     styles ??= DEFAULT_ARTBOARD_STYLES;
   } else if (spec.frame) {
     throw new GridError('Only new artboards (parentId null) take a "frame"; nested nodes are positioned by CSS');

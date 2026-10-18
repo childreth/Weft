@@ -142,7 +142,10 @@ export interface ArtboardFrame {
   x: number;
   y: number;
   width: number;
+  /** Fixed height, or the last measured content height when `heightMode` is 'hug'. */
   height: number;
+  /** 'hug' sizes the artboard to its content; omitted means fixed (overflow is clipped). */
+  heightMode?: 'fixed' | 'hug';
 }
 
 export interface SceneNode {
