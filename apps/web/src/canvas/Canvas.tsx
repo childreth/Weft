@@ -11,7 +11,8 @@ import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';
 import { artboardHeight, nodeElements } from './elements';
 import { commitActiveText } from './NodeView';
-import { SelectionOverlay, type Box, type Handle } from './SelectionOverlay';
+import { draggableIds, dropTargetAt, isNoop, type DropTarget } from './reorder';
+import { SelectionOverlay, type Box, type DragPreview, type Handle } from './SelectionOverlay';
 import { SNAP_DISTANCE, snapMove, snapResize, unionFrames, type Guide } from './snapping';
 
 type Gesture =
@@ -28,6 +29,20 @@ type Gesture =
       active: boolean;
       /** A plain click on a node inside a multi-selection narrows to it on release. */
       collapseTo: string | null;
+    }
+  | {
+      kind: 'reorder';
+      sx: number;
+      sy: number;
+      pointerId: number;
+      /** Elements being dragged to a new place in the tree, in document order. */
+      ids: string[];
+      moving: Set<string>;
+      active: boolean;
+      collapseTo: string | null;
+      target: DropTarget | null;
+      /** Inline opacity each dragged element had before it was dimmed. */
+      dimmed: Map<HTMLElement, string>;
     }
   | { kind: 'marquee'; sx: number; sy: number; cx: number; cy: number; base: string[]; additive: boolean }
   | { kind: 'resize'; id: string; handle: Handle; sx: number; sy: number; frame: ArtboardFrame; others: ArtboardFrame[] }
@@ -112,6 +127,7 @@ export function Canvas() {
   const [draft, setDraft] = useState<Box | null>(null);
   const [panning, setPanning] = useState(false);
   const [guides, setGuides] = useState<Guide[]>([]);
+  const [drag, setDrag] = useState<DragPreview | null>(null);
   const camera = useEditor((s) => s.camera);
   const tool = useEditor((s) => s.tool);
   const spaceHeld = useEditor((s) => s.spaceHeld);
@@ -226,6 +242,28 @@ export function Canvas() {
       }
       const inGroup = state.selection.length > 1 && state.selection.includes(hit.id);
       if (!inGroup) state.select([hit.id]);
+      // Elements reorder and reparent within the tree; artboards move on the canvas.
+      if (scene.nodes.get(hit.id)?.parentId != null) {
+        const ids = draggableIds(inGroup ? useEditor.getState().selection : [hit.id]);
+        if (ids.length > 0) {
+          // No pointer capture until the drag starts: it would retarget a double-click away from the text.
+          gesture = {
+            kind: 'reorder',
+            sx: e.clientX,
+            sy: e.clientY,
+            pointerId: e.pointerId,
+            ids,
+            moving: new Set(ids),
+            active: false,
+            collapseTo: inGroup ? hit.id : null,
+            target: null,
+            dimmed: new Map(),
+          };
+        } else if (inGroup) {
+          state.select([hit.id]);
+        }
+        return;
+      }
       const frames = new Map<string, ArtboardFrame>();
       for (const id of inGroup ? useEditor.getState().selection : [hit.id]) {
         const n = scene.nodes.get(id);
@@ -290,6 +328,22 @@ export function Canvas() {
             });
           }
           break;
+        case 'reorder':
+          if (!g.active) {
+            if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+            g.active = true;
+            el.setPointerCapture(g.pointerId);
+            state.setHovered(null);
+            for (const id of g.ids) {
+              const node = nodeElements.get(id);
+              if (!node) continue;
+              g.dimmed.set(node, node.style.opacity);
+              node.style.opacity = '0.3';
+            }
+          }
+          g.target = dropTargetAt(e.clientX, e.clientY, g.moving);
+          setDrag({ ids: g.ids, dx, dy, target: g.target });
+          break;
         case 'marquee': {
           g.cx = e.clientX;
           g.cy = e.clientY;
@@ -327,6 +381,11 @@ export function Canvas() {
       }
     };
 
+    const endReorder = (g: Extract<Gesture, { kind: 'reorder' }>) => {
+      for (const [node, opacity] of g.dimmed) node.style.opacity = opacity;
+      setDrag(null);
+    };
+
     const onPointerUp = (e: PointerEvent) => {
       const g = gesture;
       if (!g) return;
@@ -334,6 +393,18 @@ export function Canvas() {
       if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
       const state = useEditor.getState();
       switch (g.kind) {
+        case 'reorder': {
+          endReorder(g);
+          if (!g.active) {
+            if (g.collapseTo) state.select([g.collapseTo]);
+            break;
+          }
+          const t = g.target;
+          if (e.type === 'pointercancel' || !t || isNoop(g.ids, t)) break;
+          run(() => doc.transact(() => g.ids.forEach((id) => doc.moveNode(id, t.parentId, t.beforeId))));
+          state.select(g.ids);
+          break;
+        }
         case 'pan':
           setPanning(false);
           break;
@@ -389,6 +460,17 @@ export function Canvas() {
       }
     };
 
+    // Escape drops nothing: the dragged elements stay where they were.
+    const onKeyDown = (e: KeyboardEvent) => {
+      const g = gesture;
+      if (e.key !== 'Escape' || g?.kind !== 'reorder') return;
+      e.preventDefault();
+      e.stopPropagation();
+      gesture = null;
+      if (el.hasPointerCapture(g.pointerId)) el.releasePointerCapture(g.pointerId);
+      endReorder(g);
+    };
+
     const onPointerLeave = () => {
       if (!gesture) useEditor.getState().setHovered(null);
     };
@@ -403,8 +485,10 @@ export function Canvas() {
       ['dblclick', onDoubleClick, undefined],
     ] as const;
     for (const [type, fn, opts] of listeners) el.addEventListener(type, fn as EventListener, opts);
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
       for (const [type, fn] of listeners) el.removeEventListener(type, fn as EventListener);
+      window.removeEventListener('keydown', onKeyDown, true);
     };
   }, []);
 
@@ -424,7 +508,7 @@ export function Canvas() {
         ))}
       </div>
       <SnapGuides guides={guides} />
-      <SelectionOverlay containerRef={containerRef} draft={draft} />
+      <SelectionOverlay containerRef={containerRef} draft={draft} drag={drag} />
     </div>
   );
 }

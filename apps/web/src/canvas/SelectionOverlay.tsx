@@ -3,6 +3,7 @@ import { scene } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { CursorTracks, type AgentCursor } from './agentCursors';
 import { nodeElements } from './elements';
+import { measureDrop, type DropTarget } from './reorder';
 
 export interface Box {
   x: number;
@@ -26,24 +27,43 @@ const sameBoxes = (a: Box[], b: Box[]) => a.length === b.length && a.every((box,
 // A handful of cursors at most; structural comparison is cheap enough per frame.
 const sameCursors = (a: AgentCursor[], b: AgentCursor[]) => JSON.stringify(a) === JSON.stringify(b);
 
+/** An element drag in progress: what moves, how far the pointer went (screen px), and where it would land. */
+export interface DragPreview {
+  ids: string[];
+  dx: number;
+  dy: number;
+  target: DropTarget | null;
+}
+
+interface DropBoxes {
+  ghost: Box | null;
+  parent: Box | null;
+  line: Box | null;
+}
+
+const NO_DROP: DropBoxes = { ghost: null, parent: null, line: null };
+const sameDrop = (a: DropBoxes, b: DropBoxes) => sameBox(a.ghost, b.ghost) && sameBox(a.parent, b.parent) && sameBox(a.line, b.line);
+
 interface Props {
   containerRef: RefObject<HTMLDivElement | null>;
   /** Draft rectangle in screen space (frame tool). */
   draft: Box | null;
+  drag: DragPreview | null;
 }
 
 /** Screen-space chrome drawn above the DOM canvas: hover, selection, handles, agent cursors. */
-export function SelectionOverlay({ containerRef, draft }: Props) {
+export function SelectionOverlay({ containerRef, draft, drag }: Props) {
   const selection = useEditor((s) => s.selection);
   const hoveredId = useEditor((s) => s.hoveredId);
   const zoom = useEditor((s) => s.camera.zoom);
   const activity = useEditor((s) => s.agentActivity);
   const collaborators = useEditor((s) => s.collaborators);
-  const [boxes, setBoxes] = useState<{ selected: Box[]; hover: Box | null; agent: Box[]; cursors: AgentCursor[] }>({
+  const [boxes, setBoxes] = useState<{ selected: Box[]; hover: Box | null; agent: Box[]; cursors: AgentCursor[]; drop: DropBoxes }>({
     selected: [],
     hover: null,
     agent: [],
     cursors: [],
+    drop: NO_DROP,
   });
 
   const lastRef = useRef(boxes);
@@ -65,14 +85,16 @@ export function SelectionOverlay({ containerRef, draft }: Props) {
     const hover = hoveredId && !selection.includes(hoveredId) ? measure(hoveredId) : null;
     const agent = (activity?.ids ?? []).map(measure).filter((b): b is Box => b !== null);
     const cursors = measureCursors(measure, c);
+    const drop = drag ? measureDragBoxes(drag, measure, c) : NO_DROP;
     const last = lastRef.current;
     if (
       !sameBoxes(selected, last.selected) ||
       !sameBox(hover, last.hover) ||
       !sameBoxes(agent, last.agent) ||
-      !sameCursors(cursors, last.cursors)
+      !sameCursors(cursors, last.cursors) ||
+      !sameDrop(drop, last.drop)
     ) {
-      lastRef.current = { selected, hover, agent, cursors };
+      lastRef.current = { selected, hover, agent, cursors, drop };
       setBoxes(lastRef.current);
     }
   };
@@ -177,9 +199,8 @@ export function SelectionOverlay({ containerRef, draft }: Props) {
         </Fragment>
       ))}
       {boxes.hover && <div className="gf-box gf-box-hover" style={boxStyle(boxes.hover)} />}
-      {boxes.selected.map((b, i) => (
-        <div key={i} className="gf-box gf-box-selected" style={boxStyle(b)} />
-      ))}
+      {!drag &&
+        boxes.selected.map((b, i) => <div key={i} className="gf-box gf-box-selected" style={boxStyle(b)} />)}
       {boxes.selected.length > 1 && <div className="gf-box gf-box-group" data-testid="group-box" style={boxStyle(unionBox(boxes.selected))} />}
       {single && singleBox && resizable &&
         HANDLES.map((h) => (
@@ -191,14 +212,35 @@ export function SelectionOverlay({ containerRef, draft }: Props) {
             style={handlePosition(singleBox, h)}
           />
         ))}
-      {single && singleBox && (
+      {single && singleBox && !drag && (
         <div className="gf-size-badge" style={{ left: singleBox.x + singleBox.w / 2, top: singleBox.y + singleBox.h + 8 }}>
           {Math.round(singleBox.w / zoom)} × {Math.round(singleBox.h / zoom)}
         </div>
       )}
       {draft && <div className="gf-box gf-box-draft" style={boxStyle(draft)} />}
+      {boxes.drop.parent && <div className="gf-box gf-box-drop-parent" data-testid="drop-parent" style={boxStyle(boxes.drop.parent)} />}
+      {boxes.drop.line && <div className="gf-box gf-drop-line" data-testid="drop-line" style={boxStyle(boxes.drop.line)} />}
+      {drag && boxes.drop.ghost && (
+        <div className="gf-box gf-drag-ghost" data-testid="drag-ghost" style={boxStyle(boxes.drop.ghost)}>
+          <span className="gf-drag-ghost-label">
+            {drag.ids.length > 1 ? `${drag.ids.length} layers` : (scene.nodes.get(drag.ids[0]!)?.name ?? '')}
+          </span>
+        </div>
+      )}
     </div>
   );
+}
+
+/** The dragged elements' outline following the pointer, plus the drop parent and insertion line. */
+function measureDragBoxes(drag: DragPreview, measure: (id: string) => Box | null, container: DOMRect): DropBoxes {
+  const own = drag.ids.map(measure).filter((b): b is Box => b !== null);
+  const ghost = own.length > 0 ? unionBox(own) : null;
+  const drop = drag.target ? measureDrop(drag.target, new Set(drag.ids), container) : null;
+  return {
+    ghost: ghost && { ...ghost, x: ghost.x + drag.dx, y: ghost.y + drag.dy },
+    parent: drop?.parent ?? null,
+    line: drop?.line ?? null,
+  };
 }
 
 function unionBox(boxes: Box[]): Box {

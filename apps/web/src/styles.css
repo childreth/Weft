@@ -238,6 +238,21 @@ body {
 .gf-box-selected { box-shadow: 0 0 0 1.5px var(--ui-accent); }
 .gf-box-group { box-shadow: 0 0 0 1px var(--ui-accent); outline: 1px dashed var(--ui-accent); outline-offset: 3px; pointer-events: none; }
 .gf-box-draft { box-shadow: 0 0 0 1px var(--ui-accent); background: var(--ui-accent-soft); }
+.gf-box-drop-parent { outline: 1px dashed var(--ui-accent); }
+.gf-drop-line { background: var(--ui-accent); border-radius: 1px; box-shadow: 0 0 0 1px white; }
+.gf-drag-ghost { box-shadow: 0 0 0 1px var(--ui-accent); background: var(--ui-accent-soft); }
+.gf-drag-ghost-label {
+  position: absolute;
+  bottom: 100%;
+  left: -1px;
+  margin-bottom: 4px;
+  background: var(--ui-accent);
+  color: white;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
 .gf-handle {
   position: absolute;
   width: 8px;
