@@ -6,6 +6,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { AgentRoster, type AgentIdentity } from './agents';
+import { Assistant, SESSION_ID, ollamaUrlFrom, type AssistEvent, type ChatRequest } from './assist';
 import { ROOM_NAME, RoomRegistry } from './room';
 import { createMcpServer } from './tools';
 
@@ -14,6 +15,8 @@ export interface GridServerOptions {
   host?: string;
   /** Directory for persisted documents; null keeps everything in memory. */
   dataDir?: string | null;
+  /** Ollama server for the in-editor assistant; defaults to OLLAMA_HOST or 127.0.0.1:11434. */
+  ollamaUrl?: string;
 }
 
 export interface GridServer {
@@ -74,11 +77,21 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 }
 
+/** The editor runs on another local port, so assist routes answer CORS for local origins only. */
+function allowLocalOrigin(req: IncomingMessage, res: ServerResponse): void {
+  if (!req.headers.origin) return;
+  res.setHeader('access-control-allow-origin', req.headers.origin);
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-headers', 'content-type');
+  res.setHeader('vary', 'origin');
+}
+
 export async function startGridServer(options: GridServerOptions = {}): Promise<GridServer> {
   const host = options.host ?? '127.0.0.1';
   const rooms = new RoomRegistry(options.dataDir ?? null);
   const roster = new AgentRoster();
   const sessions = new Map<string, AgentSession>();
+  const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST));
   // Clients that skip sessions share one identity.
   let sessionless: AgentIdentity | null = null;
 
@@ -135,11 +148,67 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     await transport.handleRequest(req, res, body);
   }
 
+  async function handleAssist(req: IncomingMessage, res: ServerResponse, route: string): Promise<void> {
+    if (route === 'models' && req.method === 'GET') {
+      try {
+        return json(res, 200, { ollama: assistant.ollamaUrl, models: await assistant.models(AbortSignal.timeout(3000)) });
+      } catch {
+        return json(res, 503, { ollama: assistant.ollamaUrl, error: `Ollama isn't reachable at ${assistant.ollamaUrl}` });
+      }
+    }
+    if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+    const body = (await readJson(req)) as Partial<ChatRequest>;
+    if (typeof body.session !== 'string' || !SESSION_ID.test(body.session)) return json(res, 400, { error: 'Invalid session' });
+    if (route === 'undo') return json(res, 200, { undone: assistant.undoTurn(body.session) });
+    if (route === 'reset') {
+      assistant.reset(body.session);
+      return json(res, 200, { ok: true });
+    }
+    if (route !== 'chat') return json(res, 404, { error: 'Not found' });
+    if (typeof body.prompt !== 'string' || !body.prompt.trim() || typeof body.model !== 'string') {
+      return json(res, 400, { error: 'prompt and model are required' });
+    }
+    // Stream progress as NDJSON; closing the request (Stop) aborts the model call.
+    res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-cache' });
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    const emit = (e: AssistEvent) => void (!res.writableEnded && res.write(`${JSON.stringify(e)}\n`));
+    try {
+      await assistant.chat(
+        {
+          doc: body.doc ?? 'default',
+          session: body.session,
+          model: body.model,
+          prompt: body.prompt.slice(0, 4000),
+          selection: Array.isArray(body.selection) ? body.selection.filter((id): id is string => typeof id === 'string') : [],
+        },
+        emit,
+        controller.signal,
+      );
+    } catch (err) {
+      emit({ type: 'error', message: (err as Error).message });
+      emit({ type: 'done', edits: 0 });
+    }
+    res.end();
+  }
+
   const http = createServer(async (req, res) => {
     if (!hostAllowed(req)) return json(res, 403, { error: 'Forbidden host' });
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
 
     if (pathname === '/health') return json(res, 200, { ok: true, documents: rooms.names() });
+
+    if (pathname.startsWith('/assist/')) {
+      if (!originAllowed(req)) return json(res, 403, { error: 'Forbidden origin' });
+      allowLocalOrigin(req, res);
+      if (req.method === 'OPTIONS') return void res.writeHead(204).end();
+      try {
+        await handleAssist(req, res, pathname.slice('/assist/'.length));
+      } catch (err) {
+        if (!res.headersSent) json(res, err instanceof SyntaxError ? 400 : 500, { error: (err as Error).message });
+      }
+      return;
+    }
 
     if (pathname === '/mcp') {
       try {
@@ -188,6 +257,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     rooms,
     close: async () => {
       clearInterval(sweep);
+      assistant.close();
       for (const id of [...sessions.keys()]) endSession(id);
       for (const client of wss.clients) client.terminate();
       wss.close();

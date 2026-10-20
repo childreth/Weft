@@ -93,7 +93,7 @@ const ok = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: JSO
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
 /** Drops empty fields and truncates deep trees to keep responses small. */
-function compact(tree: SceneTree, depth: number): Record<string, unknown> {
+export function compact(tree: SceneTree, depth: number): Record<string, unknown> {
   const out: Record<string, unknown> = { id: tree.id, type: tree.type, tag: tree.tag, name: tree.name };
   if (tree.text !== undefined) out.text = tree.text;
   if (tree.frame) out.frame = tree.frame;

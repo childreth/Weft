@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Canvas } from './canvas/Canvas';
+import { AssistBar } from './panels/AssistBar';
 import { installShortcuts } from './editor/shortcuts';
 import { Inspector } from './panels/Inspector';
 import { LayersPanel } from './panels/LayersPanel';
@@ -14,6 +15,7 @@ export function App() {
       <LayersPanel />
       <LayersResizer />
       <Canvas />
+      <AssistBar />
       <Inspector />
     </div>
   );

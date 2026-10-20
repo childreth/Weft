@@ -51,12 +51,21 @@ The repo's `.mcp.json` already registers it for Claude Code. Each MCP connection
 | `undo_agent_change` | Revert that agent's last call |
 | `select_nodes` | Select and zoom to nodes in every open editor |
 
+## Edit with a local model (Assist)
+
+The prompt bar at the bottom of the canvas edits the document with a model running on your machine through [Ollama](https://ollama.com), fully offline. Select something, describe the change ("stack these cards in one column"), and the model edits it live through the same tools MCP agents use, with its own cursor. **Undo** in the bar reverts the model's whole last turn (⌘Z only undoes your own edits); **New** starts a fresh conversation.
+
+- Run Ollama and pull a model with tool calling, e.g. `ollama pull qwen3.5:4b` (fast) or a 12–30B model (more reliable on multi-step edits). The picker lists local tool-capable models, largest first, and remembers your choice; cloud models are left out.
+- The server talks to Ollama at `OLLAMA_HOST` (default `127.0.0.1:11434`).
+- Needs the server: not available with `?offline` or `?ephemeral`.
+- Server routes (loopback, local origins only): `GET /assist/models`, `POST /assist/chat` (NDJSON progress stream), `POST /assist/undo`, `POST /assist/reset`.
+
 ## Project layout
 
 ```
 packages/core   Framework-free scene graph: schema, GridDocument commands, history, W3C tokens
 apps/web        Vite + React editor: canvas (shadow-DOM artboards), overlay, panels
-apps/server     Local Node process: Yjs sync + presence, browser RPC, MCP, persistence
+apps/server     Local Node process: Yjs sync + presence, browser RPC, MCP, local-model assist, persistence
 ```
 
 Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.json`). Contributor and agent rules live in [CLAUDE.md](./CLAUDE.md).
@@ -82,6 +91,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [x] Align and distribute: artboards by frame; elements in flex/grid parents get CSS alignment, not coordinates (Inspector buttons, ⌥A/H/D/W/V/S, ⌥⇧H/V)
   - [x] Artboard height: Hug (fits content, follows width changes live; default for new artboards and clones at another width) or Fixed (clips overflow, marked with a dashed red edge)
   - [x] Snapping and smart guides: artboard move and resize snap edges and centers to other artboards (hold ⌘/Ctrl to move freely)
+  - [x] Assist: prompt bar that edits with a local Ollama model through the MCP tools (own cursor, whole-turn undo, offline)
   - [x] Drag elements on the canvas to reorder or reparent them, following the parent's flex/grid flow, with an insertion line (Esc cancels)
 - [ ] Components and variants
 - [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
@@ -92,6 +102,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-19:** Assist: a prompt bar at the bottom of the canvas edits the document with a local Ollama model, fully offline. The server runs the tool loop (`/assist/*` routes) against the same MCP tools outside agents use, in process, so the model gets its own cursor, atomic edits and an Undo that reverts its whole turn. It sees the current selection, `doc`/`model` arguments are filled in for it, and tool errors go back to the model to fix. `OLLAMA_HOST` picks the Ollama server.
 - **2026-10-19:** Canvas drag and drop for elements. Dragging an element (or a multi-selection) reorders it among its siblings along the parent's flex/grid axis, or reparents it into another container; a dashed outline marks the receiving parent and a line marks the slot. Inside its own parent, siblings take precedence and only the middle half of a sibling container drops into it. One undo step; Esc cancels. Artboards still move by frame.
 - **2026-10-18:** M3 complete. Dropped per-breakpoint text, visibility and tag from the roadmap: breakpoint overrides stay styles-only (hide per breakpoint with a `display: none` override).
 - **2026-10-18:** Artboard Hug/Fixed height. `frame.heightMode: 'hug'` sizes an artboard to its content, so narrowing it grows it live; dragging a top/bottom handle or setting a height makes it fixed, and fixed artboards mark clipped content. New artboards, the seeded page and clones at another width hug by default. Inspector Fixed/Hug toggle; `create_nodes`/`update_nodes`/`duplicate_node` accept `heightMode` (new MCP artboards hug unless given a height).

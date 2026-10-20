@@ -229,6 +229,73 @@ body {
   pointer-events: none;
 }
 
+/* Assist: local-model prompt bar, layered over the bottom of the canvas (outside its pointer handling). */
+.gf-assist {
+  grid-area: canvas;
+  align-self: end;
+  justify-self: center;
+  z-index: 2;
+  width: min(720px, calc(100% - 32px));
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gf-assist-bar, .gf-assist-log {
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+.gf-assist-bar { display: flex; align-items: center; gap: 4px; padding: 6px; }
+.gf-assist-off { padding: 10px 14px; color: var(--ui-text-muted); font-size: 12px; }
+.gf-assist-model {
+  max-width: 180px;
+  background: var(--ui-panel-2);
+  color: var(--ui-text);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.gf-assist-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--ui-text);
+  border: 0;
+  padding: 6px 8px;
+  font: inherit;
+}
+.gf-assist-input:focus { outline: none; }
+.gf-assist-input::placeholder { color: var(--ui-text-muted); }
+.gf-assist-icon { padding: 6px 8px; }
+.gf-assist-status { flex: none; max-width: 50%; color: var(--ui-warn); font-size: 12px; padding: 0 6px; }
+.gf-assist-link { background: none; border: 0; padding: 0; color: var(--ui-accent); font: inherit; cursor: pointer; }
+.gf-assist-log {
+  max-height: 40vh;
+  overflow: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  user-select: text;
+}
+.gf-assist-entry { line-height: 1.4; }
+.gf-assist-entry.is-user {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--ui-accent-soft);
+  border-radius: 8px;
+  padding: 4px 10px;
+}
+.gf-assist-entry.is-tool, .gf-assist-entry.is-pending { color: var(--ui-text-muted); font-size: 12px; }
+.gf-assist-entry.is-failed, .gf-assist-entry.is-error { color: var(--ui-warn); }
+.gf-assist-tool-mark { display: inline-block; width: 16px; }
+.gf-assist-detail { display: block; margin-left: 16px; white-space: pre-wrap; word-break: break-word; }
+
 /* Overlay (screen space) */
 .gf-overlay { position: absolute; inset: 0; pointer-events: none; }
 .gf-snap-guides { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }

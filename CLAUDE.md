@@ -5,7 +5,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 ## Layout
 - `packages/core` — framework-free scene graph: schema, `GridDocument` commands, `History`, W3C tokens. Source-only (no build), consumed via `exports` → `src/index.ts`.
 - `apps/web` — Vite + React editor. `src/editor` (singletons, UI store, shortcuts, `connection.ts`), `src/canvas` (viewport, shadow-DOM artboards, overlay), `src/panels`.
-- `apps/server` — local Node process (127.0.0.1:4510): Yjs sync relay + awareness (`/<doc>`), browser RPC (`/rpc/<doc>`), MCP over Streamable HTTP (`/mcp`), persistence to `.weft-data/` (`.ydoc` + `.weft.json`). It owns seeding.
+- `apps/server` — local Node process (127.0.0.1:4510): Yjs sync relay + awareness (`/<doc>`), browser RPC (`/rpc/<doc>`), MCP over Streamable HTTP (`/mcp`), local-model assist (`/assist/*`, Ollama tool loop over the MCP tools in process: `assist.ts`), persistence to `.weft-data/` (`.ydoc` + `.weft.json`). It owns seeding.
 - Electron shell (`apps/desktop`) comes later; keep `core` and the canvas shell-agnostic.
 
 ## Commands
@@ -13,7 +13,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - MCP: `.mcp.json` registers `http://127.0.0.1:4510/mcp`; the server must be running
 - In this repo, "the selection", "this section", "the canvas" etc. mean the Weft editor: use the `weft` MCP tools (`get_selection`, `get_canvas`). Use Figma tools only when the user names Figma. If the `weft` tools are missing, say so (start `pnpm dev`, then `/mcp` to connect) instead of falling back to another design tool.
 - `pnpm test` — core unit tests (vitest)
-- `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`, `m3-reorder.png`)
+- `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`, `m3-reorder.png`, `m3-assist.png`)
 - `pnpm typecheck`
 
 ## Rules
