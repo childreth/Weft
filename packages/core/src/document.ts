@@ -7,6 +7,9 @@ import {
   isBreakpointId,
   isStyleProp,
   isValidTag,
+  tagsFor,
+  BREAKPOINT_IDS,
+  STYLE_PROPS,
   type Alignment,
   type ArtboardFrame,
   type Axis,
@@ -81,9 +84,63 @@ export class GridError extends Error {
 
 const ATTRIBUTE_NAME = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
 const UNSAFE_STYLE_VALUE = /[;{}<>]/;
+/** Values that would make the browser fetch something: url(), image-set(), …, or escapes that could hide them. */
+const EXTERNAL_STYLE_VALUE = /\b(?:url|image|image-set|-webkit-image-set|cross-fade|element|expression)\s*\(|\\/i;
 const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800, heightMode: 'hug' };
 /** Space left between an artboard and a duplicate placed beside it. */
 const ARTBOARD_GAP = 100;
+/** Bounds on pasted clipboard content, which may come from anywhere. */
+const CLIPBOARD_MAX_NODES = 5000;
+const CLIPBOARD_MAX_DEPTH = 64;
+
+/** What the editor puts on the clipboard for copied layers. */
+export interface ClipboardPayload {
+  format: 'weft-clipboard';
+  version: 1;
+  nodes: SceneTree[];
+}
+
+/**
+ * Parses clipboard JSON into subtrees, checking only their shape: content is
+ * validated by `insertTrees` like any other create.
+ */
+export function readClipboard(json: string): SceneTree[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new GridError('Clipboard does not contain Weft layers');
+  }
+  const payload = data as Partial<ClipboardPayload> | null;
+  if (payload?.format !== 'weft-clipboard' || payload.version !== 1 || !Array.isArray(payload.nodes)) {
+    throw new GridError('Clipboard does not contain Weft layers');
+  }
+  let count = 0;
+  const check = (node: unknown, depth: number): void => {
+    const n = node as Partial<SceneTree> | null;
+    const record = (v: unknown) => v === undefined || (typeof v === 'object' && v !== null && !Array.isArray(v));
+    const text = (v: unknown) => v === undefined || typeof v === 'string';
+    if (
+      !n ||
+      typeof n !== 'object' ||
+      (n.type !== 'frame' && n.type !== 'text') ||
+      !Array.isArray(n.children) ||
+      !text(n.name) ||
+      !text(n.text) ||
+      !text(n.tag) ||
+      !record(n.styles) ||
+      !record(n.attributes) ||
+      !record(n.breakpoints) ||
+      !record(n.frame)
+    ) {
+      throw new GridError('Malformed layers on the clipboard');
+    }
+    if (++count > CLIPBOARD_MAX_NODES || depth > CLIPBOARD_MAX_DEPTH) throw new GridError('Too many layers on the clipboard');
+    for (const child of n.children) check(child, depth + 1);
+  };
+  for (const node of payload.nodes) check(node, 0);
+  return payload.nodes;
+}
 
 export function readNode(y: YNode): SceneNode {
   const styles = y.get('styles') as Y.Map<string> | undefined;
@@ -156,21 +213,131 @@ function patchFrame(frame: ArtboardFrame, patch: Partial<ArtboardFrame>): Artboa
   return normalizeFrame({ ...frame, ...patch, heightMode });
 }
 
-function assertStyles(styles: Partial<Record<string, string | null>>): void {
-  for (const [key, value] of Object.entries(styles)) {
-    if (!isStyleProp(key)) throw new GridError(`Unknown style property "${key}"`);
-    if (value === null || value === undefined) continue;
-    if (typeof value !== 'string') throw new GridError(`Style "${key}" must be a string`);
-    if (UNSAFE_STYLE_VALUE.test(value)) throw new GridError(`Style "${key}" contains forbidden characters`);
+/** Common names that aren't style properties here, and what to use instead. */
+const STYLE_ALIASES: Record<string, string> = {
+  background: 'use backgroundColor, or backgroundImage for a gradient',
+  font: 'use fontFamily, fontSize, fontWeight and lineHeight',
+  textDecorationLine: 'use textDecoration',
+  transition: 'animation is not supported',
+  animation: 'animation is not supported',
+  content: 'add a text node instead',
+};
+
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]!;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const next = Math.min(row[j]! + 1, row[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = row[j]!;
+      row[j] = next;
+    }
   }
+  return row[b.length]!;
 }
 
-function assertBreakpoints(breakpoints: Record<string, Partial<Record<string, string | null>> | null | undefined>): void {
-  for (const [bp, styles] of Object.entries(breakpoints)) {
-    if (!isBreakpointId(bp)) throw new GridError(`Unknown breakpoint "${bp}"`);
-    if (styles) assertStyles(styles);
+/** A short "what to use instead" for an unknown style property, or ''. */
+function styleHint(key: string): string {
+  const alias = STYLE_ALIASES[key];
+  if (alias) return ` (${alias})`;
+  const camel = key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+  if (camel !== key && isStyleProp(camel)) return ` (use "${camel}")`;
+  const lower = key.toLowerCase();
+  let best: string | null = null;
+  let bestDistance = 3;
+  for (const prop of STYLE_PROPS) {
+    const d = editDistance(lower, prop.toLowerCase());
+    if (d < bestDistance) [best, bestDistance] = [prop, d];
   }
+  return best ? ` (did you mean "${best}"?)` : '';
 }
+
+/** Every problem with a style map, so a caller can fix them all in one go. */
+export function styleIssues(styles: Partial<Record<string, string | null>>): string[] {
+  const issues: string[] = [];
+  for (const [key, value] of Object.entries(styles)) {
+    if (!isStyleProp(key)) issues.push(`Unknown style property "${key}"${styleHint(key)}`);
+    else if (value === null || value === undefined) continue;
+    else if (typeof value !== 'string') issues.push(`Style "${key}" must be a string`);
+    else if (UNSAFE_STYLE_VALUE.test(value)) issues.push(`Style "${key}" contains forbidden characters`);
+    else if (EXTERNAL_STYLE_VALUE.test(value)) issues.push(`Style "${key}" can't load external resources (url(), image-set()); gradients are fine`);
+  }
+  return issues;
+}
+
+export function breakpointIssues(breakpoints: Record<string, Partial<Record<string, string | null>> | null | undefined>): string[] {
+  return Object.entries(breakpoints).flatMap(([bp, styles]) =>
+    !isBreakpointId(bp) ? [`Unknown breakpoint "${bp}" (use ${BREAKPOINT_IDS.join(' or ')})`] : styles ? styleIssues(styles).map((m) => `${bp}: ${m}`) : [],
+  );
+}
+
+export function attributeIssues(attributes: Record<string, string | null>): string[] {
+  const issues: string[] = [];
+  for (const [name, value] of Object.entries(attributes)) {
+    if (!ATTRIBUTE_NAME.test(name)) issues.push(`Invalid attribute name "${name}"`);
+    else if (/^on/i.test(name)) issues.push(`Event handler attributes are not allowed ("${name}")`);
+    else if (name === 'style' || name === 'class') issues.push(`Use styles instead of the "${name}" attribute`);
+    else if (value !== null && typeof value !== 'string') issues.push(`Attribute "${name}" must be a string`);
+    else if (typeof value === 'string' && /^\s*javascript:/i.test(value)) issues.push(`Unsafe URL in "${name}"`);
+  }
+  return issues;
+}
+
+/** Tag check with a hint: the other node type, or the tags this type allows. */
+export function tagIssue(type: NodeType, tag: string): string | null {
+  if (isValidTag(type, tag)) return null;
+  const other: NodeType = type === 'text' ? 'frame' : 'text';
+  const hint = isValidTag(other, tag) ? `use type "${other}"` : `allowed: ${tagsFor(type).join(', ')}`;
+  return `Tag <${tag}> is not valid for a ${type} node (${hint})`;
+}
+
+/** The shape `treeIssues` checks: a node to create with its subtree. */
+export interface TreeInput {
+  type: NodeType;
+  tag?: string;
+  styles?: Partial<Record<string, string | null>>;
+  breakpoints?: Record<string, Partial<Record<string, string | null>> | null | undefined>;
+  attributes?: Record<string, string | null>;
+  children?: readonly TreeInput[];
+}
+
+const MAX_REPORTED_ISSUES = 25;
+
+/**
+ * Every validation problem in a batch of subtrees, each prefixed with where it
+ * is (`nodes[1].children[0]`), so an agent can fix them all in one retry.
+ */
+export function treeIssues(nodes: readonly TreeInput[], path = 'nodes'): string[] {
+  const issues: string[] = [];
+  const visit = (node: TreeInput, at: string) => {
+    const tag = node.tag ?? (node.type === 'text' ? 'p' : 'div');
+    const add = (list: string[]) => issues.push(...list.map((m) => `${at}: ${m}`));
+    const bad = tagIssue(node.type, tag);
+    if (bad) add([bad]);
+    if (node.styles) add(styleIssues(node.styles));
+    if (node.breakpoints) add(breakpointIssues(node.breakpoints));
+    if (node.attributes) add(attributeIssues(node.attributes));
+    const children = node.children ?? [];
+    if (children.length && (node.type === 'text' || VOID_TAGS.has(tag))) {
+      add([node.type === 'text' ? 'Text nodes cannot have children (make it a frame with the same tag and span text children)' : `<${tag}> cannot contain other layers`]);
+    }
+    children.forEach((child, i) => visit(child, `${at}.children[${i}]`));
+  };
+  nodes.forEach((node, i) => visit(node, `${path}[${i}]`));
+  return issues;
+}
+
+/** Throws one GridError listing every issue (capped). */
+export function throwIssues(issues: readonly string[]): void {
+  if (issues.length === 0) return;
+  const shown = issues.slice(0, MAX_REPORTED_ISSUES);
+  const more = issues.length - shown.length;
+  throw new GridError(
+    issues.length === 1 ? issues[0]! : `${issues.length} problems:\n- ${shown.join('\n- ')}${more > 0 ? `\n- …and ${more} more` : ''}`,
+  );
+}
+
 
 /**
  * CSS for breakpoint overrides, keyed by `[data-gf-id]`. `!important` is
@@ -200,15 +367,6 @@ export function compileBreakpointCSS(
   return blocks.join('\n');
 }
 
-function assertAttributes(attributes: Record<string, string | null>): void {
-  for (const [name, value] of Object.entries(attributes)) {
-    if (!ATTRIBUTE_NAME.test(name)) throw new GridError(`Invalid attribute name "${name}"`);
-    if (/^on/i.test(name)) throw new GridError(`Event handler attributes are not allowed ("${name}")`);
-    if (name === 'style' || name === 'class') throw new GridError(`Use styles instead of the "${name}" attribute`);
-    if (value !== null && typeof value !== 'string') throw new GridError(`Attribute "${name}" must be a string`);
-    if (typeof value === 'string' && /^\s*javascript:/i.test(value)) throw new GridError(`Unsafe URL in "${name}"`);
-  }
-}
 
 /**
  * The scene graph. All reads and writes go through this class so that the
@@ -293,10 +451,12 @@ export class GridDocument {
       this.assertCanContain(parentId);
     }
     const tag = input.tag ?? (input.type === 'text' ? 'p' : 'div');
-    if (!isValidTag(input.type, tag)) throw new GridError(`Tag <${tag}> is not valid for a ${input.type} node`);
-    if (input.styles) assertStyles(input.styles);
-    if (input.breakpoints) assertBreakpoints(input.breakpoints);
-    if (input.attributes) assertAttributes(input.attributes);
+    throwIssues([
+      ...[tagIssue(input.type, tag) ?? []].flat(),
+      ...(input.styles ? styleIssues(input.styles) : []),
+      ...(input.breakpoints ? breakpointIssues(input.breakpoints) : []),
+      ...(input.attributes ? attributeIssues(input.attributes) : []),
+    ]);
     const id = input.id ?? createId(input.type === 'text' ? 't' : 'f');
     if (this.nodes.has(id)) throw new GridError(`Node ${id} already exists`);
     const index = this.indexFor(parentId, input.beforeId ?? null);
@@ -327,16 +487,18 @@ export class GridDocument {
     const y = this.requireY(id);
     const type = y.get('type') as NodeType;
     if (patch.tag !== undefined) {
-      if (!isValidTag(type, patch.tag)) throw new GridError(`Tag <${patch.tag}> is not valid for a ${type} node`);
+      throwIssues([tagIssue(type, patch.tag) ?? []].flat());
       if (VOID_TAGS.has(patch.tag) && this.getDescendantIds(id).length > 0) {
         throw new GridError(`<${patch.tag}> cannot have children`);
       }
     }
     if (patch.text !== undefined && type !== 'text') throw new GridError('Only text nodes have text');
     if (patch.frame && y.get('parentId') !== null) throw new GridError('Only artboards have a canvas frame');
-    if (patch.styles) assertStyles(patch.styles);
-    if (patch.breakpoints) assertBreakpoints(patch.breakpoints);
-    if (patch.attributes) assertAttributes(patch.attributes);
+    throwIssues([
+      ...(patch.styles ? styleIssues(patch.styles) : []),
+      ...(patch.breakpoints ? breakpointIssues(patch.breakpoints) : []),
+      ...(patch.attributes ? attributeIssues(patch.attributes) : []),
+    ]);
 
     this.transact(() => {
       if (patch.name !== undefined) y.set('name', patch.name);
@@ -508,33 +670,81 @@ export class GridDocument {
       // A copy at another width can't keep the original's content height: hug it.
       if (patch.width !== undefined && patch.height === undefined) patch.heightMode ??= 'hug';
       frame = patchFrame(source.frame, patch);
-      if (options.frame?.x === undefined) {
-        const f = frame;
-        const row = siblings.flatMap((n) => (n.frame && n.frame.y < f.y + f.height && n.frame.y + n.frame.height > f.y ? [n.frame] : []));
-        frame.x = Math.max(...row.map((r) => r.x + r.width)) + ARTBOARD_GAP;
-      }
+      if (options.frame?.x === undefined) frame = this.besideRow(frame);
     }
-    const copy = (node: SceneTree, parentId: string | null, before: string | null, root: boolean): string => {
-      const newId = this.createNode(
-        {
-          type: node.type,
-          tag: node.tag,
-          name: root ? (options.name ?? node.name) : node.name,
-          parentId,
-          beforeId: before,
-          text: node.text,
-          styles: node.styles,
-          breakpoints: node.breakpoints,
-          attributes: node.attributes,
-          frame: root ? frame : node.frame,
-        },
-        origin,
-      );
-      if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
-      for (const child of node.children) copy(child, newId, null, false);
-      return newId;
+    return this.transact(() => this.copyTree(tree!, source.parentId, beforeId, { name: options.name, frame }, origin), origin);
+  }
+
+  /** Subtrees of `ids` for the clipboard: outermost nodes only, in document order. */
+  copyNodes(ids: readonly string[]): SceneTree[] {
+    const wanted = new Set(ids.filter((id) => this.has(id)));
+    const out: SceneTree[] = [];
+    const walk = (trees: SceneTree[]) => {
+      for (const t of trees) {
+        if (wanted.has(t.id)) out.push(t);
+        else walk(t.children);
+      }
     };
-    return this.transact(() => copy(tree!, source.parentId, beforeId, true), origin);
+    walk(this.getTree());
+    return out;
+  }
+
+  /**
+   * Inserts copies of `trees` (e.g. pasted) with fresh ids, validated like any
+   * create, and returns the new roots. Artboards (trees with a `frame`) land on
+   * the page to the right of their row; other nodes go into `target.parentId`
+   * before `target.beforeId`.
+   */
+  insertTrees(trees: readonly SceneTree[], target: { parentId: string | null; beforeId?: string | null }, origin: Origin = ORIGIN_LOCAL): string[] {
+    // Validate everything first: a transaction does not roll back, and a paste must not land halfway.
+    throwIssues(treeIssues(trees));
+    for (const tree of trees) {
+      if (tree.frame) normalizeFrame(tree.frame);
+      else if (target.parentId === null) throw new GridError('Select a layer or artboard to paste into');
+    }
+    if (target.parentId !== null && trees.some((t) => !t.frame)) this.assertCanContain(target.parentId);
+    return this.transact(
+      () =>
+        trees.map((tree) => {
+          if (tree.frame) return this.copyTree(tree, null, null, { frame: this.besideRow(normalizeFrame(tree.frame)) }, origin);
+          if (target.parentId === null) throw new GridError('Select a layer or artboard to paste into');
+          return this.copyTree(tree, target.parentId, target.beforeId ?? null, {}, origin);
+        }),
+      origin,
+    );
+  }
+
+  /** `frame` moved to the right of the artboards it vertically overlaps. */
+  private besideRow(frame: ArtboardFrame): ArtboardFrame {
+    const row = this.getChildren(null).flatMap((n) => (n.frame && n.frame.y < frame.y + frame.height && n.frame.y + n.frame.height > frame.y ? [n.frame] : []));
+    return row.length ? { ...frame, x: Math.max(...row.map((r) => r.x + r.width)) + ARTBOARD_GAP } : frame;
+  }
+
+  private copyTree(
+    node: SceneTree,
+    parentId: string | null,
+    beforeId: string | null,
+    root: { name?: string; frame?: ArtboardFrame },
+    origin: Origin,
+  ): string {
+    const newId = this.createNode(
+      {
+        type: node.type,
+        tag: node.tag,
+        name: root.name ?? node.name,
+        parentId,
+        beforeId,
+        text: node.text,
+        styles: node.styles,
+        breakpoints: node.breakpoints,
+        attributes: node.attributes,
+        frame: root.frame ?? node.frame,
+      },
+      origin,
+    );
+    if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
+    for (const child of node.children) this.copyTree(child, newId, null, {}, origin);
+    return newId;
   }
 
   toSnapshot(): Snapshot {

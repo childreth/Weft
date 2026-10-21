@@ -51,6 +51,12 @@ export class AgentRoster {
     const suffix = n >= CALLSIGNS.length ? ` ${Math.floor(n / CALLSIGNS.length) + 1}` : '';
     return new AgentIdentity(randomUUID().slice(0, 8), CALLSIGNS[n % CALLSIGNS.length]! + suffix, AGENT_COLORS[n % AGENT_COLORS.length]!);
   }
+
+  /** A fixed callsign, e.g. the name a remote agent's token was issued to. */
+  named(callsign: string): AgentIdentity {
+    const n = this.count++;
+    return new AgentIdentity(randomUUID().slice(0, 8), callsign, AGENT_COLORS[n % AGENT_COLORS.length]!);
+  }
 }
 
 /** How the editor should move the cursor: read = hover, create = visit each new node, text = caret at the end. */

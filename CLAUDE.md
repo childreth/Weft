@@ -5,7 +5,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 ## Layout
 - `packages/core` — framework-free scene graph: schema, `GridDocument` commands, `History`, W3C tokens. Source-only (no build), consumed via `exports` → `src/index.ts`.
 - `apps/web` — Vite + React editor. `src/editor` (singletons, UI store, shortcuts, `connection.ts`), `src/canvas` (viewport, shadow-DOM artboards, overlay), `src/panels`.
-- `apps/server` — local Node process (127.0.0.1:4510): Yjs sync relay + awareness (`/<doc>`), browser RPC (`/rpc/<doc>`), MCP over Streamable HTTP (`/mcp`), local-model assist (`/assist/*`, Ollama tool loop over the MCP tools in process: `assist.ts`), persistence to `.weft-data/` (`.ydoc` + `.weft.json`). It owns seeding.
+- `apps/server` — local Node process (127.0.0.1:4510; `/mcp` optionally reachable through a tunnel, `remote.ts`): Yjs sync relay + awareness (`/<doc>`), browser RPC (`/rpc/<doc>`), MCP over Streamable HTTP (`/mcp`), local-model assist (`/assist/*`, Ollama tool loop over the MCP tools in process: `assist.ts`), persistence to `.weft-data/` (`.ydoc` + `.weft.json`). It owns seeding.
 - Electron shell (`apps/desktop`) comes later; keep `core` and the canvas shell-agnostic.
 
 ## Commands
@@ -13,13 +13,13 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - MCP: `.mcp.json` registers `http://127.0.0.1:4510/mcp`; the server must be running
 - In this repo, "the selection", "this section", "the canvas" etc. mean the Weft editor: use the `weft` MCP tools (`get_selection`, `get_canvas`). Use Figma tools only when the user names Figma. If the `weft` tools are missing, say so (start `pnpm dev`, then `/mcp` to connect) instead of falling back to another design tool.
 - `pnpm test` — core unit tests (vitest)
-- `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`, `m3-reorder.png`, `m3-assist.png`)
+- `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`, `m3-reorder.png`, `m3-assist.png`, `m3-remote.png`, `m3-clipboard.png`, `m3-authoring.png`)
 - `pnpm typecheck`
 
 ## Rules
 - Every document mutation goes through `GridDocument` commands with an origin (`ORIGIN_LOCAL`, `ORIGIN_AGENT`, `ORIGIN_SEED`). Never write to the Yjs maps directly from UI code.
 - MCP tools (`apps/server/src/tools.ts`) run each mutating call through `mutate()`: one transaction, rolled back on error, undoable via `undo_agent_change`, and reported as awareness `activity` so editors highlight it. Each MCP session is one agent (`agents.ts`): its own callsign/color, awareness client (cursor `focus`), transaction origin `agent:<key>` and undo stack. Every tool should call `agent.look()` or go through `mutate()` (which calls `reportEdit`) with an action label, so the cursor follows and stays alive; cursor choreography lives in `apps/web/src/canvas/agentCursors.ts`. New commands need a tool here (and in `window.weft.agent` for in-page use).
-- The server binds to loopback and rejects non-local Host/Origin headers (DNS rebinding / cross-site sockets). Keep it that way until auth exists.
+- The server binds to loopback and rejects non-local Host/Origin headers (DNS rebinding / cross-site sockets). Requests carrying proxy headers (`x-forwarded-for` etc.) are never local. The only exception is remote access (`remote.ts`): when switched on in the editor, tunneled requests may reach `/mcp` only, with no Origin and a per-agent token. Everything else (sync, RPC, `/assist`, `/remote` settings) stays local-only.
 - Validation lives in core (`assertStyles`, `assertAttributes`, `isValidTag`), not in the UI. UI wraps commands in `run()` to surface `GridError`s.
 - Continuous interactions (drag, resize, text edit) wrap their commands in `history.beginGesture()/endGesture()` so they undo as one step.
 - Overlay chrome measures in a layout effect (camera changes) plus a rAF loop (other layout changes); never only one.
@@ -33,10 +33,10 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 ## Offline-first (product principle)
 Working offline with local models and local data is part of the value prop. Remote services (Google Fonts, model APIs, CDNs) may ship as an online first step, but every feature needs a planned local path (e.g. font files served from `.weft-data/`, local models) and must degrade gracefully without a network: bundled catalogs over live APIs, fallback stacks over missing assets. No hard network dependencies in the editor, canvas or export.
 
-## Future: remote agents & hosting (not built — design around it)
-Goal: hosted Weft that outside agents (e.g. Muse, GrokBot) can connect to over MCP. Today everything is loopback-only; don't regress that, but don't paint into a corner either.
+## Future: remote agents & hosting (partly built — design around it)
+Goal: hosted Weft that outside agents (e.g. Muse, GrokBot) can connect to over MCP. Today the server is loopback-only, except opt-in tunnel access to `/mcp` with per-agent tokens (`remote.ts`, Remote panel); don't regress that, but don't paint into a corner either.
 - Hosting split: `apps/web` is static (Netlify-able). `apps/server` is a long-lived process (WebSocket Yjs relay + in-memory docs + disk persistence), so it needs a persistent host with a volume (Fly/Railway/Render/VPS), not Netlify functions.
-- Before opening `/mcp` or `/<doc>` to non-local clients: per-agent API tokens (identity → `agents.ts` callsign/origin), configurable allowed-host/origin list replacing the hard-coded loopback set in `server.ts`, per-agent write rate limits, and per-token doc scoping.
+- Before hosting or opening `/<doc>` (sync) to non-local clients: auth for browser sync, a configurable allowed-origin list replacing the hard-coded loopback set in `server.ts`, per-agent write rate limits, and per-token doc scoping. Per-agent tokens with names already exist (`remote.ts`).
 - Keep persistence behind an interface (today `.weft-data/` files) so it can move to a managed store.
 - `get_layout`/`select_nodes` need a connected editor (`callEditor`); remote agents must degrade gracefully when none is open.
 - Keep agent identity/transport out of `core`; `GridDocument` commands stay origin-based so any client can plug in.

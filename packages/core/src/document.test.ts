@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS } from './document';
+import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard, styleIssues, treeIssues } from './document';
 import { History } from './history';
 import { seedLandingPage } from './seed';
 import { compileTokensCSS, flattenTokens } from './tokens';
@@ -290,5 +290,91 @@ describe('artboard heightMode', () => {
     expect(doc.getNode(doc.duplicateNode(a, { frame: { width: 390 } }))?.frame?.heightMode).toBe('hug');
     expect(doc.getNode(doc.duplicateNode(a, { frame: { width: 390, height: 700 } }))?.frame?.heightMode).toBeUndefined();
     expect(doc.getNode(doc.duplicateNode(a))?.frame?.heightMode).toBeUndefined();
+  });
+});
+
+describe('clipboard', () => {
+  it('copies outermost subtrees in document order and pastes them with fresh ids, as one undo step', () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    const root = artboard(doc);
+    const a = doc.createNode({ type: 'frame', parentId: root, name: 'A1', styles: { gap: '4px' } });
+    const inner = doc.createNode({ type: 'text', parentId: a, text: 'inner' });
+    const b = doc.createNode({ type: 'text', parentId: root, text: 'b' });
+
+    const trees = doc.copyNodes([b, inner, a]);
+    expect(trees.map((t) => t.id)).toEqual([a, b]);
+    const json = JSON.stringify({ format: 'weft-clipboard', version: 1, nodes: trees });
+
+    const pasted = doc.insertTrees(readClipboard(json), { parentId: root, beforeId: b });
+    expect(pasted).toHaveLength(2);
+    expect(pasted).not.toContain(a);
+    expect(doc.getChildren(root).map((n) => n.id)).toEqual([a, ...pasted, b]);
+    expect(doc.getTree(pasted[0]!)[0]).toMatchObject({ name: 'A1', styles: { gap: '4px' }, children: [{ text: 'inner' }] });
+
+    history.undo();
+    expect(doc.getChildren(root).map((n) => n.id)).toEqual([a, b]);
+  });
+
+  it('pastes artboards beside their row and refuses loose elements on the page', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const el = doc.createNode({ type: 'text', parentId: root, text: 'x' });
+    const [copy] = doc.insertTrees(doc.copyNodes([root]), { parentId: null });
+    expect(doc.getNode(copy!)).toMatchObject({ parentId: null, frame: { x: 200, y: 0, width: 100 } });
+    expect(() => doc.insertTrees(doc.copyNodes([el]), { parentId: null })).toThrow(/paste into/);
+  });
+
+  it('validates pasted content like any create, atomically', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const payload = (nodes: unknown[]) => JSON.stringify({ format: 'weft-clipboard', version: 1, nodes });
+    expect(() => readClipboard('plain text')).toThrow(GridError);
+    expect(() => readClipboard(payload([{ type: 'script', children: [] }]))).toThrow(/Malformed/);
+    expect(() => readClipboard(payload([{ type: 'text', text: 42, children: [] }]))).toThrow(/Malformed/);
+    const evil = readClipboard(
+      payload([
+        { type: 'text', text: 'ok', children: [] },
+        { type: 'frame', attributes: { onclick: 'alert(1)' }, children: [] },
+      ]),
+    );
+    const before = doc.getNodes().length;
+    expect(() => doc.insertTrees(evil, { parentId: root })).toThrow(/Event handler/);
+    expect(doc.getNodes()).toHaveLength(before);
+    expect(() => doc.insertTrees(readClipboard(payload([{ type: 'text', styles: { color: 'red; x: url(y)' }, children: [] }])), { parentId: root })).toThrow(/forbidden/);
+  });
+});
+
+describe('validation', () => {
+  it('suggests the property to use for unknown styles', () => {
+    expect(styleIssues({ 'padding-left': '4px' })).toEqual(['Unknown style property "padding-left" (use "paddingLeft")']);
+    expect(styleIssues({ colour: 'red' })[0]).toContain('did you mean "color"?');
+    expect(styleIssues({ background: 'red' })[0]).toContain('use backgroundColor, or backgroundImage for a gradient');
+    expect(styleIssues({ marginTop: '4px', whiteSpace: 'nowrap', textDecoration: 'underline', borderLeft: '2px solid red' })).toEqual([]);
+  });
+
+  it('allows gradients but nothing the browser would fetch', () => {
+    expect(styleIssues({ backgroundImage: 'linear-gradient(90deg, #fff, var(--color-accent))' })).toEqual([]);
+    for (const value of ['url(https://x.example/a.png)', 'image-set("a.png" 1x)', 'linear-gradient(red, blue), URL( x )', 'u\\72l(x)']) {
+      expect(styleIssues({ backgroundImage: value })[0]).toMatch(/external resources/);
+    }
+    expect(styleIssues({ boxShadow: '0 0 0 1px url(x)' })[0]).toMatch(/external resources/);
+  });
+
+  it('lets headings and paragraphs hold inline spans', () => {
+    const doc = new GridDocument();
+    const h1 = doc.createNode({ type: 'frame', tag: 'h1', parentId: artboard(doc) });
+    doc.createNode({ type: 'text', tag: 'span', parentId: h1, text: 'Hi' });
+    expect(() => doc.createNode({ type: 'text', tag: 'section' as never, parentId: h1 })).toThrow(/use type "frame"/);
+  });
+
+  it('lists every problem in a tree with its path, and throws them together', () => {
+    const issues = treeIssues([{ type: 'frame', styles: { colr: 'x' }, children: [{ type: 'text', children: [{ type: 'text' }] }] }]);
+    expect(issues).toEqual([
+      'nodes[0]: Unknown style property "colr" (did you mean "color"?)',
+      'nodes[0].children[0]: Text nodes cannot have children (make it a frame with the same tag and span text children)',
+    ]);
+    const doc = new GridDocument();
+    expect(() => doc.createNode({ type: 'frame', styles: { colr: 'x', bg: 'y' } as never, attributes: { onclick: 'x' } })).toThrow(/3 problems/);
   });
 });

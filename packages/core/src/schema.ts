@@ -3,6 +3,8 @@ export type NodeType = 'frame' | 'text';
 export const CONTAINER_TAGS = [
   'div', 'section', 'header', 'footer', 'main', 'nav', 'aside', 'article',
   'form', 'ul', 'ol', 'li', 'button', 'a', 'label', 'dialog', 'figure',
+  // Text blocks as containers, for mixed inline styles: an h1 frame holding span text nodes.
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'blockquote', 'figcaption',
 ] as const;
 
 export const TEXT_TAGS = [
@@ -31,7 +33,7 @@ export function tagsFor(type: NodeType): readonly string[] {
 }
 
 export type StyleGroup =
-  | 'layout' | 'grid' | 'child' | 'size' | 'spacing' | 'fill' | 'border' | 'type' | 'effects';
+  | 'layout' | 'grid' | 'child' | 'position' | 'size' | 'spacing' | 'fill' | 'border' | 'type' | 'effects';
 
 export interface StylePropMeta {
   group: StyleGroup;
@@ -65,6 +67,17 @@ export const STYLE_PROP_META = {
   alignSelf: { group: 'child', options: ['auto', ...ALIGN] },
   justifySelf: { group: 'child', options: ['auto', 'stretch', 'start', 'center', 'end'] },
   flex: { group: 'child' },
+  flexGrow: { group: 'child' },
+  flexShrink: { group: 'child' },
+  flexBasis: { group: 'child' },
+  order: { group: 'child' },
+  position: { group: 'position', options: ['static', 'relative', 'absolute', 'sticky', 'fixed'] },
+  top: { group: 'position', tokenGroups: SPACE },
+  right: { group: 'position', tokenGroups: SPACE },
+  bottom: { group: 'position', tokenGroups: SPACE },
+  left: { group: 'position', tokenGroups: SPACE },
+  inset: { group: 'position', tokenGroups: SPACE },
+  zIndex: { group: 'position' },
   width: { group: 'size' },
   height: { group: 'size' },
   minWidth: { group: 'size' },
@@ -75,9 +88,26 @@ export const STYLE_PROP_META = {
   padding: { group: 'spacing', tokenGroups: SPACE },
   paddingInline: { group: 'spacing', tokenGroups: SPACE },
   paddingBlock: { group: 'spacing', tokenGroups: SPACE },
+  paddingTop: { group: 'spacing', tokenGroups: SPACE },
+  paddingRight: { group: 'spacing', tokenGroups: SPACE },
+  paddingBottom: { group: 'spacing', tokenGroups: SPACE },
+  paddingLeft: { group: 'spacing', tokenGroups: SPACE },
   margin: { group: 'spacing', tokenGroups: SPACE },
+  marginInline: { group: 'spacing', tokenGroups: SPACE },
+  marginBlock: { group: 'spacing', tokenGroups: SPACE },
+  marginTop: { group: 'spacing', tokenGroups: SPACE },
+  marginRight: { group: 'spacing', tokenGroups: SPACE },
+  marginBottom: { group: 'spacing', tokenGroups: SPACE },
+  marginLeft: { group: 'spacing', tokenGroups: SPACE },
   backgroundColor: { group: 'fill', tokenGroups: COLOR },
+  /** Gradients only: url() and other external images are rejected. */
+  backgroundImage: { group: 'fill' },
   opacity: { group: 'fill' },
+  border: { group: 'border' },
+  borderTop: { group: 'border' },
+  borderRight: { group: 'border' },
+  borderBottom: { group: 'border' },
+  borderLeft: { group: 'border' },
   borderWidth: { group: 'border' },
   borderStyle: { group: 'border', options: ['none', 'solid', 'dashed', 'dotted'] },
   borderColor: { group: 'border', tokenGroups: COLOR },
@@ -90,8 +120,16 @@ export const STYLE_PROP_META = {
   letterSpacing: { group: 'type' },
   textAlign: { group: 'type', options: ['start', 'center', 'end', 'justify'] },
   textTransform: { group: 'type', options: ['none', 'uppercase', 'lowercase', 'capitalize'] },
+  textDecoration: { group: 'type', options: ['none', 'underline', 'line-through'] },
+  fontStyle: { group: 'type', options: ['normal', 'italic'] },
+  whiteSpace: { group: 'type', options: ['normal', 'nowrap', 'pre', 'pre-wrap', 'pre-line'] },
+  textOverflow: { group: 'type', options: ['clip', 'ellipsis'] },
   boxShadow: { group: 'effects', tokenGroups: ['shadow'] },
   overflow: { group: 'effects', options: ['visible', 'hidden', 'auto', 'clip'] },
+  transform: { group: 'effects' },
+  objectFit: { group: 'effects', options: ['fill', 'contain', 'cover', 'none', 'scale-down'] },
+  objectPosition: { group: 'effects' },
+  cursor: { group: 'effects', options: ['auto', 'default', 'pointer', 'text', 'not-allowed'] },
 } as const satisfies Record<string, StylePropMeta>;
 
 export type StyleProp = keyof typeof STYLE_PROP_META;

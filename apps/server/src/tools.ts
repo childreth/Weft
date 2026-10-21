@@ -8,7 +8,13 @@ import {
   DEFAULT_ARTBOARD_STYLES,
   GridError,
   STYLE_PROPS,
+  attributeIssues,
+  breakpointIssues,
   defaultTokens,
+  styleIssues,
+  tagIssue,
+  throwIssues,
+  treeIssues,
   flattenTokens,
   type ArtboardFrame,
   type BreakpointStyles,
@@ -26,7 +32,9 @@ Model:
 - Top-level nodes are artboards (type "frame" with a canvas "frame" {x, y, width, height, heightMode}). Everything inside is laid out by CSS (flex/grid), not absolute coordinates.
 - Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
-- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor). Values are CSS strings. Unknown properties are rejected; pass null to remove one.
+- Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
+- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Only the properties listed in create_nodes are allowed, so check that list instead of guessing; pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images, icons and web fonts aren't supported yet.
+- A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
@@ -151,7 +159,11 @@ function mutate<T>(
       undo.undo();
       undo.redoStack.pop();
     }
-    if (err instanceof GridError) return fail(`${err.message} (no changes were applied)`);
+    if (err instanceof GridError) {
+      // An agent that guessed a property name gets the whole list once, not just a hint.
+      const list = /Unknown style property/.test(err.message) ? `\nAllowed style properties: ${STYLE_PROPS.join(', ')}` : '';
+      return fail(`${err.message} (no changes were applied)${list}`);
+    }
     throw err;
   }
 }
@@ -294,6 +306,7 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
     async ({ doc, parentId, beforeId, nodes, model }) => {
       const { room, agent } = open(doc, model);
       return mutate(room, agent, 'create_nodes', (touched, report) => {
+        throwIssues(treeIssues(nodes));
         const created = nodes.map((spec) => createTree(room, agent.identity.origin, spec, parentId, beforeId, touched));
         const roots = created.map((c) => c.id);
         // `touched` is in creation (document) order, so the cursor visits parents before children.
@@ -347,6 +360,19 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
         if (only?.text !== undefined) Object.assign(report, { kind: 'text', action: `Writing ${nameOf(room, only.id)}` });
         else if (only) report.action = `${only.styles || only.breakpoints ? 'Styling' : 'Editing'} ${nameOf(room, only.id)}`;
         else report.action = `${updates.every((u) => u.styles || u.breakpoints) ? 'Styling' : 'Editing'} ${plural(updates.length, 'node')}`;
+        throwIssues(
+          updates.flatMap((u, i) => {
+            const node = room.doc.getNode(u.id);
+            const issues = [
+              ...(node ? [] : [`Node ${u.id} not found`]),
+              ...(node && u.tag ? [tagIssue(node.type, u.tag) ?? []].flat() : []),
+              ...(u.styles ? styleIssues(u.styles) : []),
+              ...(u.breakpoints ? breakpointIssues(u.breakpoints) : []),
+              ...(u.attributes ? attributeIssues(u.attributes) : []),
+            ];
+            return issues.map((m) => `updates[${i}]: ${m}`);
+          }),
+        );
         for (const { id, ...patch } of updates) {
           room.doc.updateNode(id, patch as NodePatch, agent.identity.origin);
           touched.add(id);
