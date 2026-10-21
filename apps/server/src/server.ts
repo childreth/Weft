@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -8,8 +9,10 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { AgentRoster, type AgentIdentity } from './agents';
 import { Assistant, SESSION_ID, ollamaUrlFrom, type AssistEvent, type ChatRequest } from './assist';
 import { RemoteAccess } from './remote';
+import { FontCache, type FontOrigins } from './fonts';
 import { Renderer } from './render';
 import { ROOM_NAME, RoomRegistry } from './room';
+import { decodeFontQuery } from '@weft/core';
 import { createMcpServer } from './tools';
 
 export interface GridServerOptions {
@@ -19,6 +22,8 @@ export interface GridServerOptions {
   dataDir?: string | null;
   /** Ollama server for the in-editor assistant; defaults to OLLAMA_HOST or 127.0.0.1:11434. */
   ollamaUrl?: string;
+  /** Where fonts are fetched from on a cache miss (Google by default; tests point it at a fake). */
+  fontOrigins?: FontOrigins;
 }
 
 export interface GridServer {
@@ -105,7 +110,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
   const rooms = new RoomRegistry(options.dataDir ?? null);
   const roster = new AgentRoster();
   const remote = new RemoteAccess(options.dataDir ?? null);
-  const services = { renderer: new Renderer() };
+  const services = { renderer: new Renderer(), fonts: new FontCache(options.dataDir ? join(options.dataDir, 'fonts') : null, options.fontOrigins) };
   const sessions = new Map<string, AgentSession>();
   const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST), services);
   // Clients that skip sessions share one identity per owner.
@@ -258,6 +263,19 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     }
 
     if (pathname === '/health') return json(res, 200, { ok: true, documents: rooms.names() });
+
+    // The document's Google Fonts, served from the local cache (fetched from Google once).
+    if (pathname === '/fonts.css' || pathname.startsWith('/fonts/files/')) {
+      if (!originAllowed(req)) return json(res, 403, { error: 'Forbidden origin' });
+      allowLocalOrigin(req, res);
+      if (pathname === '/fonts.css') {
+        const css = await services.fonts.css(decodeFontQuery(url.searchParams.get('q') ?? ''), `http://${req.headers.host}/fonts/files`);
+        return void res.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-cache' }).end(css);
+      }
+      const file = await services.fonts.file(pathname.slice('/fonts/files/'.length));
+      if (!file) return json(res, 404, { error: 'Font file unavailable' });
+      return void res.writeHead(200, { 'content-type': file.type, 'cache-control': 'public, max-age=31536000, immutable' }).end(file.body);
+    }
 
     if (pathname === '/remote' || pathname.startsWith('/remote/')) {
       if (!originAllowed(req)) return json(res, 403, { error: 'Forbidden origin' });

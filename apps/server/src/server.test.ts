@@ -55,6 +55,7 @@ describe('MCP tools', () => {
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
         'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes',
+        'search_fonts', 'add_fonts', 'remove_fonts',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');

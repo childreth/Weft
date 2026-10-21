@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
+import { defaultWeights, findFont, type DocumentFont } from './fonts';
 import {
   BREAKPOINTS,
   VOID_TAGS,
@@ -67,6 +68,8 @@ export interface Snapshot {
   format: 'weft';
   version: 1;
   nodes: SceneNode[];
+  /** Google Fonts the document uses (absent in older snapshots). */
+  fonts?: DocumentFont[];
 }
 
 /** One node's share of an align or distribute command. */
@@ -376,9 +379,61 @@ export class GridDocument {
   readonly ydoc: Y.Doc;
   readonly nodes: Y.Map<YNode>;
 
+  /** Fonts the document uses, by family. */
+  readonly fonts: Y.Map<DocumentFont>;
+
   constructor(ydoc: Y.Doc = new Y.Doc()) {
     this.ydoc = ydoc;
     this.nodes = ydoc.getMap<YNode>('nodes');
+    this.fonts = ydoc.getMap<DocumentFont>('fonts');
+  }
+
+  /** The Yjs types a per-user undo stack should track. */
+  get undoScope(): Y.AbstractType<any>[] {
+    return [this.nodes, this.fonts];
+  }
+
+  getFonts(): DocumentFont[] {
+    return [...this.fonts.values()].sort((a, b) => a.family.localeCompare(b.family));
+  }
+
+  /**
+   * Adds Google Fonts to the document (or more weights to one it has). Each
+   * family must be in the bundled catalog; weights default to its usual text
+   * weights. Returns the fonts as stored.
+   */
+  addFonts(inputs: readonly { family: string; weights?: readonly number[] }[], origin: Origin = ORIGIN_LOCAL): DocumentFont[] {
+    const issues: string[] = [];
+    const resolved = inputs.map(({ family, weights }) => {
+      const font = findFont(family);
+      if (!font) {
+        issues.push(`Unknown font "${family}" (search_fonts lists the available families)`);
+        return null;
+      }
+      const missing = (weights ?? []).filter((w) => !font.weights.includes(w));
+      if (missing.length) issues.push(`${font.family} has no weight ${missing.join(', ')} (available: ${font.weights.join(', ')})`);
+      return { font, weights: weights?.length ? [...weights] : defaultWeights(font) };
+    });
+    throwIssues(issues);
+    return this.transact(
+      () =>
+        resolved.map((r) => {
+          const { font, weights } = r!;
+          const current = this.fonts.get(font.family)?.weights ?? [];
+          const next: DocumentFont = { family: font.family, weights: [...new Set([...current, ...weights])].sort((a, b) => a - b) };
+          if (next.weights.length !== current.length) this.fonts.set(font.family, next);
+          return next;
+        }),
+      origin,
+    );
+  }
+
+  /** Removes fonts by family. Styles that use them fall back to the token's fallback stack. */
+  removeFonts(families: readonly string[], origin: Origin = ORIGIN_LOCAL): void {
+    const names = families.map((f) => findFont(f)?.family ?? f);
+    const missing = names.filter((f) => !this.fonts.has(f));
+    if (missing.length) throw new GridError(`Not in this document: ${missing.join(', ')}`);
+    this.transact(() => names.forEach((f) => this.fonts.delete(f)), origin);
   }
 
   transact<T>(fn: () => T, origin: Origin = ORIGIN_LOCAL): T {
@@ -748,7 +803,8 @@ export class GridDocument {
   }
 
   toSnapshot(): Snapshot {
-    return { format: 'weft', version: 1, nodes: sortSiblings(this.getNodes()) };
+    const fonts = this.getFonts();
+    return { format: 'weft', version: 1, nodes: sortSiblings(this.getNodes()), ...(fonts.length && { fonts }) };
   }
 
   loadSnapshot(snapshot: Snapshot, origin: Origin = ORIGIN_LOCAL): void {
@@ -756,6 +812,8 @@ export class GridDocument {
     if ((snapshot.format as string) !== 'weft' && (snapshot.format as string) !== 'gridforge' || snapshot.version !== 1) throw new GridError('Unsupported snapshot');
     this.transact(() => {
       this.nodes.clear();
+      this.fonts.clear();
+      if (snapshot.fonts?.length) this.addFonts(snapshot.fonts, origin);
       const byParent = new Map<string | null, SceneNode[]>();
       for (const n of snapshot.nodes) {
         const list = byParent.get(n.parentId) ?? [];

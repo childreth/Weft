@@ -12,6 +12,10 @@ import {
   breakpointIssues,
   defaultTokens,
   exportArtboardHTML,
+  fontSlug,
+  searchFonts,
+  withFontTokens,
+  type FontCategory,
   styleIssues,
   tagIssue,
   throwIssues,
@@ -25,6 +29,7 @@ import {
   type StyleMap,
 } from '@weft/core';
 import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
+import type { FontCache } from './fonts';
 import type { Renderer } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
 import { readSkill, skillFiles } from './skill';
@@ -36,7 +41,7 @@ Model:
 - Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
-- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Only the properties listed in create_nodes are allowed, so check that list instead of guessing; pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images, icons and web fonts aren't supported yet.
+- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Only the properties listed in create_nodes are allowed, so check that list instead of guessing; pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images and icons aren't supported yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
@@ -238,7 +243,11 @@ interface LayoutBox {
 /** Server-wide services the tools share. */
 export interface ToolServices {
   renderer: Renderer;
+  fonts: FontCache;
 }
+
+/** Where rendered pages fetch fonts from; the renderer answers these itself from the cache. */
+const RENDER_FONTS = 'https://fonts.weft.invalid';
 
 export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, services: ToolServices): McpServer {
   const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
@@ -556,11 +565,15 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
     {
       title: 'List design tokens',
       description: 'Lists design tokens with the CSS value to use in styles, e.g. "var(--space-4)".',
-      inputSchema: { group: z.string().optional().describe('Filter by top-level group: color, space, radius, font-size, …') },
+      inputSchema: {
+        doc: docParam,
+        group: z.string().optional().describe('Filter by top-level group: color, space, radius, font-family, font-size, …'),
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ group }) => {
-      const tokens = flattenTokens(defaultTokens.tokens)
+    async ({ doc, group }) => {
+      // The document's Google Fonts appear as font-family tokens.
+      const tokens = flattenTokens(withFontTokens(defaultTokens, rooms.get(doc).doc.getFonts()).tokens)
         .filter((t) => !group || t.path[0] === group)
         .map((t) => ({ name: t.name, use: `var(${t.cssVar})`, type: t.type, value: t.value }));
       return ok({ modes: ['light', ...Object.keys(defaultTokens.modes ?? {})], tokens });
@@ -611,6 +624,62 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
   );
 
   server.registerTool(
+    'search_fonts',
+    {
+      title: 'Search Google Fonts',
+      description:
+        'Searches the bundled Google Fonts catalog (works offline), most popular first. Returns each family with its category and available weights. Add the ones you use with add_fonts.',
+      inputSchema: {
+        query: z.string().optional().describe('Part of a family name, e.g. "playfair"; omit for the most popular'),
+        category: z.enum(['sans-serif', 'serif', 'display', 'handwriting', 'monospace']).optional(),
+        limit: z.number().int().min(1).max(50).default(12),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query, category, limit }) =>
+      ok({ fonts: searchFonts(query, { category: category as FontCategory | undefined, limit }).map(({ family, category, weights, italic }) => ({ family, category, weights, italic })) }),
+  );
+
+  server.registerTool(
+    'add_fonts',
+    {
+      title: 'Add Google Fonts',
+      description:
+        'Adds Google Fonts to the document (or more weights to one it has). Each becomes a token: set fontFamily to var(--font-family-<slug>), e.g. "Playfair Display" → var(--font-family-playfair-display). Weights default to the usual 400–700 the family has. Fonts are cached locally after first use, so they keep working offline.',
+      inputSchema: {
+        doc: docParam,
+        fonts: z.array(z.object({ family: z.string(), weights: z.array(z.number().int()).optional() })).min(1).max(10),
+        model: modelParam,
+      },
+    },
+    async ({ doc, fonts, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'add_fonts', (_touched, report) => {
+        const added = room.doc.addFonts(fonts, agent.identity.origin);
+        report.action = `Adding ${added.map((f) => f.family).join(', ')}`;
+        return { fonts: added, use: Object.fromEntries(added.map((f) => [f.family, `var(--font-family-${fontSlug(f.family)})`])) };
+      });
+    },
+  );
+
+  server.registerTool(
+    'remove_fonts',
+    {
+      title: 'Remove fonts',
+      description: 'Removes Google Fonts from the document. Text that used them falls back to the token fallback stack (e.g. system-ui, sans-serif).',
+      inputSchema: { doc: docParam, families: z.array(z.string()).min(1), model: modelParam },
+    },
+    async ({ doc, families, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'remove_fonts', (_touched, report) => {
+        room.doc.removeFonts(families, agent.identity.origin);
+        report.action = `Removing ${families.join(', ')}`;
+        return { removed: families, fonts: room.doc.getFonts() };
+      });
+    },
+  );
+
+  server.registerTool(
     'get_screenshot',
     {
       title: 'Screenshot an artboard or node',
@@ -635,8 +704,18 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
         while (artboard.parentId) artboard = room.doc.getNode(artboard.parentId)!;
         agent.look([targetId], `Looking at ${nameOf(room, targetId)}`);
         const renderWidth = width ?? artboard.frame!.width;
-        const shot = await services.renderer.screenshot(exportArtboardHTML(room.doc, artboard.id, { width: renderWidth }), {
+        const fonts = room.doc.getFonts();
+        const html = exportArtboardHTML(room.doc, artboard.id, {
           width: renderWidth,
+          fontCSSUrl: fonts.length ? `${RENDER_FONTS}/fonts.css` : null,
+        });
+        const shot = await services.renderer.screenshot(html, {
+          width: renderWidth,
+          resource: async (url) => {
+            if (url === `${RENDER_FONTS}/fonts.css`) return { body: await services.fonts.css(fonts, `${RENDER_FONTS}/files`), type: 'text/css' };
+            if (url.startsWith(`${RENDER_FONTS}/files/`)) return services.fonts.file(url.slice(`${RENDER_FONTS}/files/`.length));
+            return null;
+          },
           target: targetId === artboard.id ? undefined : targetId,
           depth,
         });

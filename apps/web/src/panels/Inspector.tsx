@@ -1,27 +1,25 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ARTBOARD_PRESETS,
   BREAKPOINTS,
   STYLE_PROPS,
   compileTokensCSS,
-  defaultTokens,
-  flattenTokens,
   getStyleMeta,
   tagsFor,
   type ArtboardFrame,
   type BreakpointId,
+  type FlatToken,
   type SemanticTag,
   type StyleProp,
 } from '@weft/core';
 import { artboardHeight } from '../canvas/elements';
 import { doc, history, recordHugHeight, run, updateArtboardFrame, useNode } from '../editor/editor';
+import { useDocFonts, useDocTokens, useFlatTokens } from '../editor/fonts';
 import { useEditor } from '../editor/store';
 import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
-
-const TOKENS = flattenTokens(defaultTokens.tokens);
-const TOKEN_SCOPE_CSS = compileTokensCSS(defaultTokens, '.gf-token-scope');
+import { DocumentFonts, FontPicker, fontForValue, fontVar } from './FontPicker';
 
 const PRESET_SUFFIX = new RegExp(` — (${ARTBOARD_PRESETS.map((p) => p.label).join('|')})$`);
 
@@ -42,18 +40,26 @@ function cloneAtPreset(id: string, name: string, preset: (typeof ARTBOARD_PRESET
 
 const label = (prop: string) => prop.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
 
-function tokenOptions(prop: StyleProp) {
+function tokenOptions(tokens: readonly FlatToken[], prop: StyleProp) {
   const groups = getStyleMeta(prop).tokenGroups ?? [];
-  return TOKENS.filter((t) => groups.includes(t.path[0]!));
+  return tokens.filter((t) => groups.includes(t.path[0]!));
 }
 
 export function Inspector() {
   const selection = useEditor((s) => s.selection);
+  const tokens = useDocTokens();
+  // Token values resolve inside the panel too, for swatches and font samples.
+  const scopeCSS = useMemo(() => compileTokensCSS(tokens, '.gf-token-scope'), [tokens]);
   return (
     <aside className="gf-panel gf-inspector gf-token-scope" data-testid="inspector">
-      <style>{TOKEN_SCOPE_CSS}</style>
+      <style>{scopeCSS}</style>
       <TokenDatalists />
-      {selection.length === 0 && <p className="gf-empty">Select a layer to inspect it.</p>}
+      {selection.length === 0 && (
+        <>
+          <p className="gf-empty">Select a layer to inspect it.</p>
+          <DocumentFonts />
+        </>
+      )}
       {selection.length > 0 && <AlignSection ids={selection} />}
       {selection.length > 1 && <p className="gf-empty">{selection.length} layers selected</p>}
       {selection.length === 1 && <NodeInspector key={selection[0]} id={selection[0]!} />}
@@ -62,12 +68,13 @@ export function Inspector() {
 }
 
 function TokenDatalists() {
+  const tokens = useFlatTokens();
   const props = useMemo(() => STYLE_PROPS.filter((p) => getStyleMeta(p).tokenGroups), []);
   return (
     <>
       {props.map((prop) => (
         <datalist key={prop} id={`tokens-${prop}`}>
-          {tokenOptions(prop).map((t) => (
+          {tokenOptions(tokens, prop).map((t) => (
             <option key={t.cssVar} value={`var(${t.cssVar})`} label={t.value} />
           ))}
         </datalist>
@@ -206,6 +213,7 @@ function StyleSection({
   /** Starting value for a newly added property (breakpoints start from the base style). */
   initialFor?: (prop: StyleProp) => string | undefined;
 }) {
+  const tokens = useFlatTokens();
   const present = STYLE_PROPS.filter((p) => styles[p] !== undefined);
   const missing = STYLE_PROPS.filter((p) => styles[p] === undefined);
   return (
@@ -222,7 +230,7 @@ function StyleSection({
             const initial =
               initialFor?.(prop) ??
               meta.options?.[0] ??
-              (tokenOptions(prop)[0] ? `var(${tokenOptions(prop)[0]!.cssVar})` : 'auto');
+              (tokenOptions(tokens, prop)[0] ? `var(${tokenOptions(tokens, prop)[0]!.cssVar})` : 'auto');
             set(prop, initial);
           }}
         >
@@ -246,7 +254,9 @@ function StyleSection({
 function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (v: string | null) => void }) {
   const meta = getStyleMeta(prop);
   const bound = value.includes('var(--');
-  return (
+  const [picking, setPicking] = useState(false);
+  const fonts = useDocFonts();
+  const row = (
     <div className="gf-style-row" data-style-prop={prop}>
       <span className="gf-row-label" title={prop}>{label(prop)}</span>
       {meta.group === 'fill' || prop === 'color' || prop === 'borderColor' ? (
@@ -269,9 +279,34 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
           {bound ? 'token' : 'raw'}
         </span>
       )}
+      {prop === 'fontFamily' && (
+        <button
+          className={`gf-icon-btn${picking ? ' is-active' : ''}`}
+          aria-label="Choose a font"
+          aria-expanded={picking}
+          title={fontForValue(value, fonts)?.family ?? 'Choose a Google Font'}
+          onClick={() => setPicking((p) => !p)}
+        >
+          Aa
+        </button>
+      )}
       <button className="gf-icon-btn" aria-label={`Remove ${prop}`} onClick={() => set(null)}>
         ×
       </button>
     </div>
+  );
+  if (prop !== 'fontFamily' || !picking) return row;
+  return (
+    <>
+      {row}
+      <FontPicker
+        label="Search fonts"
+        autoFocus
+        onPick={(family) => {
+          set(fontVar(family));
+          setPicking(false);
+        }}
+      />
+    </>
   );
 }

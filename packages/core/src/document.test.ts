@@ -404,3 +404,52 @@ describe('exportArtboardHTML', () => {
     expect(() => exportArtboardHTML(doc, h1)).toThrow(/not an artboard/);
   });
 });
+
+describe('fonts', () => {
+  it('searches the bundled catalog and builds tokens and Google URLs', async () => {
+    const { searchFonts, findFont, fontSlug, withFontTokens, googleFontsCSSUrl, encodeFontQuery, decodeFontQuery } = await import('./fonts');
+    const { defaultTokens } = await import('./default-tokens');
+    const { flattenTokens } = await import('./tokens');
+    expect(searchFonts('inter')[0]!.family).toBe('Inter');
+    expect(searchFonts('playfair').map((f) => f.family)).toContain('Playfair Display');
+    expect(searchFonts('', { category: 'monospace', limit: 3 }).every((f) => f.category === 'monospace')).toBe(true);
+    expect(findFont('PLAYFAIR display')?.category).toBe('serif');
+    expect(fontSlug('Playfair Display')).toBe('playfair-display');
+
+    const fonts = [{ family: 'Playfair Display', weights: [700, 400] }, { family: 'Inter', weights: [400] }];
+    const tokens = flattenTokens(withFontTokens(defaultTokens, fonts).tokens);
+    expect(tokens.find((t) => t.cssVar === '--font-family-playfair-display')!.value).toBe('"Playfair Display", Georgia, serif');
+    expect(tokens.find((t) => t.cssVar === '--font-family-sans')).toBeDefined();
+    expect(googleFontsCSSUrl(fonts)).toBe('https://fonts.googleapis.com/css2?family=Inter:wght@400&family=Playfair+Display:wght@400;700&display=swap');
+    expect(decodeFontQuery(encodeFontQuery(fonts))).toEqual([{ family: 'Inter', weights: [400] }, { family: 'Playfair Display', weights: [400, 700] }]);
+    expect(decodeFontQuery('Nope:400|Inter:999|<x>')).toEqual([{ family: 'Inter', weights: [400, 500, 600, 700] }]);
+  });
+
+  it('adds and removes document fonts as undoable, validated commands', () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    expect(doc.addFonts([{ family: 'inter' }])).toEqual([{ family: 'Inter', weights: [400, 500, 600, 700] }]);
+    doc.addFonts([{ family: 'Inter', weights: [800] }]);
+    expect(doc.getFonts()).toEqual([{ family: 'Inter', weights: [400, 500, 600, 700, 800] }]);
+    expect(() => doc.addFonts([{ family: 'Comic Sans MS' }, { family: 'Inter', weights: [450] }])).toThrow(/2 problems[\s\S]*Unknown font[\s\S]*no weight 450/);
+    history.undo();
+    expect(doc.getFonts()[0]!.weights).not.toContain(800);
+    doc.removeFonts(['inter']);
+    expect(doc.getFonts()).toEqual([]);
+    expect(() => doc.removeFonts(['Lora'])).toThrow(/Not in this document/);
+  });
+
+  it('round-trips fonts through snapshots and exports them', async () => {
+    const { exportArtboardHTML } = await import('./export');
+    const doc = new GridDocument();
+    const board = doc.createNode({ type: 'frame', name: 'A', frame: { x: 0, y: 0, width: 400, height: 300 } });
+    doc.addFonts([{ family: 'Lora', weights: [400] }]);
+    const copy = new GridDocument();
+    copy.loadSnapshot(doc.toSnapshot());
+    expect(copy.getFonts()).toEqual([{ family: 'Lora', weights: [400] }]);
+    const html = exportArtboardHTML(doc, board);
+    expect(html).toContain('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:wght@400&amp;display=swap">');
+    expect(html).toContain('--font-family-lora: "Lora", Georgia, serif;');
+    expect(exportArtboardHTML(doc, board, { fontCSSUrl: null })).not.toContain('<link rel="stylesheet"');
+  });
+});

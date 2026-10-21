@@ -1,15 +1,22 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { ARTBOARD_RESET_CSS, compileBreakpointCSS, compileTokensCSS, defaultTokens, type SceneNode } from '@weft/core';
+import { ARTBOARD_RESET_CSS, compileBreakpointCSS, compileTokensCSS, type SceneNode } from '@weft/core';
 import { scene, useNode } from '../editor/editor';
+import { useDocTokens } from '../editor/fonts';
 import { NodeView } from './NodeView';
 
-const ARTBOARD_CSS = `
-${compileTokensCSS(defaultTokens, ':host', (mode) => `:host([data-theme="${mode}"])`)}
+const ARTBOARD_BASE_CSS = `
 :host { display: block; width: 100%; height: 100%; overflow: hidden; user-select: none; container: artboard / inline-size; }
 ${ARTBOARD_RESET_CSS}
 [contenteditable] { user-select: text; cursor: text; outline: none; min-height: 1lh; min-width: 1ch; }
 `;
+
+/** Tokens (including the document's font tokens), compiled for a shadow root. */
+function ArtboardStyles() {
+  const tokens = useDocTokens();
+  const css = useMemo(() => `${compileTokensCSS(tokens, ':host', (mode) => `:host([data-theme="${mode}"])`)}\n${ARTBOARD_BASE_CSS}`, [tokens]);
+  return <style>{css}</style>;
+}
 
 /** One artboard: a canvas-positioned host with its own shadow root. */
 export const Artboard = memo(function Artboard({ id }: { id: string }) {
@@ -40,7 +47,7 @@ export const Artboard = memo(function Artboard({ id }: { id: string }) {
       {root &&
         createPortal(
           <>
-            <style>{ARTBOARD_CSS}</style>
+            <ArtboardStyles />
             <BreakpointStyles rootId={id} />
             <NodeView id={id} isRoot />
           </>,
