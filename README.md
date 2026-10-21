@@ -78,6 +78,7 @@ The prompt bar at the bottom of the canvas edits the document with a model runni
 packages/core   Framework-free scene graph: schema, GridDocument commands, history, W3C tokens
 apps/web        Vite + React editor: canvas (shadow-DOM artboards), overlay, panels
 apps/server     Local Node process: Yjs sync + presence, browser RPC, MCP, local-model assist, persistence
+evals           Prompts and a results log for testing how well agents build in Weft
 ```
 
 Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.json`). Contributor and agent rules live in [CLAUDE.md](./CLAUDE.md).
@@ -121,6 +122,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-20:** `evals/`: agent evals for building in Weft. First eval: build-from-reference (rebuild a page from an image, check mobile, and report tool calls, rejections and token usage), with a results template, scoring rubric and log.
 - **2026-10-20:** Design skill and screenshots for agents. `read_skill` (and `weft://skill/*` MCP resources) serves Weft's design skill from `apps/server/skill/`: the model, workflow, layout recipes, style rules and a verification checklist, with the allowed tags, style properties and breakpoints filled in from the schema. `get_screenshot` renders an artboard or node in headless Chromium (no editor needed; JavaScript off, network blocked) and returns a PNG plus child boxes; `width` previews breakpoints. Core gains `exportArtboardHTML`, standalone HTML for an artboard and the start of code export. Assist's local models don't get these two tools.
 - **2026-10-20:** Roadmap: M4 — Agent design quality (a Weft design skill over MCP, a render tool, image support, design lint), ranked ahead of components, export and fonts.
 - **2026-10-20:** Easier agent authoring. More style properties: longhand margins and padding (`marginTop`, `paddingLeft`, …), `border` and per-side borders, `position`/`top`/`left`/`inset`/`zIndex`, `flexGrow`/`flexShrink`/`flexBasis`/`order`, `textDecoration`, `fontStyle`, `whiteSpace`, `textOverflow`, `transform`, `objectFit`/`objectPosition`, `cursor`, and `backgroundImage` for gradients (`url()`, `image-set()` and CSS escapes are rejected in every style). `p`, `h1`–`h6`, `span`, `blockquote` and `figcaption` can be frames, so a heading can hold differently styled spans. Rejected `create_nodes`/`update_nodes` calls list every problem at once with its path (`nodes[0].children[2]`) and a hint ("use marginTop", "did you mean color?"), plus the allowed property list, instead of only the first error.
