@@ -37,7 +37,7 @@ The repo's `.mcp.json` already registers it for Claude Code. Agents are told to 
 
 | Tool | What it does |
 |---|---|
-| `get_canvas` | Scene graph as nested JSON (all artboards or one subtree) |
+| `get_canvas` | Scene graph as nested JSON (all artboards or one subtree); `detail: "outline"` returns only ids, names and text, about 8× smaller |
 | `get_selection` | What each person has selected |
 | `list_tokens` | Design tokens and the CSS value to use |
 | `get_layout` | Real rendered boxes and computed styles (needs an editor open) |
@@ -46,7 +46,7 @@ The repo's `.mcp.json` already registers it for Claude Code. Agents are told to 
 | `create_nodes` | Create node subtrees or new artboards, atomically (with optional `breakpoints` overrides) |
 | `update_nodes` | Patch names, text, styles, breakpoint overrides, attributes, frames |
 | `move_node` | Reparent or reorder |
-| `duplicate_node` | Deep-copy a node; clone an artboard at another width (`frame: {width: 390}`) beside the original |
+| `duplicate_node` | Deep-copy a node; clone an artboard at another width (`frame: {width: 390}`) beside the original. Returns `ids`, mapping every original node to its copy |
 | `align_nodes` | Align left/center/right/top/middle/bottom: artboards by frame, elements via flex/grid CSS (`justifyContent`, `alignSelf`, `justifySelf`) |
 | `distribute_nodes` | Even spacing: artboard gaps, or `justifyContent: space-between` on a flex parent |
 | `delete_nodes` | Delete nodes and descendants |
@@ -122,6 +122,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-20:** Fixes from the first Opus eval. `duplicate_node` returns `ids` (every original node id → its copy), so agents edit copies without re-reading them. `get_canvas` takes `detail: "outline"` (ids, tags, names, short text; unindented): 68 KB → 8.6 KB on a real mobile screen. New tags: `dl`/`dt`/`dd` and `table`/`caption`/`thead`/`tbody`/`tfoot`/`tr`/`th`/`td`. The skill's overview now lists the five most important rules, insists on reading the layout and style guides before building, and asks for a check at the other end of the width range.
 - **2026-10-20:** `evals/`: agent evals for building in Weft. First eval: build-from-reference (rebuild a page from an image, check mobile, and report tool calls, rejections and token usage), with a results template, scoring rubric and log.
 - **2026-10-20:** Design skill and screenshots for agents. `read_skill` (and `weft://skill/*` MCP resources) serves Weft's design skill from `apps/server/skill/`: the model, workflow, layout recipes, style rules and a verification checklist, with the allowed tags, style properties and breakpoints filled in from the schema. `get_screenshot` renders an artboard or node in headless Chromium (no editor needed; JavaScript off, network blocked) and returns a PNG plus child boxes; `width` previews breakpoints. Core gains `exportArtboardHTML`, standalone HTML for an artboard and the start of code export. Assist's local models don't get these two tools.
 - **2026-10-20:** Roadmap: M4 — Agent design quality (a Weft design skill over MCP, a render tool, image support, design lint), ranked ahead of components, export and fonts.

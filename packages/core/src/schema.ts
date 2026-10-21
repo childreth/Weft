@@ -5,11 +5,14 @@ export const CONTAINER_TAGS = [
   'form', 'ul', 'ol', 'li', 'button', 'a', 'label', 'dialog', 'figure',
   // Text blocks as containers, for mixed inline styles: an h1 frame holding span text nodes.
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'blockquote', 'figcaption',
+  'dl', 'dt', 'dd',
+  'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
 ] as const;
 
 export const TEXT_TAGS = [
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'a', 'button', 'label',
   'li', 'strong', 'em', 'small', 'blockquote', 'figcaption',
+  'dt', 'dd', 'caption', 'th', 'td',
 ] as const;
 
 export const VOID_TAGS: ReadonlySet<string> = new Set(['input', 'img', 'hr']);

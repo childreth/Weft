@@ -33,3 +33,4 @@ Each run gets its own artboard named `Eval — <model> — <date>`, so runs sit 
 
 | Date | Eval | Model / client | Weft version | Tool calls | Rejected | Tokens (in / out) | Score /30 | Notes |
 |---|---|---|---|---|---|---|---|---|
+| 2026-10-20 | build-from-reference (no reference reached the agent) | Claude Opus 5.5 | `4c380da` | 27 (23 Weft) | 1 | not recorded | 22 (reviewer), 23 (self) | [Health screens](results/2026-10-20-health-screens-opus.md): led to the duplicate id map, the outline mode, the dl/table tags and the skill changes |
