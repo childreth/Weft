@@ -68,7 +68,12 @@ describe('MCP tools', () => {
     expect(skill.text).toContain('# Designing in Weft');
     expect(skill.text).toContain('marginTop');
     expect(skill.text).not.toMatch(/\{\{\w+\}\}/);
-    expect((await call('read_skill', { path: 'layout.md' })).text).toContain('# Layout recipes');
+    // No path is the whole guide, so agents can't stop at the overview.
+    expect(skill.text).toContain('# Style and taste');
+    expect(skill.text).toContain('# Checking your work');
+    const layout = (await call('read_skill', { path: 'layout.md' })).text;
+    expect(layout).toContain('# Layout recipes');
+    expect(layout).not.toContain('# Designing in Weft');
     const bad = await call('read_skill', { path: '../server.ts' });
     expect(bad.isError).toBe(true);
     expect(bad.text).toContain('Available: SKILL.md');
@@ -396,6 +401,24 @@ describe('sync relay', () => {
     replica.updateNode(id, { text: 'edited by a person' });
     await until(() => server.rooms.get('sync').doc.getNode(id)?.text === 'edited by a person');
     provider.destroy();
+  });
+
+  it('reminds an agent that creates nodes before reading the style guide, until it reads it', async () => {
+    const fresh = new Client({ name: 'grok', version: '1.0.0' });
+    await fresh.connect(new StreamableHTTPClientTransport(new URL(`${server.httpUrl}/mcp`)));
+    const create = async () => {
+      const res = (await fresh.callTool({
+        name: 'create_nodes',
+        arguments: { doc: 'remind', nodes: [{ type: 'frame', tag: 'main', name: 'Page', frame: { width: 390 } }] },
+      })) as { content: Array<{ text: string }> };
+      return JSON.parse(res.content[0]!.text) as { created: unknown[]; note?: string };
+    };
+    expect((await create()).note).toContain('read_skill');
+    await fresh.callTool({ name: 'read_skill', arguments: { path: 'layout.md' } });
+    expect((await create()).note).toBeDefined();
+    await fresh.callTool({ name: 'read_skill', arguments: { path: 'style.md' } });
+    expect((await create()).note).toBeUndefined();
+    await fresh.close();
   });
 
   it('gives each agent session its own cursor, model label and undo stack', async () => {

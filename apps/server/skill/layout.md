@@ -29,7 +29,7 @@ Use `header`, `nav`, `section`, `article`, `aside` and `footer` for what they ar
 
 ## Text
 
-- A heading with a highlighted word: frame `h1` → text `span` "Welcome back to " + text `span` "CarGurus!" with its own `color`. Keep the trailing space inside the first span.
+- A heading with a highlighted word (when the user's brand, reference or request has one; otherwise it's a generic tell): frame `h1` → text `span` "Welcome back to " + text `span` "CarGurus!" with its own `color`. Keep the trailing space inside the first span.
 - Limit line length on paragraphs: `maxWidth: 60ch`.
 - A truncated single line: `whiteSpace: nowrap`, `overflow: hidden`, `textOverflow: ellipsis`.
 - Chips or tags that mustn't wrap: `whiteSpace: nowrap` on the chip.

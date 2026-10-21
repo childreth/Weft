@@ -141,7 +141,7 @@ export class Assistant {
     const existing = this.sessions.get(id);
     if (existing) return existing;
     const identity = this.roster.next();
-    const mcp = createMcpServer(this.rooms, identity, this.services);
+    const mcp = createMcpServer(this.rooms, identity, this.services, { remindSkill: false });
     const client = new Client({ name: 'Weft Assist', version: '0.1.0' });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await mcp.connect(serverSide);
