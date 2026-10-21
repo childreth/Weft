@@ -8,6 +8,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { AgentRoster, type AgentIdentity } from './agents';
 import { Assistant, SESSION_ID, ollamaUrlFrom, type AssistEvent, type ChatRequest } from './assist';
 import { RemoteAccess } from './remote';
+import { Renderer } from './render';
 import { ROOM_NAME, RoomRegistry } from './room';
 import { createMcpServer } from './tools';
 
@@ -104,8 +105,9 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
   const rooms = new RoomRegistry(options.dataDir ?? null);
   const roster = new AgentRoster();
   const remote = new RemoteAccess(options.dataDir ?? null);
+  const services = { renderer: new Renderer() };
   const sessions = new Map<string, AgentSession>();
-  const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST));
+  const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST), services);
   // Clients that skip sessions share one identity per owner.
   const sessionless = new Map<string, AgentIdentity>();
 
@@ -152,7 +154,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
 
     if (isInitializeRequest(body)) {
       const identity = agent ? roster.named(agent.name) : roster.next();
-      const mcp = createMcpServer(rooms, identity);
+      const mcp = createMcpServer(rooms, identity, services);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
@@ -166,7 +168,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     // Stateless fallback: a fresh server + transport per request.
     let identity = sessionless.get(owner);
     if (!identity) sessionless.set(owner, (identity = agent ? roster.named(agent.name) : roster.next()));
-    const mcp = createMcpServer(rooms, identity);
+    const mcp = createMcpServer(rooms, identity, services);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => {
       void transport.close();
@@ -330,6 +332,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     close: async () => {
       clearInterval(sweep);
       assistant.close();
+      await services.renderer.close();
       for (const id of [...sessions.keys()]) endSession(id);
       for (const client of wss.clients) client.terminate();
       wss.close();

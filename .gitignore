@@ -5,3 +5,6 @@ playwright-report
 .DS_Store
 *.log
 .weft-data
+
+# Eval reference images that stay on this machine
+evals/references/*.local.*

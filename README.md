@@ -33,7 +33,7 @@ The server speaks MCP over Streamable HTTP at `http://127.0.0.1:4510/mcp`. With 
 claude mcp add --transport http weft http://127.0.0.1:4510/mcp
 ```
 
-The repo's `.mcp.json` already registers it for Claude Code. Each MCP connection is its own agent with a callsign, colored cursor and undo history, and its edits highlight live in the editor.
+The repo's `.mcp.json` already registers it for Claude Code. Agents are told to read the design skill (`read_skill`, files in `apps/server/skill/`) before designing, and to check each section with `get_screenshot`. Screenshots use the Chromium that Playwright installs (`pnpm --filter @weft/web exec playwright install chromium`); rendering runs with JavaScript off and all network requests blocked. Each MCP connection is its own agent with a callsign, colored cursor and undo history, and its edits highlight live in the editor.
 
 | Tool | What it does |
 |---|---|
@@ -41,6 +41,8 @@ The repo's `.mcp.json` already registers it for Claude Code. Each MCP connection
 | `get_selection` | What each person has selected |
 | `list_tokens` | Design tokens and the CSS value to use |
 | `get_layout` | Real rendered boxes and computed styles (needs an editor open) |
+| `get_screenshot` | PNG of an artboard or node plus its child boxes, rendered in headless Chromium with no editor open; `width` renders at another width (e.g. 390 for mobile) |
+| `read_skill` | Weft's design skill for agents: layout recipes, style rules, how to check work (also served as `weft://skill/*` resources) |
 | `create_nodes` | Create node subtrees or new artboards, atomically (with optional `breakpoints` overrides) |
 | `update_nodes` | Patch names, text, styles, breakpoint overrides, attributes, frames |
 | `move_node` | Reparent or reorder |
@@ -76,6 +78,7 @@ The prompt bar at the bottom of the canvas edits the document with a model runni
 packages/core   Framework-free scene graph: schema, GridDocument commands, history, W3C tokens
 apps/web        Vite + React editor: canvas (shadow-DOM artboards), overlay, panels
 apps/server     Local Node process: Yjs sync + presence, browser RPC, MCP, local-model assist, persistence
+evals           Prompts and a results log for testing how well agents build in Weft
 ```
 
 Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.json`). Contributor and agent rules live in [CLAUDE.md](./CLAUDE.md).
@@ -104,8 +107,13 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [x] Assist: prompt bar that edits with a local Ollama model through the MCP tools (own cursor, whole-turn undo, offline)
   - [x] Drag elements on the canvas to reorder or reparent them, following the parent's flex/grid flow, with an insertion line (Esc cancels)
   - [x] Copy, cut and paste layers (⌘C/⌘X/⌘V or the browser's Edit menu), between documents too; plain text pastes as a paragraph
-- [ ] Components and variants
 - [x] Remote agents over MCP through a tunnel, with per-agent tokens and an on/off switch in the editor
+- [ ] **M4 — Agent design quality** (in order)
+  - [x] Weft design skill served over MCP (a `read_skill` tool or MCP resources, like pen.dev's), so remote agents get it without installing anything: the scene model and allowed properties, patterns (headings with spans, grids over nested wrappers), a build-then-verify loop, and taste rules against generic AI layouts. Later: style archetypes that set tokens (fonts, colors, spacing)
+  - [x] Render tool: a screenshot of an artboard or node (plus boxes), so agents can compare their result with a reference image, also with no editor open
+  - [ ] Image support: content-addressed assets in `.weft-data/assets/`, an upload route behind the same agent tokens (files never go through the model), an image node with required alt text, drag/drop and paste; raster formats first, sanitized SVG later
+  - [ ] Design lint: run checks like [Impeccable](https://impeccable.style/)'s detector against rendered artboards (real HTML/CSS) and report issues to agents and in the editor
+- [ ] Components and variants
 - [ ] Multiplayer beyond local; hosted server (per-token document scoping, rate limits)
 - [ ] Code export (HTML/CSS with the artboard reset and `@media` breakpoints)
 - [ ] Google Fonts: searchable typeface picker from a bundled catalog (no API key); a document-level font list (synced, undoable, MCP tool) that generates `--font-family-*` tokens; the editor loads fonts with one `<link>` in the main page, since fonts declared inside shadow roots are ignored; export ships the same `<link>`. Then self-host font files (`.weft-data/` or `@fontsource`) so documents work fully offline
@@ -114,6 +122,9 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-20:** `evals/`: agent evals for building in Weft. First eval: build-from-reference (rebuild a page from an image, check mobile, and report tool calls, rejections and token usage), with a results template, scoring rubric and log.
+- **2026-10-20:** Design skill and screenshots for agents. `read_skill` (and `weft://skill/*` MCP resources) serves Weft's design skill from `apps/server/skill/`: the model, workflow, layout recipes, style rules and a verification checklist, with the allowed tags, style properties and breakpoints filled in from the schema. `get_screenshot` renders an artboard or node in headless Chromium (no editor needed; JavaScript off, network blocked) and returns a PNG plus child boxes; `width` previews breakpoints. Core gains `exportArtboardHTML`, standalone HTML for an artboard and the start of code export. Assist's local models don't get these two tools.
+- **2026-10-20:** Roadmap: M4 — Agent design quality (a Weft design skill over MCP, a render tool, image support, design lint), ranked ahead of components, export and fonts.
 - **2026-10-20:** Easier agent authoring. More style properties: longhand margins and padding (`marginTop`, `paddingLeft`, …), `border` and per-side borders, `position`/`top`/`left`/`inset`/`zIndex`, `flexGrow`/`flexShrink`/`flexBasis`/`order`, `textDecoration`, `fontStyle`, `whiteSpace`, `textOverflow`, `transform`, `objectFit`/`objectPosition`, `cursor`, and `backgroundImage` for gradients (`url()`, `image-set()` and CSS escapes are rejected in every style). `p`, `h1`–`h6`, `span`, `blockquote` and `figcaption` can be frames, so a heading can hold differently styled spans. Rejected `create_nodes`/`update_nodes` calls list every problem at once with its path (`nodes[0].children[2]`) and a hint ("use marginTop", "did you mean color?"), plus the allowed property list, instead of only the first error.
 - **2026-10-20:** Copy, cut and paste layers. ⌘C/⌘X/⌘V and the browser's Edit menu copy the selected layers with their subtrees; paste goes into the selected container, or right after the selected layer (or after the copied layer itself), and artboards land beside their row. One undo step; works across documents in the same browser. Plain text from other apps pastes as a paragraph. Pasted content is validated in core like any create (`GridDocument.copyNodes`, `insertTrees`, `readClipboard`) and a bad paste changes nothing. Text fields and text editing keep native copy/paste.
 - **2026-10-20:** Remote agents. A **Remote** panel in the toolbar lets agents outside this machine (e.g. Muse or GrokBot through an ngrok tunnel) use the MCP tools: off by default, one revocable token per agent (hashed in `.weft-data/remote.json`), shown on the canvas under the agent's name. Remote requests reach `/mcp` only and never from a web page; requests relayed by a tunnel or proxy are never treated as local, even with a rewritten Host header. The panel shows the running ngrok tunnel's URL.

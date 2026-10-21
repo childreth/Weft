@@ -11,6 +11,7 @@ import {
   attributeIssues,
   breakpointIssues,
   defaultTokens,
+  exportArtboardHTML,
   styleIssues,
   tagIssue,
   throwIssues,
@@ -24,7 +25,9 @@ import {
   type StyleMap,
 } from '@weft/core';
 import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
+import type { Renderer } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
+import { readSkill, skillFiles } from './skill';
 
 export const SERVER_INSTRUCTIONS = `Weft is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.
 
@@ -44,7 +47,9 @@ Model:
 
 Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
 
-Workflow: get_selection or get_canvas to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_layout to verify the real rendered boxes → select_nodes to show the user what you changed.`;
+Before designing or restyling anything, call read_skill once: it is Weft's design guide (layout recipes, style rules, how to check your work).
+
+Workflow: get_selection or get_canvas to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile) → select_nodes to show the user what you changed.`;
 
 const AUTHORED_STYLES = `camelCase CSS properties. Allowed: ${STYLE_PROPS.join(', ')}`;
 
@@ -230,8 +235,38 @@ interface LayoutBox {
 }
 
 /** One MCP server per agent session; `identity` is who the editors see. */
-export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): McpServer {
+/** Server-wide services the tools share. */
+export interface ToolServices {
+  renderer: Renderer;
+}
+
+export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, services: ToolServices): McpServer {
   const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
+
+  server.registerTool(
+    'read_skill',
+    {
+      title: 'Read the Weft design skill',
+      description: `Weft's design guide: how to build good pages on this canvas. Call with no path first (SKILL.md), then read the files it points to. Files: ${[...skillFiles().keys()].join(', ')}.`,
+      inputSchema: { path: z.string().optional().describe('A file from the skill, e.g. "layout.md"; omit for SKILL.md') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ path }) => {
+      try {
+        return { content: [{ type: 'text', text: readSkill(path) }] };
+      } catch (err) {
+        return fail((err as Error).message);
+      }
+    },
+  );
+  for (const name of skillFiles().keys()) {
+    server.registerResource(
+      `skill-${name.replace(/\.md$/, '')}`,
+      `weft://skill/${name}`,
+      { title: `Weft design skill: ${name}`, mimeType: 'text/markdown' },
+      async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: readSkill(name) }] }),
+    );
+  }
 
   /** Resolves the document and this agent's presence in it (its cursor). */
   const nameOf = (room: Room, id: string | null | undefined) => (id && room.doc.getNode(id)?.name) || 'node';
@@ -572,6 +607,59 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity): M
       agent.look(ids, 'Showing you the result');
       const editors = room.notifyEditors('select', { ids, focus });
       return ok({ selected: ids, editors });
+    },
+  );
+
+  server.registerTool(
+    'get_screenshot',
+    {
+      title: 'Screenshot an artboard or node',
+      description:
+        'Renders an artboard (or one node within it) to a PNG exactly as the browser lays it out, plus the boxes of its children (x, y, width, height relative to the image, and overflows when content is clipped). Works with no editor open. Pass width to render the artboard at another width (390 mobile, 768 tablet) and check its breakpoints. Use it after each section you build, and to compare with a reference image.',
+      inputSchema: {
+        doc: docParam,
+        id: z.string().optional().describe('Artboard or node id; defaults to the first artboard'),
+        width: z.number().int().min(200).max(3840).optional().describe("Render width in CSS px; defaults to the artboard's width"),
+        depth: z.number().int().min(0).max(6).default(2).describe('Levels of child boxes to report'),
+        model: modelParam,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ doc, id, width, depth, model }) => {
+      try {
+        const { room, agent } = open(doc, model);
+        const targetId = id ?? room.doc.getChildren(null)[0]?.id;
+        if (!targetId) return fail('This document has no artboards');
+        if (!room.doc.has(targetId)) return fail(`Node ${targetId} not found`);
+        let artboard = room.doc.getNode(targetId)!;
+        while (artboard.parentId) artboard = room.doc.getNode(artboard.parentId)!;
+        agent.look([targetId], `Looking at ${nameOf(room, targetId)}`);
+        const renderWidth = width ?? artboard.frame!.width;
+        const shot = await services.renderer.screenshot(exportArtboardHTML(room.doc, artboard.id, { width: renderWidth }), {
+          width: renderWidth,
+          target: targetId === artboard.id ? undefined : targetId,
+          depth,
+        });
+        const names = new Map(room.doc.getNodes().map((n) => [n.id, n.name]));
+        const summary = {
+          id: targetId,
+          name: nameOf(room, targetId),
+          artboard: artboard.id,
+          renderWidth,
+          size: { width: shot.width, height: shot.height },
+          ...(shot.scale !== 1 && { imageScale: shot.scale }),
+          ...(shot.truncated && { truncated: 'Only the top of this tall artboard is shown' }),
+          boxes: shot.boxes.map((b) => ({ ...b, name: names.get(b.id) })),
+        };
+        return {
+          content: [
+            { type: 'image', data: shot.png.toString('base64'), mimeType: 'image/png' },
+            { type: 'text', text: JSON.stringify(summary, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return fail((err as Error).message);
+      }
     },
   );
 

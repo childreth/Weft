@@ -6,3 +6,4 @@ export * from './defaults';
 export { defaultTokens } from './default-tokens';
 export { seedLandingPage } from './seed';
 export { createId } from './ids';
+export { exportArtboardHTML, type ArtboardHTMLOptions } from './export';

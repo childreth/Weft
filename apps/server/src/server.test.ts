@@ -53,13 +53,68 @@ describe('MCP tools', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
-        'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_selection',
-        'list_tokens', 'move_node', 'select_nodes', 'undo_agent_change', 'update_nodes',
+        'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
+        'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');
     const create = tools.find((t) => t.name === 'create_nodes')!;
     expect(JSON.stringify(create.inputSchema)).toContain('children');
+  });
+
+  it('serves the design skill as a tool and as resources, with schema lists filled in', async () => {
+    const skill = await call('read_skill');
+    expect(skill.text).toContain('# Designing in Weft');
+    expect(skill.text).toContain('marginTop');
+    expect(skill.text).not.toMatch(/\{\{\w+\}\}/);
+    expect((await call('read_skill', { path: 'layout.md' })).text).toContain('# Layout recipes');
+    const bad = await call('read_skill', { path: '../server.ts' });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('Available: SKILL.md');
+    const { resources } = await client.listResources();
+    expect(resources.map((r) => r.uri)).toContain('weft://skill/style.md');
+    const read = await client.readResource({ uri: 'weft://skill/verify.md' });
+    expect((read.contents[0] as { text: string }).text).toContain('# Checking your work');
+  });
+
+  it('screenshots an artboard or a node with no editor open, at another width too', async () => {
+    const room = server.rooms.get('shot');
+    const [page] = room.doc.getTree();
+    const features = page!.children.find((c) => c.name === 'Features')!;
+    type Shot = { content: Array<{ type: string; data?: string; mimeType?: string; text?: string }> };
+    const png = (r: Shot) => Buffer.from(r.content.find((c) => c.type === 'image')!.data!, 'base64');
+    const info = (r: Shot) => JSON.parse(r.content.find((c) => c.type === 'text')!.text!);
+
+    const full = (await client.callTool({ name: 'get_screenshot', arguments: { doc: 'shot' } })) as Shot;
+    expect(png(full).subarray(1, 4).toString()).toBe('PNG');
+    expect(info(full)).toMatchObject({ id: page!.id, renderWidth: page!.frame!.width, size: { width: page!.frame!.width } });
+    expect(info(full).boxes.map((b: { name: string }) => b.name)).toContain('Features');
+
+    const mobile = (await client.callTool({ name: 'get_screenshot', arguments: { doc: 'shot', width: 390 } })) as Shot;
+    expect(info(mobile).size.width).toBe(390);
+    expect(info(mobile).size.height).toBeGreaterThan(info(full).size.height);
+
+    const node = (await client.callTool({ name: 'get_screenshot', arguments: { doc: 'shot', id: features.id, depth: 1 } })) as Shot;
+    expect(info(node).boxes[0]).toMatchObject({ id: features.id, x: 0, y: 0 });
+    expect(info(node).boxes.every((b: { depth: number }) => b.depth <= 1)).toBe(true);
+
+    expect((await call('get_screenshot', { doc: 'shot', id: 'nope' })).text).toContain('not found');
+  });
+
+  it('never lets a render reach the network', async () => {
+    let hits = 0;
+    const { createServer } = await import('node:http');
+    const bait = createServer((_req, res) => (hits++, res.end('x')));
+    await new Promise<void>((r) => bait.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(bait.address() as { port: number }).port}/pixel.png`;
+    const room = server.rooms.get('shot-net');
+    const [page] = room.doc.getTree();
+    room.doc.createNode({ type: 'frame', tag: 'img', parentId: page!.id, attributes: { src: url, alt: 'x' } });
+    room.doc.createNode({ type: 'text', tag: 'a', parentId: page!.id, text: 'link', attributes: { href: url } });
+    const res = (await client.callTool({ name: 'get_screenshot', arguments: { doc: 'shot-net' } })) as { isError?: boolean };
+    expect(res.isError).toBeFalsy();
+    expect(hits).toBe(0);
+    bait.close();
   });
 
   it('seeds new documents and reads the tree', async () => {
