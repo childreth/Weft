@@ -41,6 +41,8 @@ Use `header`, `nav`, `section`, `article`, `aside` and `footer` for what they ar
 - **Card:** frame `article`, column flex, `gap`, `padding`, and either a border or a background, not both plus a shadow.
 - **Nav:** frame `nav` row of text `a` nodes with `href` attributes.
 - **Horizontal scroller** (chips, carousels): row flex with `overflow: auto` and `flexShrink: 0` on items.
+- **Label and value pairs** (specs, profile details): `dl` with `dt`/`dd` children, as a grid (`gridTemplateColumns: auto 1fr`).
+- **Data tables:** `table` → `thead`/`tbody` → `tr` → `th`/`td` text nodes. Use a table only for real tabular data, not for layout.
 
 ## Responsive
 

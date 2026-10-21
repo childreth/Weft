@@ -54,7 +54,7 @@ Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B
 
 Before designing or restyling anything, call read_skill once: it is Weft's design guide (layout recipes, style rules, how to check your work).
 
-Workflow: get_selection or get_canvas to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile) → select_nodes to show the user what you changed.`;
+Workflow: get_selection or get_canvas (detail "outline" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile) → select_nodes to show the user what you changed.`;
 
 const AUTHORED_STYLES = `camelCase CSS properties. Allowed: ${STYLE_PROPS.join(', ')}`;
 
@@ -109,6 +109,23 @@ type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: bo
 
 const ok = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
+
+const OUTLINE_TEXT = 60;
+
+/** Structure only: what each node is and says, for finding ids cheaply. */
+export function outline(tree: SceneTree, depth: number): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: tree.id, tag: tree.tag };
+  // Text layers are usually named after their text; don't send it twice.
+  if (tree.text === undefined || !tree.text.startsWith(tree.name)) out.name = tree.name;
+  if (tree.text !== undefined) out.text = tree.text.length > OUTLINE_TEXT ? `${tree.text.slice(0, OUTLINE_TEXT)}…` : tree.text;
+  if (tree.frame) out.frame = { width: tree.frame.width, heightMode: tree.frame.heightMode ?? 'fixed' };
+  if (tree.hidden) out.hidden = true;
+  if (tree.children.length) {
+    if (depth > 0) out.children = tree.children.map((c) => outline(c, depth - 1));
+    else out.childCount = tree.children.length;
+  }
+  return out;
+}
 
 /** Drops empty fields and truncates deep trees to keep responses small. */
 export function compact(tree: SceneTree, depth: number): Record<string, unknown> {
@@ -292,21 +309,26 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
     {
       title: 'Get canvas tree',
       description:
-        'Returns the scene graph as nested JSON: every artboard, or the subtree under rootId. Deep subtrees are truncated to childCount past maxDepth.',
+        'Returns the scene graph as nested JSON: every artboard, or the subtree under rootId. Deep subtrees are truncated to childCount past maxDepth. detail "outline" returns only id, name, tag and short text per node (far smaller): use it to orient and find ids, then read the parts you will restyle in full.',
       inputSchema: {
         doc: docParam,
         rootId: z.string().optional().describe('Return only this node and its descendants'),
         maxDepth: z.number().int().min(0).max(50).default(12),
+        detail: z.enum(['full', 'outline']).default('full').describe('"outline": structure and text only, no styles or attributes'),
         model: modelParam,
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, rootId, maxDepth, model }) => {
+    async ({ doc, rootId, maxDepth, detail, model }) => {
       try {
         const { room, agent } = open(doc, model);
-        const nodes = room.doc.getTree(rootId).map((t) => compact(t, maxDepth));
         agent.look(rootId ? [rootId] : [], rootId ? `Looking at ${nameOf(room, rootId)}` : 'Reading the canvas');
-        return ok({ document: doc, nodes });
+        if (detail === 'outline') {
+          // Unindented: the outline exists to be small.
+          const nodes = room.doc.getTree(rootId).map((t) => outline(t, maxDepth));
+          return { content: [{ type: 'text', text: JSON.stringify({ document: doc, nodes }) }] };
+        }
+        return ok({ document: doc, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth)) });
       } catch (err) {
         return fail((err as Error).message);
       }
@@ -455,7 +477,7 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
     {
       title: 'Duplicate node',
       description:
-        'Deep-copies a node and its subtree with fresh ids. A copied artboard lands to the right of the artboards on its row; pass frame (e.g. {"width": 390}) to clone it at another width, which previews its breakpoint overrides. Other nodes are inserted right after the original.',
+        'Deep-copies a node and its subtree with fresh ids, and returns ids: a map from every original node id to its copy, so you can edit the copy without reading it again. A copied artboard lands to the right of the artboards on its row; pass frame (e.g. {"width": 390}) to clone it at another width, which previews its breakpoint overrides. Other nodes are inserted right after the original.',
       inputSchema: {
         doc: docParam,
         id: z.string(),
@@ -471,7 +493,14 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
         touched.add(copy);
         for (const d of room.doc.getDescendantIds(copy)) touched.add(d);
         Object.assign(report, { kind: 'create', roots: [copy], flash: [copy], action: `Duplicating ${nameOf(room, id)}` });
-        return { id: copy };
+        // The copy has the original's shape, so walking both trees pairs every node with its copy.
+        const ids: Record<string, string> = {};
+        const pair = (from: SceneTree, to: SceneTree) => {
+          ids[from.id] = to.id;
+          from.children.forEach((child, i) => pair(child, to.children[i]!));
+        };
+        pair(room.doc.getTree(id)[0]!, room.doc.getTree(copy)[0]!);
+        return { id: copy, ids };
       });
     },
   );

@@ -118,6 +118,37 @@ describe('MCP tools', () => {
     bait.close();
   });
 
+  it('reads the canvas as a compact outline', async () => {
+    const full = await call('get_canvas', { doc: 'outline' });
+    const brief = await call('get_canvas', { doc: 'outline', detail: 'outline' });
+    expect(brief.text.length).toBeLessThan(full.text.length / 2);
+    expect(brief.text).not.toContain('styles');
+    const [page] = brief.data.nodes;
+    expect(page).toMatchObject({ tag: 'main', frame: { width: expect.any(Number) } });
+    expect(JSON.stringify(page)).toContain('Design in the browser');
+  });
+
+  it('accepts definition lists and tables', async () => {
+    const room = server.rooms.get('tags');
+    const [page] = room.doc.getTree();
+    const res = await call('create_nodes', {
+      doc: 'tags',
+      parentId: page!.id,
+      nodes: [
+        { type: 'frame', tag: 'dl', children: [{ type: 'text', tag: 'dt', text: 'Age' }, { type: 'text', tag: 'dd', text: '41' }] },
+        {
+          type: 'frame',
+          tag: 'table',
+          children: [
+            { type: 'frame', tag: 'thead', children: [{ type: 'frame', tag: 'tr', children: [{ type: 'text', tag: 'th', text: 'Metric' }] }] },
+            { type: 'frame', tag: 'tbody', children: [{ type: 'frame', tag: 'tr', children: [{ type: 'text', tag: 'td', text: '62 bpm' }] }] },
+          ],
+        },
+      ],
+    });
+    expect(res.isError).toBe(false);
+  });
+
   it('seeds new documents and reads the tree', async () => {
     const { data } = await call('get_canvas', { doc: 'read', maxDepth: 1 });
     expect(data.nodes).toHaveLength(1);
@@ -306,6 +337,14 @@ describe('MCP tools', () => {
     expect(copy).toMatchObject({ name: 'Mobile', frame: { width: 390, y: page!.frame!.y, height: page!.frame!.height } });
     expect(copy.frame!.x).toBeGreaterThan(page!.frame!.x + page!.frame!.width);
     expect(room.doc.getDescendantIds(copy.id)).toHaveLength(room.doc.getDescendantIds(page!.id).length);
+    // Every original node maps to its copy, with matching names and tags.
+    const pairs = Object.entries(data.ids as Record<string, string>);
+    expect(pairs).toHaveLength(room.doc.getDescendantIds(page!.id).length + 1);
+    expect(data.ids[page!.id]).toBe(copy.id);
+    for (const [from, to] of pairs) {
+      expect(room.doc.getNode(to)!.tag).toBe(room.doc.getNode(from)!.tag);
+      if (from !== page!.id) expect(room.doc.getNode(to)!.name).toBe(room.doc.getNode(from)!.name);
+    }
     await call('undo_agent_change', { doc: 'clone' });
     expect(room.doc.has(copy.id)).toBe(false);
   });
