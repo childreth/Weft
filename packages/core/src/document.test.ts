@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard } from './document';
+import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard, styleIssues, treeIssues } from './document';
 import { History } from './history';
 import { seedLandingPage } from './seed';
 import { compileTokensCSS, flattenTokens } from './tokens';
@@ -342,5 +342,39 @@ describe('clipboard', () => {
     expect(() => doc.insertTrees(evil, { parentId: root })).toThrow(/Event handler/);
     expect(doc.getNodes()).toHaveLength(before);
     expect(() => doc.insertTrees(readClipboard(payload([{ type: 'text', styles: { color: 'red; x: url(y)' }, children: [] }])), { parentId: root })).toThrow(/forbidden/);
+  });
+});
+
+describe('validation', () => {
+  it('suggests the property to use for unknown styles', () => {
+    expect(styleIssues({ 'padding-left': '4px' })).toEqual(['Unknown style property "padding-left" (use "paddingLeft")']);
+    expect(styleIssues({ colour: 'red' })[0]).toContain('did you mean "color"?');
+    expect(styleIssues({ background: 'red' })[0]).toContain('use backgroundColor, or backgroundImage for a gradient');
+    expect(styleIssues({ marginTop: '4px', whiteSpace: 'nowrap', textDecoration: 'underline', borderLeft: '2px solid red' })).toEqual([]);
+  });
+
+  it('allows gradients but nothing the browser would fetch', () => {
+    expect(styleIssues({ backgroundImage: 'linear-gradient(90deg, #fff, var(--color-accent))' })).toEqual([]);
+    for (const value of ['url(https://x.example/a.png)', 'image-set("a.png" 1x)', 'linear-gradient(red, blue), URL( x )', 'u\\72l(x)']) {
+      expect(styleIssues({ backgroundImage: value })[0]).toMatch(/external resources/);
+    }
+    expect(styleIssues({ boxShadow: '0 0 0 1px url(x)' })[0]).toMatch(/external resources/);
+  });
+
+  it('lets headings and paragraphs hold inline spans', () => {
+    const doc = new GridDocument();
+    const h1 = doc.createNode({ type: 'frame', tag: 'h1', parentId: artboard(doc) });
+    doc.createNode({ type: 'text', tag: 'span', parentId: h1, text: 'Hi' });
+    expect(() => doc.createNode({ type: 'text', tag: 'section' as never, parentId: h1 })).toThrow(/use type "frame"/);
+  });
+
+  it('lists every problem in a tree with its path, and throws them together', () => {
+    const issues = treeIssues([{ type: 'frame', styles: { colr: 'x' }, children: [{ type: 'text', children: [{ type: 'text' }] }] }]);
+    expect(issues).toEqual([
+      'nodes[0]: Unknown style property "colr" (did you mean "color"?)',
+      'nodes[0].children[0]: Text nodes cannot have children (make it a frame with the same tag and span text children)',
+    ]);
+    const doc = new GridDocument();
+    expect(() => doc.createNode({ type: 'frame', styles: { colr: 'x', bg: 'y' } as never, attributes: { onclick: 'x' } })).toThrow(/3 problems/);
   });
 });

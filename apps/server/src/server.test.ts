@@ -134,6 +134,65 @@ describe('MCP tools', () => {
     expect(room.doc.nodes.size).toBe(before);
   });
 
+  it('reports every problem in a batch at once, with paths and hints', async () => {
+    const room = server.rooms.get('atomic');
+    const before = room.doc.nodes.size;
+    const res = await call('create_nodes', {
+      doc: 'atomic',
+      nodes: [
+        {
+          type: 'frame',
+          styles: { 'margin-top': '4px', backgroundImage: 'url(https://x.example/a.png)' },
+          children: [{ type: 'frame', tag: 'h7' }, { type: 'text', tag: 'section', text: 'x' }],
+        },
+        { type: 'text', text: 'y', styles: { colour: 'red' } },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    for (const line of [
+      '5 problems',
+      'nodes[0]: Unknown style property "margin-top" (use "marginTop")',
+      'nodes[0]: Style "backgroundImage" can\'t load external resources',
+      'nodes[0].children[0]: Tag <h7> is not valid for a frame node (allowed:',
+      'nodes[0].children[1]: Tag <section> is not valid for a text node (use type "frame")',
+      'nodes[1]: Unknown style property "colour" (did you mean "color"?)',
+      'Allowed style properties: display,',
+    ]) {
+      expect(res.text).toContain(line);
+    }
+    expect(room.doc.nodes.size).toBe(before);
+
+    const update = await call('update_nodes', { doc: 'atomic', updates: [{ id: 'missing', styles: { textDecor: 'none' } }] });
+    expect(update.text).toContain('updates[0]: Node missing not found');
+    expect(update.text).toContain('updates[0]: Unknown style property "textDecor"');
+  });
+
+  it('builds a heading with a colored word, gradients and longhand spacing', async () => {
+    const room = server.rooms.get('authoring');
+    const [page] = room.doc.getTree();
+    const res = await call('create_nodes', {
+      doc: 'authoring',
+      parentId: page!.id,
+      nodes: [
+        {
+          type: 'frame',
+          tag: 'h1',
+          name: 'Welcome',
+          styles: { marginTop: '16px', paddingBottom: '8px', backgroundImage: 'linear-gradient(180deg, #f5f7fb, #fff)' },
+          children: [
+            { type: 'text', tag: 'span', text: 'Welcome back to ' },
+            { type: 'text', tag: 'span', text: 'CarGurus!', styles: { color: '#3b82f6' } },
+          ],
+        },
+        { type: 'text', tag: 'a', text: '01886', styles: { textDecoration: 'underline', whiteSpace: 'nowrap' } },
+      ],
+    });
+    expect(res.isError).toBe(false);
+    const heading = room.doc.getNodes().find((n) => n.name === 'Welcome')!;
+    expect(heading.tag).toBe('h1');
+    expect(room.doc.getChildren(heading.id).map((n) => n.text)).toEqual(['Welcome back to ', 'CarGurus!']);
+  });
+
   it('updates, moves, deletes and undoes agent changes', async () => {
     const room = server.rooms.get('edit');
     const [page] = room.doc.getTree();
