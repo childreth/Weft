@@ -296,6 +296,64 @@ body {
 .gf-assist-tool-mark { display: inline-block; width: 16px; }
 .gf-assist-detail { display: block; margin-left: 16px; white-space: pre-wrap; word-break: break-word; }
 
+/* Remote access */
+.gf-remote { position: relative; }
+.gf-remote-button { display: flex; align-items: center; gap: 6px; color: var(--ui-text-muted); }
+.gf-remote-button.is-on { color: var(--ui-warn); }
+.gf-remote-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.6; }
+.gf-remote-button.is-on .gf-remote-dot { opacity: 1; box-shadow: 0 0 0 3px rgb(245 176 65 / 0.2); }
+.gf-remote-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+.gf-remote-switch { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.gf-remote-switch > span { display: flex; flex-direction: column; gap: 2px; }
+.gf-remote-switch input { margin-top: 2px; accent-color: var(--ui-warn); }
+.gf-remote-section { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--ui-border); padding-top: 10px; }
+.gf-remote-heading { font-weight: 600; }
+.gf-remote-muted { color: var(--ui-text-muted); }
+.gf-remote-panel code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; }
+.gf-remote-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.gf-remote-name { font-weight: 500; }
+.gf-remote-revoke { margin-left: auto; }
+.gf-remote-code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--ui-panel-2);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  user-select: all;
+}
+.gf-remote-token { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--ui-accent-soft); align-items: flex-start; }
+.gf-remote-token .gf-remote-row { align-self: stretch; }
+.gf-remote-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--ui-panel-2);
+  color: var(--ui-text);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+.gf-remote-input:focus { outline: none; border-color: var(--ui-accent); }
+.gf-remote-error { color: var(--ui-warn); }
+
 /* Overlay (screen space) */
 .gf-overlay { position: absolute; inset: 0; pointer-events: none; }
 .gf-snap-guides { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }

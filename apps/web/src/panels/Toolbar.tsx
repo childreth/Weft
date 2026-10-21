@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { history, scene } from '../editor/editor';
 import { useEditor, type Tool } from '../editor/store';
 import { zoomTo, zoomToFit } from '../editor/viewport';
+import { RemoteAccess } from './RemoteAccess';
 
 const TOOLS: Array<{ tool: Tool; label: string; key: string }> = [
   { tool: 'select', label: 'Select', key: 'V' },
@@ -72,6 +73,7 @@ export function Toolbar() {
             {c.name.charAt(0)}
           </span>
         ))}
+        <RemoteAccess />
         <span className="gf-status" data-status={connection} data-testid="connection" title={STATUS_LABEL[connection]}>
           <span className="gf-status-dot" />
           {STATUS_LABEL[connection]}

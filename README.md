@@ -51,6 +51,16 @@ The repo's `.mcp.json` already registers it for Claude Code. Each MCP connection
 | `undo_agent_change` | Revert that agent's last call |
 | `select_nodes` | Select and zoom to nodes in every open editor |
 
+### Remote agents (e.g. Muse, GrokBot)
+
+Agents running in the cloud can't reach `127.0.0.1`. To let one in, put the server behind a tunnel and give that agent its own token:
+
+1. Run a tunnel to the server: `ngrok http 4510`, or `ngrok http --url=<your-static-domain> 4510` so the URL stays the same. Don't use `--host-header=rewrite`.
+2. In the editor, open **Remote** (toolbar, top right), switch on **Allow remote agents**, and add the agent by name. Copy its token: it's shown once and stored only as a hash in `.weft-data/remote.json`.
+3. Give the agent the public URL shown in the panel (`https://<domain>/mcp`) and its token, sent as `Authorization: Bearer <token>` (or `?key=<token>` for agents that only take a URL).
+
+The agent appears on the canvas under its name with its own cursor and undo. Remote requests reach `/mcp` only; sync, editor RPC, Assist and the Remote settings (`GET /remote`, `POST /remote/enabled|agents|revoke`) stay local, and any request forwarded by a tunnel or proxy counts as remote whatever its Host header says. Remote access is off by default and stays as you leave it across restarts; switching it off or revoking a token disconnects those agents immediately. With the tunnel stopped nothing outside this machine can reach the server. Every token can read and edit every document on this server (no per-document scoping or rate limits yet).
+
 ## Edit with a local model (Assist)
 
 The prompt bar at the bottom of the canvas edits the document with a model running on your machine through [Ollama](https://ollama.com), fully offline. Select something, describe the change ("stack these cards in one column"), and the model edits it live through the same tools MCP agents use, with its own cursor. **Undo** in the bar reverts the model's whole last turn (⌘Z only undoes your own edits); **New** starts a fresh conversation.
@@ -94,7 +104,8 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [x] Assist: prompt bar that edits with a local Ollama model through the MCP tools (own cursor, whole-turn undo, offline)
   - [x] Drag elements on the canvas to reorder or reparent them, following the parent's flex/grid flow, with an insertion line (Esc cancels)
 - [ ] Components and variants
-- [ ] Multiplayer beyond local, remote agents (needs per-agent auth first)
+- [x] Remote agents over MCP through a tunnel, with per-agent tokens and an on/off switch in the editor
+- [ ] Multiplayer beyond local; hosted server (per-token document scoping, rate limits)
 - [ ] Code export (HTML/CSS with the artboard reset and `@media` breakpoints)
 - [ ] Google Fonts: searchable typeface picker from a bundled catalog (no API key); a document-level font list (synced, undoable, MCP tool) that generates `--font-family-*` tokens; the editor loads fonts with one `<link>` in the main page, since fonts declared inside shadow roots are ignored; export ships the same `<link>`. Then self-host font files (`.weft-data/` or `@fontsource`) so documents work fully offline
 - [ ] In-app local model assist (to consider): a local model built into the editor, separate from MCP agents, for inline suggestions. First idea: on a breakpoint section's "+ Add", suggest mobile/tablet overrides for the selected section (e.g. stack a grid to one column, shrink gap and padding) that the user previews and accepts
@@ -102,6 +113,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-20:** Remote agents. A **Remote** panel in the toolbar lets agents outside this machine (e.g. Muse or GrokBot through an ngrok tunnel) use the MCP tools: off by default, one revocable token per agent (hashed in `.weft-data/remote.json`), shown on the canvas under the agent's name. Remote requests reach `/mcp` only and never from a web page; requests relayed by a tunnel or proxy are never treated as local, even with a rewritten Host header. The panel shows the running ngrok tunnel's URL.
 - **2026-10-19:** Assist: a prompt bar at the bottom of the canvas edits the document with a local Ollama model, fully offline. The server runs the tool loop (`/assist/*` routes) against the same MCP tools outside agents use, in process, so the model gets its own cursor, atomic edits and an Undo that reverts its whole turn. It sees the current selection, `doc`/`model` arguments are filled in for it, and tool errors go back to the model to fix. `OLLAMA_HOST` picks the Ollama server.
 - **2026-10-19:** Canvas drag and drop for elements. Dragging an element (or a multi-selection) reorders it among its siblings along the parent's flex/grid axis, or reparents it into another container; a dashed outline marks the receiving parent and a line marks the slot. Inside its own parent, siblings take precedence and only the middle half of a sibling container drops into it. One undo step; Esc cancels. Artboards still move by frame.
 - **2026-10-18:** M3 complete. Dropped per-breakpoint text, visibility and tag from the roadmap: breakpoint overrides stay styles-only (hide per breakpoint with a `display: none` override).
