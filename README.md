@@ -103,6 +103,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [x] Snapping and smart guides: artboard move and resize snap edges and centers to other artboards (hold ⌘/Ctrl to move freely)
   - [x] Assist: prompt bar that edits with a local Ollama model through the MCP tools (own cursor, whole-turn undo, offline)
   - [x] Drag elements on the canvas to reorder or reparent them, following the parent's flex/grid flow, with an insertion line (Esc cancels)
+  - [x] Copy, cut and paste layers (⌘C/⌘X/⌘V or the browser's Edit menu), between documents too; plain text pastes as a paragraph
 - [ ] Components and variants
 - [x] Remote agents over MCP through a tunnel, with per-agent tokens and an on/off switch in the editor
 - [ ] Multiplayer beyond local; hosted server (per-token document scoping, rate limits)
@@ -113,6 +114,7 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
 
 ## Changelog
 
+- **2026-10-20:** Copy, cut and paste layers. ⌘C/⌘X/⌘V and the browser's Edit menu copy the selected layers with their subtrees; paste goes into the selected container, or right after the selected layer (or after the copied layer itself), and artboards land beside their row. One undo step; works across documents in the same browser. Plain text from other apps pastes as a paragraph. Pasted content is validated in core like any create (`GridDocument.copyNodes`, `insertTrees`, `readClipboard`) and a bad paste changes nothing. Text fields and text editing keep native copy/paste.
 - **2026-10-20:** Remote agents. A **Remote** panel in the toolbar lets agents outside this machine (e.g. Muse or GrokBot through an ngrok tunnel) use the MCP tools: off by default, one revocable token per agent (hashed in `.weft-data/remote.json`), shown on the canvas under the agent's name. Remote requests reach `/mcp` only and never from a web page; requests relayed by a tunnel or proxy are never treated as local, even with a rewritten Host header. The panel shows the running ngrok tunnel's URL.
 - **2026-10-19:** Assist: a prompt bar at the bottom of the canvas edits the document with a local Ollama model, fully offline. The server runs the tool loop (`/assist/*` routes) against the same MCP tools outside agents use, in process, so the model gets its own cursor, atomic edits and an Undo that reverts its whole turn. It sees the current selection, `doc`/`model` arguments are filled in for it, and tool errors go back to the model to fix. `OLLAMA_HOST` picks the Ollama server.
 - **2026-10-19:** Canvas drag and drop for elements. Dragging an element (or a multi-selection) reorders it among its siblings along the parent's flex/grid axis, or reparents it into another container; a dashed outline marks the receiving parent and a line marks the slot. Inside its own parent, siblings take precedence and only the middle half of a sibling container drops into it. One undo step; Esc cancels. Artboards still move by frame.

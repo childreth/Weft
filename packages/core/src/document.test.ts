@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS } from './document';
+import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard } from './document';
 import { History } from './history';
 import { seedLandingPage } from './seed';
 import { compileTokensCSS, flattenTokens } from './tokens';
@@ -290,5 +290,57 @@ describe('artboard heightMode', () => {
     expect(doc.getNode(doc.duplicateNode(a, { frame: { width: 390 } }))?.frame?.heightMode).toBe('hug');
     expect(doc.getNode(doc.duplicateNode(a, { frame: { width: 390, height: 700 } }))?.frame?.heightMode).toBeUndefined();
     expect(doc.getNode(doc.duplicateNode(a))?.frame?.heightMode).toBeUndefined();
+  });
+});
+
+describe('clipboard', () => {
+  it('copies outermost subtrees in document order and pastes them with fresh ids, as one undo step', () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    const root = artboard(doc);
+    const a = doc.createNode({ type: 'frame', parentId: root, name: 'A1', styles: { gap: '4px' } });
+    const inner = doc.createNode({ type: 'text', parentId: a, text: 'inner' });
+    const b = doc.createNode({ type: 'text', parentId: root, text: 'b' });
+
+    const trees = doc.copyNodes([b, inner, a]);
+    expect(trees.map((t) => t.id)).toEqual([a, b]);
+    const json = JSON.stringify({ format: 'weft-clipboard', version: 1, nodes: trees });
+
+    const pasted = doc.insertTrees(readClipboard(json), { parentId: root, beforeId: b });
+    expect(pasted).toHaveLength(2);
+    expect(pasted).not.toContain(a);
+    expect(doc.getChildren(root).map((n) => n.id)).toEqual([a, ...pasted, b]);
+    expect(doc.getTree(pasted[0]!)[0]).toMatchObject({ name: 'A1', styles: { gap: '4px' }, children: [{ text: 'inner' }] });
+
+    history.undo();
+    expect(doc.getChildren(root).map((n) => n.id)).toEqual([a, b]);
+  });
+
+  it('pastes artboards beside their row and refuses loose elements on the page', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const el = doc.createNode({ type: 'text', parentId: root, text: 'x' });
+    const [copy] = doc.insertTrees(doc.copyNodes([root]), { parentId: null });
+    expect(doc.getNode(copy!)).toMatchObject({ parentId: null, frame: { x: 200, y: 0, width: 100 } });
+    expect(() => doc.insertTrees(doc.copyNodes([el]), { parentId: null })).toThrow(/paste into/);
+  });
+
+  it('validates pasted content like any create, atomically', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const payload = (nodes: unknown[]) => JSON.stringify({ format: 'weft-clipboard', version: 1, nodes });
+    expect(() => readClipboard('plain text')).toThrow(GridError);
+    expect(() => readClipboard(payload([{ type: 'script', children: [] }]))).toThrow(/Malformed/);
+    expect(() => readClipboard(payload([{ type: 'text', text: 42, children: [] }]))).toThrow(/Malformed/);
+    const evil = readClipboard(
+      payload([
+        { type: 'text', text: 'ok', children: [] },
+        { type: 'frame', attributes: { onclick: 'alert(1)' }, children: [] },
+      ]),
+    );
+    const before = doc.getNodes().length;
+    expect(() => doc.insertTrees(evil, { parentId: root })).toThrow(/Event handler/);
+    expect(doc.getNodes()).toHaveLength(before);
+    expect(() => doc.insertTrees(readClipboard(payload([{ type: 'text', styles: { color: 'red; x: url(y)' }, children: [] }])), { parentId: root })).toThrow(/forbidden/);
   });
 });

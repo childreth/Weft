@@ -9,7 +9,7 @@ const ALIGN_KEYS: Record<string, Alignment> = {
 const DISTRIBUTE_KEYS: Record<string, Axis> = { KeyH: 'horizontal', KeyV: 'vertical' };
 
 /** Drops ids whose ancestor is also in the list. */
-function outermost(ids: readonly string[]): string[] {
+export function outermost(ids: readonly string[]): string[] {
   const set = new Set(ids);
   return ids.filter((id) => {
     for (let p = scene.nodes.get(id)?.parentId; p; p = scene.nodes.get(p)?.parentId) if (set.has(p)) return false;
@@ -17,7 +17,7 @@ function outermost(ids: readonly string[]): string[] {
   });
 }
 
-function isTyping(e: KeyboardEvent): boolean {
+export function isTyping(e: Event): boolean {
   const target = e.composedPath()[0];
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);

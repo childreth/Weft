@@ -84,6 +84,58 @@ const UNSAFE_STYLE_VALUE = /[;{}<>]/;
 const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800, heightMode: 'hug' };
 /** Space left between an artboard and a duplicate placed beside it. */
 const ARTBOARD_GAP = 100;
+/** Bounds on pasted clipboard content, which may come from anywhere. */
+const CLIPBOARD_MAX_NODES = 5000;
+const CLIPBOARD_MAX_DEPTH = 64;
+
+/** What the editor puts on the clipboard for copied layers. */
+export interface ClipboardPayload {
+  format: 'weft-clipboard';
+  version: 1;
+  nodes: SceneTree[];
+}
+
+/**
+ * Parses clipboard JSON into subtrees, checking only their shape: content is
+ * validated by `insertTrees` like any other create.
+ */
+export function readClipboard(json: string): SceneTree[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new GridError('Clipboard does not contain Weft layers');
+  }
+  const payload = data as Partial<ClipboardPayload> | null;
+  if (payload?.format !== 'weft-clipboard' || payload.version !== 1 || !Array.isArray(payload.nodes)) {
+    throw new GridError('Clipboard does not contain Weft layers');
+  }
+  let count = 0;
+  const check = (node: unknown, depth: number): void => {
+    const n = node as Partial<SceneTree> | null;
+    const record = (v: unknown) => v === undefined || (typeof v === 'object' && v !== null && !Array.isArray(v));
+    const text = (v: unknown) => v === undefined || typeof v === 'string';
+    if (
+      !n ||
+      typeof n !== 'object' ||
+      (n.type !== 'frame' && n.type !== 'text') ||
+      !Array.isArray(n.children) ||
+      !text(n.name) ||
+      !text(n.text) ||
+      !text(n.tag) ||
+      !record(n.styles) ||
+      !record(n.attributes) ||
+      !record(n.breakpoints) ||
+      !record(n.frame)
+    ) {
+      throw new GridError('Malformed layers on the clipboard');
+    }
+    if (++count > CLIPBOARD_MAX_NODES || depth > CLIPBOARD_MAX_DEPTH) throw new GridError('Too many layers on the clipboard');
+    for (const child of n.children) check(child, depth + 1);
+  };
+  for (const node of payload.nodes) check(node, 0);
+  return payload.nodes;
+}
 
 export function readNode(y: YNode): SceneNode {
   const styles = y.get('styles') as Y.Map<string> | undefined;
@@ -508,33 +560,90 @@ export class GridDocument {
       // A copy at another width can't keep the original's content height: hug it.
       if (patch.width !== undefined && patch.height === undefined) patch.heightMode ??= 'hug';
       frame = patchFrame(source.frame, patch);
-      if (options.frame?.x === undefined) {
-        const f = frame;
-        const row = siblings.flatMap((n) => (n.frame && n.frame.y < f.y + f.height && n.frame.y + n.frame.height > f.y ? [n.frame] : []));
-        frame.x = Math.max(...row.map((r) => r.x + r.width)) + ARTBOARD_GAP;
-      }
+      if (options.frame?.x === undefined) frame = this.besideRow(frame);
     }
-    const copy = (node: SceneTree, parentId: string | null, before: string | null, root: boolean): string => {
-      const newId = this.createNode(
-        {
-          type: node.type,
-          tag: node.tag,
-          name: root ? (options.name ?? node.name) : node.name,
-          parentId,
-          beforeId: before,
-          text: node.text,
-          styles: node.styles,
-          breakpoints: node.breakpoints,
-          attributes: node.attributes,
-          frame: root ? frame : node.frame,
-        },
-        origin,
-      );
-      if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
-      for (const child of node.children) copy(child, newId, null, false);
-      return newId;
+    return this.transact(() => this.copyTree(tree!, source.parentId, beforeId, { name: options.name, frame }, origin), origin);
+  }
+
+  /** Subtrees of `ids` for the clipboard: outermost nodes only, in document order. */
+  copyNodes(ids: readonly string[]): SceneTree[] {
+    const wanted = new Set(ids.filter((id) => this.has(id)));
+    const out: SceneTree[] = [];
+    const walk = (trees: SceneTree[]) => {
+      for (const t of trees) {
+        if (wanted.has(t.id)) out.push(t);
+        else walk(t.children);
+      }
     };
-    return this.transact(() => copy(tree!, source.parentId, beforeId, true), origin);
+    walk(this.getTree());
+    return out;
+  }
+
+  /**
+   * Inserts copies of `trees` (e.g. pasted) with fresh ids, validated like any
+   * create, and returns the new roots. Artboards (trees with a `frame`) land on
+   * the page to the right of their row; other nodes go into `target.parentId`
+   * before `target.beforeId`.
+   */
+  insertTrees(trees: readonly SceneTree[], target: { parentId: string | null; beforeId?: string | null }, origin: Origin = ORIGIN_LOCAL): string[] {
+    // Validate everything first: a transaction does not roll back, and a paste must not land halfway.
+    const check = (node: SceneTree): void => {
+      const tag = node.tag ?? (node.type === 'text' ? 'p' : 'div');
+      if (!isValidTag(node.type, tag)) throw new GridError(`Tag <${tag}> is not valid for a ${node.type} node`);
+      if (node.styles) assertStyles(node.styles);
+      if (node.breakpoints) assertBreakpoints(node.breakpoints);
+      if (node.attributes) assertAttributes(node.attributes);
+      if (node.children.length && (node.type === 'text' || VOID_TAGS.has(tag))) throw new GridError(`<${tag}> cannot contain other layers`);
+      node.children.forEach(check);
+    };
+    for (const tree of trees) {
+      check(tree);
+      if (tree.frame) normalizeFrame(tree.frame);
+      else if (target.parentId === null) throw new GridError('Select a layer or artboard to paste into');
+    }
+    if (target.parentId !== null && trees.some((t) => !t.frame)) this.assertCanContain(target.parentId);
+    return this.transact(
+      () =>
+        trees.map((tree) => {
+          if (tree.frame) return this.copyTree(tree, null, null, { frame: this.besideRow(normalizeFrame(tree.frame)) }, origin);
+          if (target.parentId === null) throw new GridError('Select a layer or artboard to paste into');
+          return this.copyTree(tree, target.parentId, target.beforeId ?? null, {}, origin);
+        }),
+      origin,
+    );
+  }
+
+  /** `frame` moved to the right of the artboards it vertically overlaps. */
+  private besideRow(frame: ArtboardFrame): ArtboardFrame {
+    const row = this.getChildren(null).flatMap((n) => (n.frame && n.frame.y < frame.y + frame.height && n.frame.y + n.frame.height > frame.y ? [n.frame] : []));
+    return row.length ? { ...frame, x: Math.max(...row.map((r) => r.x + r.width)) + ARTBOARD_GAP } : frame;
+  }
+
+  private copyTree(
+    node: SceneTree,
+    parentId: string | null,
+    beforeId: string | null,
+    root: { name?: string; frame?: ArtboardFrame },
+    origin: Origin,
+  ): string {
+    const newId = this.createNode(
+      {
+        type: node.type,
+        tag: node.tag,
+        name: root.name ?? node.name,
+        parentId,
+        beforeId,
+        text: node.text,
+        styles: node.styles,
+        breakpoints: node.breakpoints,
+        attributes: node.attributes,
+        frame: root.frame ?? node.frame,
+      },
+      origin,
+    );
+    if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
+    for (const child of node.children) this.copyTree(child, newId, null, {}, origin);
+    return newId;
   }
 
   toSnapshot(): Snapshot {
