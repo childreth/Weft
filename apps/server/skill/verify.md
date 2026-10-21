@@ -15,7 +15,7 @@ Look at what you built after every section, not only at the end. `get_screenshot
 - **Hierarchy:** the focal point reads first and secondary text is quieter.
 - **Contrast:** text is readable on its background.
 - **The reference:** if the user gave one, put them side by side. Check the proportions, spacing, type weight and color.
-- **Mobile:** at `width: 390`, check that nothing overflows sideways, grids stack and text stays readable.
+- **Other widths:** check at least the other end from the one you designed at. For a desktop design, `width: 390`: nothing overflows sideways, grids stack, text stays readable. For a mobile design, `width: 768` or `1440`: content doesn't stretch into long lines or leave huge gaps (cap it with `maxWidth`).
 
 ## Fixing
 
