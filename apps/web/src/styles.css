@@ -167,6 +167,9 @@ body {
 }
 .gf-style-row:not(:has(.gf-swatch)) { grid-template-columns: 68px minmax(0, 1fr) auto auto; }
 .gf-style-row + .gf-style-row { margin-top: 2px; }
+/* Font family rows have an extra button for the font picker. */
+.gf-style-row[data-style-prop="fontFamily"] { grid-template-columns: 68px minmax(0, 1fr) auto auto auto; }
+.gf-style-row[data-style-prop="fontFamily"] .gf-icon-btn[aria-label="Choose a font"] { font-size: 12px; font-weight: 600; }
 .gf-badge {
   font-size: 9px;
   text-transform: uppercase;
@@ -295,6 +298,18 @@ body {
 .gf-assist-entry.is-failed, .gf-assist-entry.is-error { color: var(--ui-warn); }
 .gf-assist-tool-mark { display: inline-block; width: 16px; }
 .gf-assist-detail { display: block; margin-left: 16px; white-space: pre-wrap; word-break: break-word; }
+
+/* Fonts */
+.gf-icon-btn.is-active { background: var(--ui-accent-soft); color: var(--ui-text); }
+.gf-font-picker { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 8px; }
+.gf-font-options { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
+.gf-font-option { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+.gf-font-option.is-active { background: var(--ui-panel-2); }
+.gf-font-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-font-meta { color: var(--ui-text-muted); font-size: 11px; white-space: nowrap; margin: 0; }
+.gf-font-none { padding: 5px 8px; }
+.gf-font-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.gf-font-sample { flex: 1; min-width: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Remote access */
 .gf-remote { position: relative; }

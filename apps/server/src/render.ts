@@ -75,15 +75,28 @@ export class Renderer {
    * element `[data-gf-id=target]` when given. Boxes cover that element's
    * subtree to `depth` levels, relative to the screenshot's top-left.
    */
-  async screenshot(html: string, opts: { width: number; target?: string; depth?: number; scale?: number }): Promise<RenderResult> {
+  /**
+   * `resource` may answer requests (e.g. the document's fonts from the local
+   * cache); everything else is blocked.
+   */
+  async screenshot(
+    html: string,
+    opts: { width: number; target?: string; depth?: number; scale?: number; resource?: (url: string) => Promise<{ body: Buffer | string; type: string } | null> },
+  ): Promise<RenderResult> {
     const browser = await this.launch();
     const selector = opts.target ? `[data-gf-id="${opts.target.replace(/["\\]/g, '')}"]` : '.weft-artboard';
     const width = Math.round(opts.width);
     const load = async (deviceScaleFactor: number, height: number) => {
       const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor, javaScriptEnabled: false });
-      await context.route('**/*', (route) => route.abort());
+      await context.route('**/*', async (route) => {
+        const found = await opts.resource?.(route.request().url()).catch(() => null);
+        // The page's origin is opaque (setContent), and fonts are CORS requests.
+        if (found) return route.fulfill({ body: found.body, contentType: found.type, headers: { 'access-control-allow-origin': '*' } });
+        return route.abort();
+      });
       const page = await context.newPage();
       await page.setContent(html, { waitUntil: 'load' });
+      await page.evaluate('document.fonts.ready.then(() => 0)');
       return { context, page };
     };
 

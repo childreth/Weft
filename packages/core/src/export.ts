@@ -3,6 +3,7 @@ import { ARTBOARD_RESET_CSS } from './defaults';
 import { VOID_TAGS, type SceneNode, type SceneTree } from './schema';
 import { compileTokensCSS, type TokenSet } from './tokens';
 import { defaultTokens } from './default-tokens';
+import { googleFontsCSSUrl, withFontTokens } from './fonts';
 
 /**
  * Standalone HTML for one artboard: the same tokens, reset, inline styles and
@@ -43,6 +44,8 @@ export interface ArtboardHTMLOptions {
   /** Render at this width instead of the artboard's (e.g. 390 to preview mobile). */
   width?: number;
   title?: string;
+  /** Stylesheet for the document's fonts; defaults to Google Fonts, null for none. */
+  fontCSSUrl?: string | null;
 }
 
 export function exportArtboardHTML(doc: GridDocument, artboardId: string, options: ArtboardHTMLOptions = {}): string {
@@ -50,6 +53,8 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
   if (!tree?.frame) throw new GridError(`Node ${artboardId} is not an artboard`);
   const width = options.width ?? tree.frame.width;
   const height = tree.frame.heightMode === 'hug' ? 'auto' : `${tree.frame.height}px`;
+  const fontCSS = options.fontCSSUrl === undefined ? googleFontsCSSUrl(doc.getFonts()) : options.fontCSSUrl;
+  const fontLink = fontCSS ? `\n<link rel="stylesheet" href="${escapeAttr(fontCSS)}">` : '';
   const subtree: SceneNode[] = [];
   const walk = (t: SceneTree, parentId: string | null) => {
     const { children, ...rest } = t;
@@ -58,7 +63,7 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
   };
   walk(tree, null);
   const css = [
-    compileTokensCSS(options.tokens ?? defaultTokens),
+    compileTokensCSS(withFontTokens(options.tokens ?? defaultTokens, doc.getFonts())),
     'html, body { margin: 0; }',
     ARTBOARD_RESET_CSS.trim(),
     `.weft-artboard { width: ${width}px; height: ${height}; overflow: hidden; }`,
@@ -71,7 +76,7 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeText(options.title ?? tree.name)}</title>
+<title>${escapeText(options.title ?? tree.name)}</title>${fontLink}
 <style>
 ${css}
 </style>

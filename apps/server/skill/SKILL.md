@@ -33,7 +33,8 @@ This file is only the overview. Before you build anything, also read:
 - **text** nodes hold `text`. Tags: {{TEXT_TAGS}}.
 - **Mixed styles in one line** (a heading with one colored word): make the heading a frame with tag `h1` and give it `span` text children.
 - `styles` are camelCase CSS properties with CSS string values. Allowed: {{STYLE_PROPS}}. Anything else is rejected, so pick from this list instead of guessing.
-- `backgroundImage` takes gradients only. `url()`, images, icons and web fonts aren't supported yet. Don't fake photos or logos with shapes: use a plain block with a short label ("Product photo") so the user can see what goes there.
+- `backgroundImage` takes gradients only. `url()`, images and icons aren't supported yet. Don't fake photos or logos with shapes: use a plain block with a short label ("Product photo") so the user can see what goes there.
+- **Fonts:** any Google Font. `search_fonts` to find one, `add_fonts` to add it to the document, then set `fontFamily: var(--font-family-<slug>)` (e.g. `var(--font-family-playfair-display)`). Fonts are cached locally, so they keep working offline.
 - Responsive overrides go in `breakpoints`: {{BREAKPOINTS}}. They are desktop-first and narrower wins.
 - Values should come from design tokens (`var(--space-4)`, `var(--color-accent)`). Call `list_tokens` once to see them.
 

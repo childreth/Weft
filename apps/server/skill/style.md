@@ -7,6 +7,12 @@ Aim for designs a good product designer would sign off on, not the generic look 
 - Colors, spacing, radii, font sizes and shadows come from tokens: `var(--color-…)`, `var(--space-…)`, `var(--radius-…)`, `var(--font-size-…)`, `var(--shadow-…)`. Call `list_tokens` for the real names.
 - Use raw values only when matching a reference the tokens can't express (a brand blue, an exact size). Keep them consistent: the same value every time it appears.
 
+## Type
+
+- Use at most two families: one for headings and one for body text (often the same family). Pick them with `search_fonts` and add them with `add_fonts`, asking only for the weights you'll use.
+- Match a reference's typeface by its category and feel when the exact font isn't a Google Font: a geometric sans for a geometric sans, a high-contrast serif for a high-contrast serif. Say which font you substituted.
+- Set `fontFamily` once on the artboard root for body text, and override it only on headings.
+
 ## Hierarchy
 
 - One clear focal point per section. Make the most important thing visibly bigger or bolder, and quiet the rest.

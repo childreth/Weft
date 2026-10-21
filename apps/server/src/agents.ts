@@ -86,10 +86,10 @@ export class AgentPresence {
 
   constructor(
     readonly identity: AgentIdentity,
-    nodes: Y.AbstractType<any>,
+    scope: Y.AbstractType<any>[],
     roomAwareness: awarenessProtocol.Awareness,
   ) {
-    this.undo = new Y.UndoManager(nodes, { trackedOrigins: new Set([identity.origin]), captureTimeout: 0 });
+    this.undo = new Y.UndoManager(scope, { trackedOrigins: new Set([identity.origin]), captureTimeout: 0 });
     this.awareness.on('update', ({ added, updated, removed }: AwarenessChange) => {
       const update = awarenessProtocol.encodeAwarenessUpdate(this.awareness, [...added, ...updated, ...removed]);
       awarenessProtocol.applyAwarenessUpdate(roomAwareness, update, this);

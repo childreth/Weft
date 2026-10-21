@@ -165,7 +165,7 @@ export class Room {
   agent(identity: AgentIdentity): AgentPresence {
     let presence = this.agents.get(identity.key);
     if (!presence) {
-      presence = new AgentPresence(identity, this.doc.nodes, this.awareness);
+      presence = new AgentPresence(identity, this.doc.undoScope, this.awareness);
       this.agents.set(identity.key, presence);
     }
     return presence;

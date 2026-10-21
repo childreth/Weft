@@ -13,7 +13,7 @@ export class History {
   private gestureDepth = 0;
 
   constructor(doc: GridDocument, trackedOrigins: Origin[] = [ORIGIN_LOCAL]) {
-    this.manager = new Y.UndoManager(doc.nodes, {
+    this.manager = new Y.UndoManager(doc.undoScope, {
       trackedOrigins: new Set(trackedOrigins),
       captureTimeout: 0,
     });

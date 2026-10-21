@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test('mobile overrides apply when the artboard is at most 600px wide', async ({ page }) => {
   await page.goto('/?ephemeral');
   await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
-  const section = page.locator('section').first();
+  const section = page.locator('.gf-artboard-host section').first();
   const columns = () => section.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
   expect(await columns()).toBe(2);
 
@@ -28,7 +28,7 @@ test('mobile overrides apply when the artboard is at most 600px wide', async ({ 
 test('tablet overrides apply up to 1024px and mobile wins below 600px; presets resize the artboard', async ({ page }) => {
   await page.goto('/?ephemeral');
   await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
-  const section = page.locator('section').first();
+  const section = page.locator('.gf-artboard-host section').first();
   const gap = () => section.evaluate((el) => getComputedStyle(el).columnGap);
   const base = await gap();
   await page.evaluate(() => {
