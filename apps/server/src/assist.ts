@@ -3,7 +3,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AgentIdentity, AgentRoster } from './agents';
 import { ROOM_NAME, type RoomRegistry } from './room';
-import { SERVER_INSTRUCTIONS, compact, createMcpServer } from './tools';
+import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from './tools';
 
 /**
  * In-editor assistant backed by a local model (Ollama). Each editor tab gets
@@ -20,6 +20,8 @@ const HISTORY_TURNS = 6;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
 /** Filled in by the assistant, so small models never have to get them right. */
 const INJECTED_ARGS = ['doc', 'model'];
+/** Not offered to local models: they can't see images, and the skill would fill a small context. */
+const EXCLUDED_TOOLS = new Set(['read_skill', 'get_screenshot']);
 
 export const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -114,6 +116,7 @@ export class Assistant {
     private readonly rooms: RoomRegistry,
     private readonly roster: AgentRoster,
     readonly ollamaUrl: string,
+    private readonly services: ToolServices,
   ) {
     this.sweep = setInterval(() => {
       for (const [id, s] of this.sessions) if (!s.busy && Date.now() - s.lastSeen > SESSION_IDLE_MS) this.end(id);
@@ -138,7 +141,7 @@ export class Assistant {
     const existing = this.sessions.get(id);
     if (existing) return existing;
     const identity = this.roster.next();
-    const mcp = createMcpServer(this.rooms, identity);
+    const mcp = createMcpServer(this.rooms, identity, this.services);
     const client = new Client({ name: 'Weft Assist', version: '0.1.0' });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await mcp.connect(serverSide);
@@ -148,7 +151,7 @@ export class Assistant {
       identity,
       mcp,
       client,
-      tools: tools.map((t) => toOllamaTool(t as Parameters<typeof toOllamaTool>[0])),
+      tools: tools.filter((t) => !EXCLUDED_TOOLS.has(t.name)).map((t) => toOllamaTool(t as Parameters<typeof toOllamaTool>[0])),
       history: [],
       lastSeen: Date.now(),
       busy: false,
@@ -168,7 +171,7 @@ export class Assistant {
       : 'Nothing is selected. Call get_canvas to see the document.';
     return `${SERVER_INSTRUCTIONS}
 
-You are the assistant built into the Weft editor, running on a local model. The "doc" and "model" arguments are filled in for you: never pass them.
+You are the assistant built into the Weft editor, running on a local model. The "doc" and "model" arguments are filled in for you: never pass them. read_skill and get_screenshot aren't available here: skip those steps.
 Make the change the user asks for with as few tool calls as possible, batching nodes into one create_nodes or update_nodes call. Use node ids exactly as given. When done, reply in one or two short sentences saying what you changed. Do not paste JSON back to the user.
 
 ${selection}`;

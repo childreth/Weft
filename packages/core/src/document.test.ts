@@ -378,3 +378,29 @@ describe('validation', () => {
     expect(() => doc.createNode({ type: 'frame', styles: { colr: 'x', bg: 'y' } as never, attributes: { onclick: 'x' } })).toThrow(/3 problems/);
   });
 });
+
+describe('exportArtboardHTML', () => {
+  it('renders the tree with tokens, reset, escaped content and @media breakpoints', async () => {
+    const { exportArtboardHTML } = await import('./export');
+    const doc = new GridDocument();
+    const board = doc.createNode({ type: 'frame', tag: 'main', name: 'Page <1>', frame: { x: 0, y: 0, width: 800, height: 600, heightMode: 'hug' } });
+    const h1 = doc.createNode({ type: 'frame', tag: 'h1', parentId: board, styles: { fontSize: '40px' }, breakpoints: { mobile: { fontSize: '28px' } } });
+    doc.createNode({ type: 'text', tag: 'span', parentId: h1, text: '<script>alert(1)</script> & co' });
+    doc.createNode({ type: 'text', tag: 'a', parentId: board, text: 'x', attributes: { href: '/a?b="c"' } });
+    const gone = doc.createNode({ type: 'text', parentId: board, text: 'hidden' });
+    doc.updateNode(gone, { hidden: true });
+
+    const html = exportArtboardHTML(doc, board);
+    expect(html).toContain('<title>Page &lt;1&gt;</title>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; co');
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('href="/a?b=&quot;c&quot;"');
+    expect(html).toContain(`<h1 data-gf-id="${h1}" style="font-size: 40px">`);
+    expect(html).toMatch(/@media \(max-width: 600px\)[\s\S]*font-size: 28px !important/);
+    expect(html).toContain('.weft-artboard { width: 800px; height: auto;');
+    expect(html).toMatch(/--space-4:/);
+    expect(html).toContain('display: none');
+    expect(exportArtboardHTML(doc, board, { width: 390 })).toContain('width: 390px');
+    expect(() => exportArtboardHTML(doc, h1)).toThrow(/not an artboard/);
+  });
+});
