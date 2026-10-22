@@ -55,7 +55,7 @@ describe('MCP tools', () => {
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
         'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes',
-        'search_fonts', 'add_fonts', 'remove_fonts',
+        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');
@@ -419,6 +419,25 @@ describe('sync relay', () => {
     await fresh.callTool({ name: 'read_skill', arguments: { path: 'style.md' } });
     expect((await create()).note).toBeUndefined();
     await fresh.close();
+  });
+
+  it('searches icons and warns about icons the font cannot draw', async () => {
+    const found = await call('search_icons', { query: 'heart', limit: 5 });
+    expect(found.data.icons.map((i: { name: string }) => i.name)).toContain('favorite');
+    expect(found.data.node.styles.fontFamily).toBe('var(--font-family-material-symbols-outlined)');
+
+    const room = server.rooms.get('icons');
+    const [page] = room.doc.getTree();
+    const icon = (text: string) => ({ ...found.data.node, text });
+    const before = await call('create_nodes', { doc: 'icons', parentId: page!.id, nodes: [icon('search'), icon('chevron_down')] });
+    expect(before.data.warnings[0]).toContain('add_fonts');
+    expect(before.data.warnings[1]).toContain('"chevron_down" isn\'t a Material Symbols icon');
+    await call('add_fonts', { doc: 'icons', fonts: [{ family: 'Material Symbols Outlined' }] });
+    expect(room.doc.getFonts()).toContainEqual({ family: 'Material Symbols Outlined', weights: [400] });
+    const after = await call('create_nodes', { doc: 'icons', parentId: page!.id, nodes: [icon('expand_more')] });
+    expect(after.data.warnings).toBeUndefined();
+    const fixed = await call('update_nodes', { doc: 'icons', updates: [{ id: before.data.created[1].id, text: 'expand_more' }] });
+    expect(fixed.data.warnings).toBeUndefined();
   });
 
   it('remembers the style guide read for a client without a session (a fresh server per request)', async () => {

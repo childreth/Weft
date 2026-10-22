@@ -108,9 +108,19 @@ export function DocumentFonts() {
       {fonts.length === 0 && !adding && <p className="gf-font-meta">Google Fonts used by this document appear here, each as a font-family token.</p>}
       {fonts.map((f) => (
         <div key={f.family} className="gf-font-row" data-testid="document-font">
-          <span className="gf-font-sample" style={{ fontFamily: `"${f.family}", ${findFont(f.family)?.category === 'serif' ? 'serif' : 'sans-serif'}` }}>
-            {f.family}
-          </span>
+          {findFont(f.family)?.category === 'icons' ? (
+            // An icon font would draw its own name as icons: show the name plainly, then one of its icons.
+            <span className="gf-font-sample">
+              {f.family}{' '}
+              <span aria-hidden="true" style={{ fontFamily: `"${f.family}"`, letterSpacing: 'normal' }}>
+                star
+              </span>
+            </span>
+          ) : (
+            <span className="gf-font-sample" style={{ fontFamily: `"${f.family}", ${findFont(f.family)?.category === 'serif' ? 'serif' : 'sans-serif'}` }}>
+              {f.family}
+            </span>
+          )}
           <span className="gf-font-meta" title={fontVar(f.family)}>
             {f.weights.join(' ')}
           </span>
