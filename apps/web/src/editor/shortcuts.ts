@@ -1,7 +1,7 @@
 import type { Alignment, Axis } from '@weft/core';
 import { doc, history, run, scene } from './editor';
 import { useEditor } from './store';
-import { zoomBy, zoomTo, zoomToFit } from './viewport';
+import { zoomBy, zoomTo, zoomToFit, zoomToSelection } from './viewport';
 
 const ALIGN_KEYS: Record<string, Alignment> = {
   KeyA: 'left', KeyH: 'center', KeyD: 'right', KeyW: 'top', KeyV: 'middle', KeyS: 'bottom',
@@ -42,9 +42,9 @@ function onKeyDown(e: KeyboardEvent) {
   }
   if (mod && (key === '=' || key === '+')) return void (e.preventDefault(), zoomBy(1.25));
   if (mod && key === '-') return void (e.preventDefault(), zoomBy(0.8));
-  if (mod && key === '0') return void (e.preventDefault(), zoomTo(1));
+  if (mod && key === '0') return void (e.preventDefault(), zoomTo(1, state.selection));
   if (e.shiftKey && e.code === 'Digit1') return void (e.preventDefault(), zoomToFit());
-  if (e.shiftKey && e.code === 'Digit2') return void (e.preventDefault(), zoomToFit(state.selection));
+  if (e.shiftKey && e.code === 'Digit2') return void (e.preventDefault(), zoomToSelection(state.selection));
   if (mod && key === 'd') {
     e.preventDefault();
     const copies = run(() => doc.transact(() => outermost(state.selection).map((id) => doc.duplicateNode(id))));

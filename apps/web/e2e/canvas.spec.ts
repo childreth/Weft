@@ -151,3 +151,32 @@ test('screenshot', async ({ page }) => {
   await page.locator('h1').click();
   await page.screenshot({ path: 'test-results/m1-editor.png' });
 });
+
+test('⌘0 zooms to 100% centred on the selection; ⇧2 fits any selected layer', async ({ page }) => {
+  await open(page);
+  const ids = await page.evaluate(() => Object.fromEntries(window.weft.doc.getNodes().map((n) => [n.name, n.id])) as Record<string, string>);
+  // Centre of an artboard's rendered box, relative to the canvas centre (0 = centred).
+  const offCentre = (id: string) =>
+    page.evaluate((id) => {
+      const canvas = document.querySelector('[data-canvas]')!.getBoundingClientRect();
+      const box = document.querySelector(`[data-artboard-id="${id}"]`)!.getBoundingClientRect();
+      return { x: box.left + box.width / 2 - (canvas.left + canvas.width / 2), y: box.top + box.height / 2 - (canvas.top + canvas.height / 2) };
+    }, id);
+
+  const board = ids['Landing — Desktop']!;
+  await page.evaluate((s) => window.weft.editor.getState().select(s), [board]);
+  await page.evaluate(() => window.weft.editor.getState().setCamera({ x: -2000, y: -1500, zoom: 0.3 }));
+  await page.keyboard.press('ControlOrMeta+0');
+  expect(await page.evaluate(() => window.weft.editor.getState().camera.zoom)).toBe(1);
+  const centred = await offCentre(board);
+  expect(Math.abs(centred.x)).toBeLessThan(2);
+  expect(Math.abs(centred.y)).toBeLessThan(2);
+
+  // ⇧2 on a card inside the artboard fits that card, zooming in past 100%.
+  const card = await page.evaluate(() => window.weft.doc.getNodes().find((n) => n.tag === 'article')!.id);
+  await page.evaluate((s) => window.weft.editor.getState().select(s), [card]);
+  await page.evaluate(() => window.weft.editor.getState().setCamera({ x: 0, y: 0, zoom: 0.25 }));
+  await page.keyboard.press('Shift+Digit2');
+  expect(await page.evaluate(() => window.weft.editor.getState().camera.zoom)).toBeGreaterThan(1);
+  await page.screenshot({ path: 'test-results/m3-zoom-selection.png' });
+});
