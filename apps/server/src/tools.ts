@@ -25,6 +25,7 @@ import {
   throwIssues,
   treeIssues,
   flattenTokens,
+  readWeftFile,
   type ArtboardFrame,
   type BreakpointStyles,
   type NodePatch,
@@ -788,6 +789,56 @@ export function createMcpServer(
         report.action = `Removing ${families.join(', ')}`;
         return { removed: families, fonts: room.doc.getFonts() };
       });
+    },
+  );
+
+  server.registerTool(
+    'import_file',
+    {
+      title: 'Import a Weft file',
+      description:
+        "Adds the artboards from a saved Weft document (the JSON of a .weft or .weft.json file) to this document, beside the existing ones, with its fonts. One atomic, undoable step. Returns the new artboard ids.",
+      inputSchema: {
+        doc: docParam,
+        json: z.string().max(20_000_000).describe('The file contents'),
+        model: modelParam,
+      },
+    },
+    async ({ doc, json, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'import_file', (touched, report) => {
+        const ids = room.doc.importFile(readWeftFile(json), agent.identity.origin);
+        Object.assign(report, { kind: 'create', roots: ids, flash: ids, focus: ids, action: `Importing ${plural(ids.length, 'artboard')}` });
+        ids.forEach((id) => touched.add(id));
+        return { created: ids };
+      });
+    },
+  );
+
+  server.registerTool(
+    'export_html',
+    {
+      title: 'Export an artboard as HTML',
+      description:
+        'Returns an artboard as a standalone HTML page: tokens, reset, styles, and breakpoints as @media rules, with the document\'s Google Fonts linked. The same page get_screenshot renders. Use it when the user wants the code.',
+      inputSchema: {
+        doc: docParam,
+        id: z.string().optional().describe('Artboard id; defaults to the first artboard'),
+        model: modelParam,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ doc, id, model }) => {
+      try {
+        const { room, agent } = open(doc, model);
+        const targetId = id ?? room.doc.getChildren(null)[0]?.id;
+        if (!targetId) return fail('This document has no artboards');
+        agent.look([targetId], `Exporting ${nameOf(room, targetId)}`);
+        return { content: [{ type: 'text', text: exportArtboardHTML(room.doc, targetId) }] };
+      } catch (err) {
+        if (err instanceof GridError) return fail(err.message);
+        throw err;
+      }
     },
   );
 

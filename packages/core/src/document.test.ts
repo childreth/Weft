@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard, styleIssues, treeIssues } from './document';
+import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard, readWeftFile, styleIssues, treeIssues } from './document';
 import { History } from './history';
 import { seedLandingPage } from './seed';
 import { compileTokensCSS, flattenTokens } from './tokens';
@@ -342,6 +342,47 @@ describe('clipboard', () => {
     expect(() => doc.insertTrees(evil, { parentId: root })).toThrow(/Event handler/);
     expect(doc.getNodes()).toHaveLength(before);
     expect(() => doc.insertTrees(readClipboard(payload([{ type: 'text', styles: { color: 'red; x: url(y)' }, children: [] }])), { parentId: root })).toThrow(/forbidden/);
+  });
+});
+
+describe('weft files', () => {
+  it('round-trips a document: artboards beside the existing ones, fonts, one undo step', () => {
+    const source = new GridDocument();
+    seedLandingPage(source);
+    source.addFonts([{ family: 'Inter', weights: [400, 700] }]);
+    const [page] = source.getTree();
+    const json = JSON.stringify(source.toSnapshot());
+
+    const doc = new GridDocument();
+    const history = new History(doc);
+    const mine = artboard(doc);
+    const [id] = doc.importFile(readWeftFile(json));
+    const [copy] = doc.getTree(id!);
+    expect(copy!.id).not.toBe(page!.id);
+    expect(copy!.name).toBe(page!.name);
+    expect(JSON.stringify(copy!.children.map((c) => c.name))).toBe(JSON.stringify(page!.children.map((c) => c.name)));
+    expect(copy!.frame!.x).toBeGreaterThan(doc.getNode(mine)!.frame!.x);
+    expect(doc.getFonts()).toEqual([{ family: 'Inter', weights: [400, 700] }]);
+
+    history.undo();
+    expect(doc.getChildren(null).map((n) => n.id)).toEqual([mine]);
+    expect(doc.getFonts()).toEqual([]);
+  });
+
+  it('rejects bad files without changing anything, and drops unknown fonts', () => {
+    const doc = new GridDocument();
+    const file = (nodes: unknown[], fonts?: unknown[]) => JSON.stringify({ format: 'weft', version: 1, nodes, fonts });
+    const board = { id: 'a', type: 'frame', tag: 'main', name: 'A', parentId: null, index: 'a0', styles: {}, attributes: {}, frame: { x: 0, y: 0, width: 100, height: 100 } };
+    expect(() => readWeftFile('nope')).toThrow(/Not a Weft file/);
+    expect(() => readWeftFile(JSON.stringify({ format: 'weft-clipboard', version: 1, nodes: [] }))).toThrow(/Not a Weft file/);
+    expect(() => readWeftFile(file([{ ...board, frame: undefined }]))).toThrow(/not an artboard/);
+    expect(() => readWeftFile(file([{ ...board, type: 'script' }]))).toThrow(/Malformed/);
+    const evil = readWeftFile(file([board, { ...board, id: 'b', parentId: 'a', type: 'text', tag: 'p', frame: undefined, styles: { color: 'red; x: url(y)' } }]));
+    expect(() => doc.importFile(evil)).toThrow(/forbidden/);
+    expect(doc.getChildren(null)).toEqual([]);
+    // A cycle is never reached from the roots.
+    expect(readWeftFile(file([board, { ...board, id: 'x', parentId: 'y', frame: undefined }, { ...board, id: 'y', parentId: 'x', frame: undefined }])).artboards).toHaveLength(1);
+    expect(readWeftFile(file([board], [{ family: 'Not A Font' }, { family: 'inter', weights: [400, 999] }])).fonts).toEqual([{ family: 'Inter', weights: [400] }]);
   });
 });
 

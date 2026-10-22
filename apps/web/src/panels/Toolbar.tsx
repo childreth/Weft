@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { history, scene } from '../editor/editor';
+import { openDocument, saveDocument } from '../editor/files';
 import { useEditor, type Tool } from '../editor/store';
 import { zoomTo, zoomToFit } from '../editor/viewport';
 import { RemoteAccess } from './RemoteAccess';
@@ -42,6 +43,14 @@ export function Toolbar() {
             {t.label}
           </button>
         ))}
+      </div>
+      <div className="gf-tool-group" role="group" aria-label="File">
+        <button className="gf-tool" onClick={saveDocument} title="Download this document as a .weft file">
+          Save
+        </button>
+        <button className="gf-tool" onClick={openDocument} title="Add the artboards from a .weft file to this document">
+          Open…
+        </button>
       </div>
       <div className="gf-tool-group">
         <button className="gf-tool" disabled={!history.canUndo()} onClick={() => history.undo()} title="Undo (⌘Z)">
