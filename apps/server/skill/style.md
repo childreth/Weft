@@ -75,6 +75,7 @@ Copy is a design decision: a headline that needs four lines can't be rescued by 
 - Avoid the genre's words (unlock, supercharge, seamless, effortless, elevate, empower, cutting-edge, all-in-one), the correction ("not just X, it's Y"), tricolons ("Fast. Simple. Secure."), and em dashes as a habit.
 - Buttons name the action in one to three words ("Book a table", "See plans"), not "Get started" or "Learn more". One primary button per screen; a second action is a text link.
 - Never invent customers, named quotes, press logos, user counts or ratings. Sample data (prices, times, health numbers) is fine and expected, so the design shows at its real density, but say in your reply that it's sample data.
+- Text from a reference or the user stays exactly as given: its wording, case and punctuation. These copy rules apply only to text you write.
 - Sentence case. Curly quotes and apostrophes, an en dash for ranges (9–5), a real ellipsis (…).
 
 ## Accessibility

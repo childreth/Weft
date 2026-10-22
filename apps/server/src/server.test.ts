@@ -129,7 +129,7 @@ describe('MCP tools', () => {
     expect(brief.text.length).toBeLessThan(full.text.length / 2);
     expect(brief.text).not.toContain('styles');
     const [page] = brief.data.nodes;
-    expect(page).toMatchObject({ tag: 'main', frame: { width: expect.any(Number) } });
+    expect(page).toMatchObject({ tag: 'main', frame: { x: expect.any(Number), y: expect.any(Number), width: expect.any(Number) } });
     expect(JSON.stringify(page)).toContain('Design in the browser');
   });
 
@@ -419,6 +419,21 @@ describe('sync relay', () => {
     await fresh.callTool({ name: 'read_skill', arguments: { path: 'style.md' } });
     expect((await create()).note).toBeUndefined();
     await fresh.close();
+  });
+
+  it('remembers the style guide read for a client without a session (a fresh server per request)', async () => {
+    const post = async (id: number, name: string, args: Record<string, unknown>) => {
+      const res = await fetch(`${server.httpUrl}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }),
+      });
+      return (await res.json()) as { result: { content: Array<{ text: string }> } };
+    };
+    const nodes = [{ type: 'frame', tag: 'main', name: 'Page', frame: { width: 390 } }];
+    await post(1, 'read_skill', {});
+    const created = await post(2, 'create_nodes', { doc: 'remind-stateless', nodes });
+    expect(JSON.parse(created.result.content[0]!.text).note).toBeUndefined();
   });
 
   it('gives each agent session its own cursor, model label and undo stack', async () => {

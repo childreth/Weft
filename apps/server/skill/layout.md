@@ -41,12 +41,13 @@ Use `header`, `nav`, `section`, `article`, `aside` and `footer` for what they ar
 - **Card:** frame `article`, column flex, `gap`, `padding`, and either a border or a background, not both plus a shadow.
 - **Nav:** frame `nav` row of text `a` nodes with `href` attributes.
 - **Horizontal scroller** (chips, carousels): row flex with `overflow: auto` and `flexShrink: 0` on items.
+- **Lists** (`ul`/`ol` of cards, chips or links): the browser's bullets and indent show by default. Set `listStyle: none` and `padding: 0` on the list.
 - **Label and value pairs** (specs, profile details): `dl` with `dt`/`dd` children, as a grid (`gridTemplateColumns: auto 1fr`).
 - **Data tables:** `table` → `thead`/`tbody` → `tr` → `th`/`td` text nodes. Use a table only for real tabular data, not for layout.
 
 ## Responsive
 
-Design desktop first, then check `get_screenshot` with `width: 390`. Typical mobile overrides: grids to `1fr`, rows to `flexDirection: column`, smaller `padding` and `gap`, smaller heading `fontSize`. Put them on the node that needs them, in `breakpoints.mobile` (or `tablet`).
+Design desktop first, then check `get_screenshot` with `width: 390`. Typical mobile overrides: grids to `1fr`, rows to `flexDirection: column`, smaller `padding` and `gap`, smaller heading `fontSize`. Put them on the node that needs them, in `breakpoints.mobile` (or `tablet`). If you hide the nav links on mobile, add a menu `button` with `aria-label: "Menu"` that's hidden on desktop and shown in `breakpoints.mobile`, so the links stay reachable.
 
 ## Avoid
 

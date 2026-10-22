@@ -13,6 +13,8 @@ export const AGENT_COLORS = ['#a855f7', '#14b8a6', '#6366f1', '#e8833a', '#ec489
 export class AgentIdentity {
   private model: string | null = null;
   client: string | null = null;
+  /** Read the design skill's style guide. Kept here, not per MCP server, because sessionless clients get a fresh server per request. */
+  readStyleGuide = false;
   readonly presences = new Set<AgentPresence>();
 
   constructor(

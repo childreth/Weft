@@ -118,7 +118,7 @@ export function outline(tree: SceneTree, depth: number): Record<string, unknown>
   // Text layers are usually named after their text; don't send it twice.
   if (tree.text === undefined || !tree.text.startsWith(tree.name)) out.name = tree.name;
   if (tree.text !== undefined) out.text = tree.text.length > OUTLINE_TEXT ? `${tree.text.slice(0, OUTLINE_TEXT)}…` : tree.text;
-  if (tree.frame) out.frame = { width: tree.frame.width, heightMode: tree.frame.heightMode ?? 'fixed' };
+  if (tree.frame) out.frame = { x: tree.frame.x, y: tree.frame.y, width: tree.frame.width, heightMode: tree.frame.heightMode ?? 'fixed' };
   if (tree.hidden) out.hidden = true;
   if (tree.children.length) {
     if (depth > 0) out.children = tree.children.map((c) => outline(c, depth - 1));
@@ -281,10 +281,9 @@ export function createMcpServer(
   { remindSkill = true }: McpServerOptions = {},
 ): McpServer {
   const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
-  /** Whether this session has read the style guide (the whole skill, or style.md). */
-  let readStyle = false;
+  /** Reading the whole skill, or style.md, counts as reading the style guide. */
   const markRead = (path?: string) => {
-    if (path === undefined || path.replace(/^\.\//, '') === 'style.md') readStyle = true;
+    if (path === undefined || path.replace(/^\.\//, '') === 'style.md') identity.readStyleGuide = true;
   };
 
   server.registerTool(
@@ -407,7 +406,7 @@ export function createMcpServer(
             ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, parentId)}`
             : `Creating ${created.map((c) => c.name).join(', ')}`,
         });
-        return remindSkill && !readStyle ? { created, note: SKILL_REMINDER } : { created };
+        return remindSkill && !identity.readStyleGuide ? { created, note: SKILL_REMINDER } : { created };
       });
     },
   );
