@@ -52,7 +52,7 @@ Model:
 
 Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
 
-Before designing or restyling anything, call read_skill once: it is Weft's design guide (layout recipes, style rules, how to check your work).
+Before designing or restyling anything, call read_skill with no path: it returns Weft's whole design guide (layout recipes, style and taste rules, how to check your work). Read it again when you start a new design.
 
 Workflow: get_selection or get_canvas (detail "outline" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile) → select_nodes to show the user what you changed.`;
 
@@ -118,7 +118,7 @@ export function outline(tree: SceneTree, depth: number): Record<string, unknown>
   // Text layers are usually named after their text; don't send it twice.
   if (tree.text === undefined || !tree.text.startsWith(tree.name)) out.name = tree.name;
   if (tree.text !== undefined) out.text = tree.text.length > OUTLINE_TEXT ? `${tree.text.slice(0, OUTLINE_TEXT)}…` : tree.text;
-  if (tree.frame) out.frame = { width: tree.frame.width, heightMode: tree.frame.heightMode ?? 'fixed' };
+  if (tree.frame) out.frame = { x: tree.frame.x, y: tree.frame.y, width: tree.frame.width, heightMode: tree.frame.heightMode ?? 'fixed' };
   if (tree.hidden) out.hidden = true;
   if (tree.children.length) {
     if (depth > 0) out.children = tree.children.map((c) => outline(c, depth - 1));
@@ -266,20 +266,39 @@ export interface ToolServices {
 /** Where rendered pages fetch fonts from; the renderer answers these itself from the cache. */
 const RENDER_FONTS = 'https://fonts.weft.invalid';
 
-export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, services: ToolServices): McpServer {
+/** `remindSkill`: nudge an agent that creates nodes without having read the style guide (off where read_skill isn't offered). */
+export interface McpServerOptions {
+  remindSkill?: boolean;
+}
+
+const SKILL_REMINDER =
+  "You haven't read Weft's style guide this session. Call read_skill (no path) before styling further: it covers color, type, composition and the generic looks to avoid.";
+
+export function createMcpServer(
+  rooms: RoomRegistry,
+  identity: AgentIdentity,
+  services: ToolServices,
+  { remindSkill = true }: McpServerOptions = {},
+): McpServer {
   const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
+  /** Reading the whole skill, or style.md, counts as reading the style guide. */
+  const markRead = (path?: string) => {
+    if (path === undefined || path.replace(/^\.\//, '') === 'style.md') identity.readStyleGuide = true;
+  };
 
   server.registerTool(
     'read_skill',
     {
       title: 'Read the Weft design skill',
-      description: `Weft's design guide: how to build good pages on this canvas. Call with no path first (SKILL.md), then read the files it points to. Files: ${[...skillFiles().keys()].join(', ')}.`,
-      inputSchema: { path: z.string().optional().describe('A file from the skill, e.g. "layout.md"; omit for SKILL.md') },
+      description: `Weft's design guide: how to build good pages on this canvas. Call it with no path before designing: that returns the whole guide (${[...skillFiles().keys()].join(', ')}) in one text. Pass a path to reread one file.`,
+      inputSchema: { path: z.string().optional().describe('One file from the skill, e.g. "style.md"; omit for the whole guide') },
       annotations: { readOnlyHint: true },
     },
     async ({ path }) => {
       try {
-        return { content: [{ type: 'text', text: readSkill(path) }] };
+        const text = readSkill(path);
+        markRead(path);
+        return { content: [{ type: 'text', text }] };
       } catch (err) {
         return fail((err as Error).message);
       }
@@ -290,7 +309,10 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
       `skill-${name.replace(/\.md$/, '')}`,
       `weft://skill/${name}`,
       { title: `Weft design skill: ${name}`, mimeType: 'text/markdown' },
-      async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: readSkill(name) }] }),
+      async (uri) => {
+        markRead(name);
+        return { contents: [{ uri: uri.href, mimeType: 'text/markdown', text: readSkill(name) }] };
+      },
     );
   }
 
@@ -384,7 +406,7 @@ export function createMcpServer(rooms: RoomRegistry, identity: AgentIdentity, se
             ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, parentId)}`
             : `Creating ${created.map((c) => c.name).join(', ')}`,
         });
-        return { created };
+        return remindSkill && !identity.readStyleGuide ? { created, note: SKILL_REMINDER } : { created };
       });
     },
   );

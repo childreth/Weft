@@ -127,6 +127,8 @@ export const STYLE_PROP_META = {
   fontStyle: { group: 'type', options: ['normal', 'italic'] },
   whiteSpace: { group: 'type', options: ['normal', 'nowrap', 'pre', 'pre-wrap', 'pre-line'] },
   textOverflow: { group: 'type', options: ['clip', 'ellipsis'] },
+  fontVariantNumeric: { group: 'type', options: ['normal', 'tabular-nums', 'oldstyle-nums', 'lining-nums'] },
+  listStyle: { group: 'type', options: ['none', 'disc', 'decimal'] },
   boxShadow: { group: 'effects', tokenGroups: ['shadow'] },
   overflow: { group: 'effects', options: ['visible', 'hidden', 'auto', 'clip'] },
   transform: { group: 'effects' },

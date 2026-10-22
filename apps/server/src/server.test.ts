@@ -68,7 +68,12 @@ describe('MCP tools', () => {
     expect(skill.text).toContain('# Designing in Weft');
     expect(skill.text).toContain('marginTop');
     expect(skill.text).not.toMatch(/\{\{\w+\}\}/);
-    expect((await call('read_skill', { path: 'layout.md' })).text).toContain('# Layout recipes');
+    // No path is the whole guide, so agents can't stop at the overview.
+    expect(skill.text).toContain('# Style and taste');
+    expect(skill.text).toContain('# Checking your work');
+    const layout = (await call('read_skill', { path: 'layout.md' })).text;
+    expect(layout).toContain('# Layout recipes');
+    expect(layout).not.toContain('# Designing in Weft');
     const bad = await call('read_skill', { path: '../server.ts' });
     expect(bad.isError).toBe(true);
     expect(bad.text).toContain('Available: SKILL.md');
@@ -124,7 +129,7 @@ describe('MCP tools', () => {
     expect(brief.text.length).toBeLessThan(full.text.length / 2);
     expect(brief.text).not.toContain('styles');
     const [page] = brief.data.nodes;
-    expect(page).toMatchObject({ tag: 'main', frame: { width: expect.any(Number) } });
+    expect(page).toMatchObject({ tag: 'main', frame: { x: expect.any(Number), y: expect.any(Number), width: expect.any(Number) } });
     expect(JSON.stringify(page)).toContain('Design in the browser');
   });
 
@@ -396,6 +401,39 @@ describe('sync relay', () => {
     replica.updateNode(id, { text: 'edited by a person' });
     await until(() => server.rooms.get('sync').doc.getNode(id)?.text === 'edited by a person');
     provider.destroy();
+  });
+
+  it('reminds an agent that creates nodes before reading the style guide, until it reads it', async () => {
+    const fresh = new Client({ name: 'grok', version: '1.0.0' });
+    await fresh.connect(new StreamableHTTPClientTransport(new URL(`${server.httpUrl}/mcp`)));
+    const create = async () => {
+      const res = (await fresh.callTool({
+        name: 'create_nodes',
+        arguments: { doc: 'remind', nodes: [{ type: 'frame', tag: 'main', name: 'Page', frame: { width: 390 } }] },
+      })) as { content: Array<{ text: string }> };
+      return JSON.parse(res.content[0]!.text) as { created: unknown[]; note?: string };
+    };
+    expect((await create()).note).toContain('read_skill');
+    await fresh.callTool({ name: 'read_skill', arguments: { path: 'layout.md' } });
+    expect((await create()).note).toBeDefined();
+    await fresh.callTool({ name: 'read_skill', arguments: { path: 'style.md' } });
+    expect((await create()).note).toBeUndefined();
+    await fresh.close();
+  });
+
+  it('remembers the style guide read for a client without a session (a fresh server per request)', async () => {
+    const post = async (id: number, name: string, args: Record<string, unknown>) => {
+      const res = await fetch(`${server.httpUrl}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }),
+      });
+      return (await res.json()) as { result: { content: Array<{ text: string }> } };
+    };
+    const nodes = [{ type: 'frame', tag: 'main', name: 'Page', frame: { width: 390 } }];
+    await post(1, 'read_skill', {});
+    const created = await post(2, 'create_nodes', { doc: 'remind-stateless', nodes });
+    expect(JSON.parse(created.result.content[0]!.text).note).toBeUndefined();
   });
 
   it('gives each agent session its own cursor, model label and undo stack', async () => {

@@ -31,8 +31,13 @@ export function skillFiles(): Map<string, string> {
   return files;
 }
 
-/** A skill file by name; only files in the skill folder, so no path tricks. */
-export function readSkill(path = 'SKILL.md'): string {
+/**
+ * A skill file by name; only files in the skill folder, so no path tricks.
+ * No path returns the whole guide in one text: agents asked to follow up on
+ * the overview with the other files mostly didn't.
+ */
+export function readSkill(path?: string): string {
+  if (path === undefined) return [...skillFiles().values()].join('\n\n---\n\n');
   const name = path.replace(/^\.\//, '');
   const text = skillFiles().get(name);
   if (text === undefined) throw new Error(`No skill file "${path}". Available: ${[...skillFiles().keys()].join(', ')}`);
