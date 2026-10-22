@@ -12,15 +12,18 @@ You're being evaluated on building a page in Weft, a design canvas where every a
 
 Rebuild the attached reference image as a new artboard in Weft.
 
+If you can't see an attached image, stop and say so. Don't design something else instead.
+
 - Create one new artboard, 1440 wide, named `Eval — <your model name> — <today's date>`. Place it to the right of the existing artboards and don't modify any other artboard.
 - Match the reference as closely as Weft allows: layout, proportions, spacing, type hierarchy, colors.
 - Make it responsive: it should also work at 390px wide (mobile).
 - Use semantic HTML (header, nav, section, h1, button, a, …) and design tokens where they fit.
-- Things Weft can't do yet (photos, icons, web fonts): use a clean placeholder and list them in your report. Don't fake them out of shapes.
+- Fonts: use the reference's typeface if it's a Google Font (`search_fonts`, `add_fonts`), or the closest match, and say which.
+- Things Weft can't do yet (photos, icons, logos): use a clean placeholder and list them in your report. Don't fake them out of shapes.
 
 ## How to work
 
-1. Start with `read_skill` and follow it.
+1. Start with `read_skill` (no path: it returns the whole guide) and follow it. The reference is your design direction, so it overrides the guide's style defaults.
 2. Build section by section. After each section, call `get_screenshot` and compare it with the reference before moving on.
 3. Check mobile with `get_screenshot` at `width: 390` and fix what breaks.
 4. When you're done, call `select_nodes` on the artboard.
@@ -44,6 +47,7 @@ Reply with this report and nothing else after it:
 | Screenshots taken | |
 | Times you rebuilt or deleted something you'd made | |
 | Did you read the skill first? Which files? | |
+| Did any tool reply include a `note`? What did it say? | |
 
 ### 3. Rejections
 For each rejected call: the tool, the error message (shortened), and what you changed.
