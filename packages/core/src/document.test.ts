@@ -446,6 +446,23 @@ describe('exportArtboardHTML', () => {
   });
 });
 
+describe('icons', () => {
+  it('finds Material Symbols names by name and meaning, and adds the icon fonts to the catalog', async () => {
+    const { searchIcons, isIconName, ICON_FONTS } = await import('./icons');
+    const { findFont, defaultWeights, fontStack } = await import('./fonts');
+    expect(searchIcons('search')[0]!.name).toBe('search');
+    expect(searchIcons('heart').map((i) => i.name)).toContain('favorite');
+    expect(searchIcons('pin', 5).map((i) => i.name)).toContain('location_on');
+    expect(searchIcons('chevron down', 10).map((i) => i.name)).toContain('expand_more');
+    expect(searchIcons('', 3)).toHaveLength(3);
+    expect(isIconName('expand_more')).toBe(true);
+    expect(isIconName('chevron_down')).toBe(false);
+    for (const family of ICON_FONTS) expect(findFont(family)?.category).toBe('icons');
+    expect(defaultWeights(findFont('Material Symbols Rounded')!)).toEqual([400]);
+    expect(fontStack('Material Symbols Outlined')).toEqual(['"Material Symbols Outlined"']);
+  });
+});
+
 describe('fonts', () => {
   it('searches the bundled catalog and builds tokens and Google URLs', async () => {
     const { searchFonts, findFont, fontSlug, withFontTokens, googleFontsCSSUrl, encodeFontQuery, decodeFontQuery } = await import('./fonts');

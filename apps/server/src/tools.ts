@@ -13,6 +13,10 @@ import {
   defaultTokens,
   exportArtboardHTML,
   fontSlug,
+  ICON_FONTS,
+  ICON_STYLES,
+  isIconName,
+  searchIcons,
   searchFonts,
   withFontTokens,
   type FontCategory,
@@ -42,7 +46,7 @@ Model:
 - Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
-- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Only the properties listed in create_nodes are allowed, so check that list instead of guessing; pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images and icons aren't supported yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>).
+- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Only the properties listed in create_nodes are allowed, so check that list instead of guessing; pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images aren't supported yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
@@ -194,6 +198,29 @@ function mutate<T>(
     }
     throw err;
   }
+}
+
+/**
+ * Icon nodes the font can't draw: a name that isn't a Material Symbols icon, or
+ * an icon font the document hasn't added. Either way the name shows as text.
+ */
+function iconWarnings(room: Room, ids: Iterable<string>): string[] {
+  const added = new Set(room.doc.getFonts().map((f) => fontSlug(f.family)));
+  const missingFonts = new Set<string>();
+  const warnings: string[] = [];
+  for (const id of ids) {
+    const node = room.doc.getNode(id);
+    const slug = node?.type === 'text' ? /var\(--font-family-(material-symbols-[a-z]+)\)/.exec(node.styles.fontFamily ?? '')?.[1] : undefined;
+    if (!node || !slug) continue;
+    if (!added.has(slug)) missingFonts.add(ICON_FONTS.find((f) => fontSlug(f) === slug) ?? slug);
+    const name = node.text ?? '';
+    if (!isIconName(name)) {
+      const near = searchIcons(name, 3).map((i) => i.name);
+      warnings.push(`${node.name} (${id}): "${name}" isn't a Material Symbols icon, so it shows as text${near.length ? `. Try ${near.join(', ')}` : ''}; search_icons lists the names`);
+    }
+  }
+  for (const family of missingFonts) warnings.unshift(`The document doesn't have ${family} yet: add it with add_fonts, or icons show as their names`);
+  return warnings;
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -407,7 +434,12 @@ export function createMcpServer(
             ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, parentId)}`
             : `Creating ${created.map((c) => c.name).join(', ')}`,
         });
-        return remindSkill && !identity.readStyleGuide ? { created, note: SKILL_REMINDER } : { created };
+        const warnings = iconWarnings(room, touched);
+        return {
+          created,
+          ...(warnings.length && { warnings }),
+          ...(remindSkill && !identity.readStyleGuide && { note: SKILL_REMINDER }),
+        };
       });
     },
   );
@@ -466,7 +498,8 @@ export function createMcpServer(
           room.doc.updateNode(id, patch as NodePatch, agent.identity.origin);
           touched.add(id);
         }
-        return { updated: updates.map((u) => u.id) };
+        const warnings = iconWarnings(room, touched);
+        return { updated: updates.map((u) => u.id), ...(warnings.length && { warnings }) };
       });
     },
   );
@@ -676,6 +709,34 @@ export function createMcpServer(
   );
 
   server.registerTool(
+    'search_icons',
+    {
+      title: 'Search Material Symbols icons',
+      description:
+        'Searches the bundled Material Symbols icon names (works offline) by name or meaning ("heart" finds favorite), most popular first. An icon is a text node whose text is the name, set in an icon font added with add_fonts; the result includes a node to copy.',
+      inputSchema: {
+        query: z.string().optional().describe('What the icon shows, e.g. "search", "heart", "chevron down"; omit for the most popular'),
+        limit: z.number().int().min(1).max(50).default(12),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query, limit }) =>
+      ok({
+        icons: searchIcons(query, limit).map(({ name, tags }) => ({ name, tags })),
+        fonts: ICON_FONTS,
+        node: {
+          type: 'text',
+          tag: 'span',
+          name: 'Icon',
+          text: '<icon name>',
+          styles: { ...ICON_STYLES, fontFamily: `var(--font-family-${fontSlug(ICON_FONTS[0])})` },
+          attributes: { 'aria-hidden': 'true' },
+        },
+        howTo: `Add the font once (add_fonts "${ICON_FONTS[0]}"), then create the node with the icon's name as its text. Set color and fontSize like text. Keep aria-hidden on decorative icons; an icon-only button needs its own aria-label.`,
+      }),
+  );
+
+  server.registerTool(
     'search_fonts',
     {
       title: 'Search Google Fonts',
@@ -683,7 +744,7 @@ export function createMcpServer(
         'Searches the bundled Google Fonts catalog (works offline), most popular first. Returns each family with its category and available weights. Add the ones you use with add_fonts.',
       inputSchema: {
         query: z.string().optional().describe('Part of a family name, e.g. "playfair"; omit for the most popular'),
-        category: z.enum(['sans-serif', 'serif', 'display', 'handwriting', 'monospace']).optional(),
+        category: z.enum(['sans-serif', 'serif', 'display', 'handwriting', 'monospace', 'icons']).optional(),
         limit: z.number().int().min(1).max(50).default(12),
       },
       annotations: { readOnlyHint: true },
