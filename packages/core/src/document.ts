@@ -95,6 +95,7 @@ const ARTBOARD_GAP = 100;
 /** Bounds on pasted clipboard content, which may come from anywhere. */
 const CLIPBOARD_MAX_NODES = 5000;
 const CLIPBOARD_MAX_DEPTH = 64;
+const FILE_MAX_NODES = 50_000;
 
 /** What the editor puts on the clipboard for copied layers. */
 export interface ClipboardPayload {
@@ -104,20 +105,11 @@ export interface ClipboardPayload {
 }
 
 /**
- * Parses clipboard JSON into subtrees, checking only their shape: content is
- * validated by `insertTrees` like any other create.
+ * Checks the shape of layers from outside the document (clipboard, files):
+ * types, nesting and size only. Content is validated by `insertTrees` like any
+ * other create.
  */
-export function readClipboard(json: string): SceneTree[] {
-  let data: unknown;
-  try {
-    data = JSON.parse(json);
-  } catch {
-    throw new GridError('Clipboard does not contain Weft layers');
-  }
-  const payload = data as Partial<ClipboardPayload> | null;
-  if (payload?.format !== 'weft-clipboard' || payload.version !== 1 || !Array.isArray(payload.nodes)) {
-    throw new GridError('Clipboard does not contain Weft layers');
-  }
+function checkLayerShapes(nodes: readonly unknown[], where: string, maxNodes: number): void {
   let count = 0;
   const check = (node: unknown, depth: number): void => {
     const n = node as Partial<SceneTree> | null;
@@ -136,13 +128,85 @@ export function readClipboard(json: string): SceneTree[] {
       !record(n.breakpoints) ||
       !record(n.frame)
     ) {
-      throw new GridError('Malformed layers on the clipboard');
+      throw new GridError(`Malformed layers ${where}`);
     }
-    if (++count > CLIPBOARD_MAX_NODES || depth > CLIPBOARD_MAX_DEPTH) throw new GridError('Too many layers on the clipboard');
+    if (++count > maxNodes || depth > CLIPBOARD_MAX_DEPTH) throw new GridError(`Too many layers ${where}`);
     for (const child of n.children) check(child, depth + 1);
   };
-  for (const node of payload.nodes) check(node, 0);
+  for (const node of nodes) check(node, 0);
+}
+
+/**
+ * Parses clipboard JSON into subtrees, checking only their shape: content is
+ * validated by `insertTrees` like any other create.
+ */
+export function readClipboard(json: string): SceneTree[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new GridError('Clipboard does not contain Weft layers');
+  }
+  const payload = data as Partial<ClipboardPayload> | null;
+  if (payload?.format !== 'weft-clipboard' || payload.version !== 1 || !Array.isArray(payload.nodes)) {
+    throw new GridError('Clipboard does not contain Weft layers');
+  }
+  checkLayerShapes(payload.nodes, 'on the clipboard', CLIPBOARD_MAX_NODES);
   return payload.nodes;
+}
+
+/** A saved document (`.weft`, or the server's `.weft.json`), as artboard trees ready for `importFile`. */
+export interface WeftFile {
+  artboards: SceneTree[];
+  fonts: DocumentFont[];
+}
+
+/**
+ * Parses a saved document. Like the clipboard, it may come from anywhere: this
+ * checks the shape, and `importFile` validates the content. Fonts that this
+ * build's catalog doesn't know are dropped (their text falls back).
+ */
+export function readWeftFile(json: string): WeftFile {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new GridError('Not a Weft file');
+  }
+  const file = data as Partial<Snapshot> | null;
+  const format = file?.format as string | undefined;
+  if ((format !== 'weft' && format !== 'gridforge') || file?.version !== 1 || !Array.isArray(file.nodes)) {
+    throw new GridError('Not a Weft file');
+  }
+  if (file.nodes.length > FILE_MAX_NODES) throw new GridError('Too many layers in the file');
+  const byParent = new Map<string | null, SceneNode[]>();
+  for (const n of file.nodes as unknown[]) {
+    const node = n as Partial<SceneNode> | null;
+    if (!node || typeof node !== 'object' || typeof node.id !== 'string' || typeof node.index !== 'string') {
+      throw new GridError('Malformed layers in the file');
+    }
+    const parentId = typeof node.parentId === 'string' ? node.parentId : null;
+    const list = byParent.get(parentId) ?? [];
+    list.push(node as SceneNode);
+    byParent.set(parentId, list);
+  }
+  // Built from the roots down, so cycles and orphans are never reached.
+  const build = (node: SceneNode): SceneTree => {
+    const { parentId: _parent, index: _index, ...rest } = node;
+    return { ...rest, children: sortSiblings(byParent.get(node.id) ?? []).map(build) };
+  };
+  const artboards = sortSiblings(byParent.get(null) ?? []).map(build);
+  checkLayerShapes(artboards, 'in the file', FILE_MAX_NODES);
+  if (artboards.some((a) => !a.frame)) throw new GridError('Malformed layers in the file: a top-level layer is not an artboard');
+  const fonts: DocumentFont[] = [];
+  for (const f of Array.isArray(file.fonts) ? (file.fonts as unknown[]) : []) {
+    const font = findFont((f as Partial<DocumentFont> | null)?.family ?? '');
+    if (!font) continue;
+    const asked = (f as Partial<DocumentFont>).weights;
+    const weights = Array.isArray(asked) ? asked.filter((w) => font.weights.includes(w)) : [];
+    fonts.push({ family: font.family, weights: weights.length ? weights : defaultWeights(font) });
+  }
+  return { artboards, fonts };
 }
 
 export function readNode(y: YNode): SceneNode {
@@ -800,6 +864,20 @@ export class GridDocument {
     if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
     for (const child of node.children) this.copyTree(child, newId, null, {}, origin);
     return newId;
+  }
+
+  /**
+   * Adds a saved document's artboards beside the existing ones, with its fonts,
+   * as one undoable step. Everything is validated before anything changes.
+   * Returns the new artboard ids.
+   */
+  importFile(file: WeftFile, origin: Origin = ORIGIN_LOCAL): string[] {
+    if (file.artboards.length === 0) throw new GridError('The file has no artboards');
+    throwIssues(treeIssues(file.artboards));
+    return this.transact(() => {
+      if (file.fonts.length) this.addFonts(file.fonts, origin);
+      return this.insertTrees(file.artboards, { parentId: null }, origin);
+    }, origin);
   }
 
   toSnapshot(): Snapshot {

@@ -15,6 +15,7 @@ import {
 import { artboardHeight } from '../canvas/elements';
 import { doc, history, recordHugHeight, run, updateArtboardFrame, useNode } from '../editor/editor';
 import { useDocFonts, useDocTokens, useFlatTokens } from '../editor/fonts';
+import { exportArtboard } from '../editor/files';
 import { useEditor } from '../editor/store';
 import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
@@ -166,6 +167,16 @@ function NodeInspector({ id }: { id: string }) {
                 + {p.label}
               </button>
             ))}
+          </div>
+          <div className="gf-presets" role="group" aria-label="Export">
+            <button
+              type="button"
+              className="gf-input gf-preset"
+              title="Download this artboard as a standalone HTML page"
+              onClick={() => exportArtboard(id)}
+            >
+              Export HTML
+            </button>
           </div>
         </Section>
       )}

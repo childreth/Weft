@@ -4,6 +4,7 @@ import {
   GridError,
   History,
   ORIGIN_AGENT,
+  readWeftFile,
   seedLandingPage,
   type Alignment,
   type ArtboardFrame,
@@ -114,6 +115,7 @@ export const agentApi = {
     doc.duplicateNode(id, options, ORIGIN_AGENT),
   alignNodes: (ids: string[], align: Alignment) => doc.alignNodes(ids, align, ORIGIN_AGENT),
   distributeNodes: (ids: string[], axis: Axis) => doc.distributeNodes(ids, axis, ORIGIN_AGENT),
+  importFile: (json: string) => doc.importFile(readWeftFile(json), ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),
 };
 

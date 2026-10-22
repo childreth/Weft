@@ -23,6 +23,8 @@ URL parameters:
 | `?offline` | Browser-only document stored in IndexedDB, no server |
 | `?ephemeral` | Fresh in-memory seed (used by tests) |
 
+**Files:** **Save** in the toolbar downloads the document as `<doc>.weft` (the same JSON the server keeps in `.weft-data/`). **Open…** adds the artboards from a `.weft` or `.weft.json` file to the current document, beside the existing ones, with their fonts, as one undo step; malformed files are rejected without changing anything. **Export HTML** (Inspector, with an artboard selected) downloads that artboard as a standalone page with its breakpoints as `@media` rules. Exported pages link Google Fonts, so fonts need a network until font bundling lands.
+
 ![The Weft editor: layers, a dark-mode mobile dashboard artboard with an agent cursor, and the Inspector](docs/images/editor.jpg)
 
 ## Connect an AI agent (MCP)
@@ -54,6 +56,8 @@ The repo's `.mcp.json` already registers it for Claude Code. Agents are told to 
 | `delete_nodes` | Delete nodes and descendants |
 | `undo_agent_change` | Revert that agent's last call |
 | `select_nodes` | Select and zoom to nodes in every open editor |
+| `export_html` | An artboard as a standalone HTML page (the page `get_screenshot` renders) |
+| `import_file` | Add the artboards (and fonts) from a saved `.weft` document's JSON, beside the existing ones, in one undoable step |
 
 ### Remote agents (e.g. Muse, GrokBot)
 
@@ -117,13 +121,17 @@ Documents persist to `.weft-data/` (`<name>.ydoc` plus a readable `<name>.weft.j
   - [ ] Design lint: run checks like [Impeccable](https://impeccable.style/)'s detector against rendered artboards (real HTML/CSS) and report issues to agents and in the editor
 - [ ] Components and variants
 - [ ] Multiplayer beyond local; hosted server (per-token document scoping, rate limits)
-- [ ] Code export (HTML/CSS with the artboard reset and `@media` breakpoints)
+- [ ] Code export
+  - [x] Export an artboard as a standalone HTML page (Inspector button, `export_html` tool), with the artboard reset and `@media` breakpoints
+  - [x] Save and open documents as `.weft` files
+  - [ ] Bundle font files into export (a zip) so exported pages work offline; class-based CSS instead of inline styles
 - [x] Google Fonts: searchable typeface picker from a bundled catalog (no API key); a document-level font list (synced, undoable, MCP tool) that generates `--font-family-*` tokens; the editor loads fonts with one `<link>` in the main page, since fonts declared inside shadow roots are ignored; export ships the same `<link>`. Font files are cached in `.weft-data/fonts/` after first use, so documents work offline. Later: italics, and bundling font files into export
 - [ ] In-app local model assist (to consider): a local model built into the editor, separate from MCP agents, for inline suggestions. First idea: on a breakpoint section's "+ Add", suggest mobile/tablet overrides for the selected section (e.g. stack a grid to one column, shrink gap and padding) that the user previews and accepts
 - [ ] Desktop shell (Electron)
 
 ## Changelog
 
+- **2026-10-22:** Files and HTML export. **Save** downloads the document as `<doc>.weft`; **Open…** adds a `.weft`/`.weft.json` file's artboards and fonts beside the existing ones as one undo step (core `readWeftFile` + `GridDocument.importFile`, validated like paste, so bad files change nothing; unknown fonts are dropped). **Export HTML** in the Inspector downloads an artboard as a standalone page. New MCP tools `export_html` and `import_file`; `window.weft.agent.importFile`. Unlike paste, files carry the document's fonts.
 - **2026-10-21:** Taste rules in the design skill, adapted in part from [taste-skill](https://github.com/Leonxlnx/taste-skill) (MIT). `style.md` adds: start from an idea; color roles and proportion; a type scale with few sizes far apart, display tracking and a two-line headline limit; composition (shared edges, varied sections); a table of generic tells (violet gradients, cream and terracotta, eyebrow labels, bento tiles, pill badges, …) with what to do instead; copy rules; aria for shape-built charts and the active tab; and monospace labels and middle-dot meta strings as tells. New style property `fontVariantNumeric` (Inspector: Type), so numbers can line up with `tabular-nums` without a monospace font. From the first reference evals (Opus and Grok, CarGurus home): `listStyle` is allowed; `get_canvas` outlines include artboard `x`/`y`; the style-guide reminder is kept per agent, so sessionless clients (which get a fresh server per request) stop seeing it once they've read the guide; and the skill keeps reference and user copy verbatim and asks for a menu button when mobile hides the nav. These are defaults (strong opinions, loosely held): an explicit design system, brand, reference or request from the user overrides any of them. `read_skill` with no path now returns the whole guide in one text (about 20 KB), since agents read the overview and skipped the files it pointed to; and `create_nodes` adds a `note` asking an agent to read it when its session hasn't read the style guide (not for Assist, which has no `read_skill`). `verify.md` asks agents to fix what breaks at the other width rather than list it, and adds a critique to run when a design is built (one second, squint, cover the name, edges, sameness, tells) and the order to fix things in. Prompted by the Grok Bloom Health run (`evals/results/2026-10-20-bloom-health-grok.md`).
 - **2026-10-20:** Google Fonts. A bundled catalog of 1,738 families (`packages/core/src/font-catalog.ts`, regenerated by `packages/core/scripts/build-font-catalog.mjs`, no API key) backs a searchable picker: the **Aa** button on a Font Family style, and a Fonts list in the Inspector when nothing is selected. Documents keep a synced, undoable font list (`GridDocument.addFonts`/`removeFonts`); each font becomes a `--font-family-<slug>` token with a fallback stack. The server serves fonts from a local cache (`/fonts.css`, `/fonts/files/*`, stored in `.weft-data/fonts/`), fetching each stylesheet and file from Google once, so documents keep their fonts offline; without the cache or a network, text falls back to the stack. Screenshots load fonts from the same cache. New MCP tools `search_fonts`, `add_fonts`, `remove_fonts`; `list_tokens` takes `doc` and includes font tokens. Export links Google Fonts.
 - **2026-10-20:** Fixes from the first Opus eval. `duplicate_node` returns `ids` (every original node id → its copy), so agents edit copies without re-reading them. `get_canvas` takes `detail: "outline"` (ids, tags, names, short text; unindented): 68 KB → 8.6 KB on a real mobile screen. New tags: `dl`/`dt`/`dd` and `table`/`caption`/`thead`/`tbody`/`tfoot`/`tr`/`th`/`td`. The skill's overview now lists the five most important rules, insists on reading the layout and style guides before building, and asks for a check at the other end of the width range.

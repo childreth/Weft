@@ -54,7 +54,7 @@ describe('MCP tools', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
-        'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes',
+        'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'export_html', 'import_file',
         'search_fonts', 'add_fonts', 'remove_fonts',
       ].sort(),
     );
@@ -419,6 +419,27 @@ describe('sync relay', () => {
     await fresh.callTool({ name: 'read_skill', arguments: { path: 'style.md' } });
     expect((await create()).note).toBeUndefined();
     await fresh.close();
+  });
+
+  it('imports a saved document beside the existing artboards', async () => {
+    const source = server.rooms.get('import-source');
+    const target = server.rooms.get('import-target');
+    const before = target.doc.getChildren(null).length;
+    const res = await call('import_file', { doc: 'import-target', json: JSON.stringify(source.doc.toSnapshot()) });
+    expect(res.isError).toBe(false);
+    expect(target.doc.getChildren(null)).toHaveLength(before + res.data.created.length);
+    expect((await call('import_file', { doc: 'import-target', json: '{}' })).text).toContain('Not a Weft file');
+  });
+
+  it('exports an artboard as standalone HTML', async () => {
+    const room = server.rooms.get('export');
+    const [page] = room.doc.getTree();
+    const res = await call('export_html', { doc: 'export', id: page!.id });
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/^<!doctype html>/);
+    expect(res.text).toContain(`<title>${page!.name}</title>`);
+    const child = page!.children[0]!;
+    expect((await call('export_html', { doc: 'export', id: child.id })).text).toContain('is not an artboard');
   });
 
   it('remembers the style guide read for a client without a session (a fresh server per request)', async () => {
