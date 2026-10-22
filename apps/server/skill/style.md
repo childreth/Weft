@@ -64,7 +64,7 @@ These read as generated because tools produce them by default. Avoid them unless
 | Decorative 01 / 02 / 03 numbering, hairline rules everywhere, design-tool ornaments (crosshairs, dashed guides) | Order by position and size; separate with space and tone |
 | Monospace labels, dates and captions as a "technical" voice; meta strings joined by middle dots ("Blood panel · drawn 14 Oct") | The text face in sentence case; a plain sentence or two separate pieces of text. Monospace only for code |
 | One medium radius (12–16px) on everything | Choose once: square, small, or fully round |
-| Emoji or ✨ as icons and bullets; a pulsing "live" dot | Words, or a labelled placeholder until icons are supported |
+| Emoji or ✨ as icons and bullets; a pulsing "live" dot | A Material Symbols icon (`search_icons`), or words |
 | A fake dashboard or product screen built from grey bars | A labelled placeholder, or real content |
 
 ## Words
@@ -90,6 +90,7 @@ Copy is a design decision: a headline that needs four lines can't be rescued by 
 
 - Measure proportions from the reference: the content width, the column split, the relative heading size.
 - Match the type weight, case and tracking before matching exact sizes.
-- List what you couldn't reproduce (photos, icons, the brand font) in your reply instead of approximating it badly.
+- Match the reference's icons with the closest Material Symbols icon and style (Outlined, Rounded or Sharp), and keep their size and color.
+- List what you couldn't reproduce (photos, logos, the brand font) in your reply instead of approximating it badly.
 
 The color, type, tells and words guidance is adapted in part from [taste-skill](https://github.com/Leonxlnx/taste-skill) (MIT, © 2026 Leonxlnx).

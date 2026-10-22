@@ -41,6 +41,8 @@ Use `header`, `nav`, `section`, `article`, `aside` and `footer` for what they ar
 - **Card:** frame `article`, column flex, `gap`, `padding`, and either a border or a background, not both plus a shadow.
 - **Nav:** frame `nav` row of text `a` nodes with `href` attributes.
 - **Horizontal scroller** (chips, carousels): row flex with `overflow: auto` and `flexShrink: 0` on items.
+- **Icon:** text `span` with the icon's name as its text (`search_icons` gives names and a node to copy): `fontFamily: var(--font-family-material-symbols-outlined)`, `fontSize` (20–24px beside text), `lineHeight: 1`, `letterSpacing: normal`, `textTransform: none`, `whiteSpace: nowrap`, `color` like text. Ligatures break with letter spacing or a text transform, so set those even if a parent sets them. Decorative icons get `aria-hidden: "true"`.
+- **Icon button:** frame `button` with an `aria-label` ("Search") holding the icon `span`, `display: inline-flex`, `alignItems: center`, `justifyContent: center`, a square size and padding. Icon plus label: the icon `span` and a text `span` in a row with a small `gap`.
 - **Lists** (`ul`/`ol` of cards, chips or links): the browser's bullets and indent show by default. Set `listStyle: none` and `padding: 0` on the list.
 - **Label and value pairs** (specs, profile details): `dl` with `dt`/`dd` children, as a grid (`gridTemplateColumns: auto 1fr`).
 - **Data tables:** `table` → `thead`/`tbody` → `tr` → `th`/`td` text nodes. Use a table only for real tabular data, not for layout.

@@ -1,4 +1,5 @@
 import { FONT_CATALOG_ROWS } from './font-catalog';
+import { ICON_FONTS } from './icons';
 import type { TokenGroup, TokenSet } from './tokens';
 
 /**
@@ -7,7 +8,7 @@ import type { TokenGroup, TokenSet } from './tokens';
  * token with a fallback stack, so text still renders without the font files.
  */
 
-export type FontCategory = 'sans-serif' | 'serif' | 'display' | 'handwriting' | 'monospace';
+export type FontCategory = 'sans-serif' | 'serif' | 'display' | 'handwriting' | 'monospace' | 'icons';
 
 export interface CatalogFont {
   family: string;
@@ -38,6 +39,10 @@ export function fontCatalog(): readonly CatalogFont[] {
     italic: italic === 1,
     rank,
   }));
+  // Icon fonts aren't in Google's text-font metadata: add the Material Symbols styles (variable weight 100–700).
+  for (const family of ICON_FONTS) {
+    catalog.push({ family, category: 'icons', weights: [100, 200, 300, 400, 500, 600, 700], italic: false, rank: catalog.length });
+  }
   return catalog;
 }
 
@@ -70,6 +75,8 @@ export function searchFonts(query = '', options: { category?: FontCategory; limi
 
 /** Weights to load when none are asked for: the usual text weights the family has. */
 export function defaultWeights(font: CatalogFont): number[] {
+  // Each icon weight is a separate ~320 KB file.
+  if (font.category === 'icons') return [400];
   const usual = font.weights.filter((w) => w >= 400 && w <= 700);
   return usual.length ? usual : [font.weights.reduce((a, b) => (Math.abs(b - 400) < Math.abs(a - 400) ? b : a))];
 }
@@ -87,6 +94,8 @@ const FALLBACKS: Record<FontCategory, string[]> = {
   display: ['system-ui', 'sans-serif'],
   handwriting: ['cursive'],
   monospace: ['ui-monospace', 'monospace'],
+  // No fallback draws the icon: without the font, the name shows as text.
+  icons: [],
 };
 
 /** The family with fallbacks for its category, as a token value. */

@@ -19,7 +19,8 @@ If you can't see an attached image, stop and say so. Don't design something else
 - Make it responsive: it should also work at 390px wide (mobile).
 - Use semantic HTML (header, nav, section, h1, button, a, …) and design tokens where they fit.
 - Fonts: use the reference's typeface if it's a Google Font (`search_fonts`, `add_fonts`), or the closest match, and say which.
-- Things Weft can't do yet (photos, icons, logos): use a clean placeholder and list them in your report. Don't fake them out of shapes.
+- Icons: use the closest Material Symbols icon (`search_icons`).
+- Things Weft can't do yet (photos, logos): use a clean placeholder and list them in your report. Don't fake them out of shapes.
 
 ## How to work
 
