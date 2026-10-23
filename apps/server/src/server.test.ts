@@ -190,6 +190,18 @@ describe('MCP tools', () => {
     expect(room.doc.getNode(pricing.children[1].children[0].id)!.text).toBe('Free');
   });
 
+  it('infers a missing node type from text and children', async () => {
+    const { data, isError } = await call('create_nodes', {
+      doc: 'infer',
+      nodes: [{ tag: 'section', frame: { width: 400 }, children: [{ tag: 'h2', text: 'Hello' }, { tag: 'ul', children: [] }] }],
+    });
+    expect(isError).toBe(false);
+    const room = server.rooms.get('infer');
+    const [heading, list] = data.created[0].children;
+    expect(room.doc.getNode(heading.id)!.type).toBe('text');
+    expect(room.doc.getNode(list.id)!.type).toBe('frame');
+  });
+
   it('creates, updates and reads back breakpoint overrides', async () => {
     const { data } = await call('create_nodes', {
       doc: 'bp',

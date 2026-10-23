@@ -96,9 +96,21 @@ interface NodeSpec {
   children?: NodeSpec[];
 }
 
-const nodeSpec: z.ZodType<NodeSpec> = z.lazy(() =>
+type NodeSpecInput = Omit<NodeSpec, 'type' | 'children'> & { type?: NodeSpec['type']; children?: NodeSpecInput[] };
+
+/** Small models often leave `type` out: a node with text and no children is text, anything else a frame. */
+const withTypes = ({ children, ...spec }: NodeSpecInput): NodeSpec => ({
+  ...spec,
+  type: spec.type ?? (spec.text !== undefined && !children?.length ? 'text' : 'frame'),
+  ...(children && { children: children.map(withTypes) }),
+});
+
+const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
   z.object({
-    type: z.enum(['frame', 'text']),
+    type: z
+      .enum(['frame', 'text'])
+      .optional()
+      .describe('Inferred when left out: "text" for a node with text and no children, otherwise "frame"'),
     tag: z.string().optional().describe('Semantic HTML tag; defaults to div (frame) or p (text)'),
     name: z.string().optional().describe('Layer name shown in the layers panel'),
     text: z.string().optional().describe('Text content (text nodes only)'),
@@ -419,8 +431,9 @@ export function createMcpServer(
         model: modelParam,
       },
     },
-    async ({ doc, parentId, beforeId, nodes, model }) => {
+    async ({ doc, parentId, beforeId, nodes: input, model }) => {
       const { room, agent } = open(doc, model);
+      const nodes = input.map(withTypes);
       return mutate(room, agent, 'create_nodes', (touched, report) => {
         throwIssues(treeIssues(nodes));
         const created = nodes.map((spec) => createTree(room, agent.identity.origin, spec, parentId, beforeId, touched));
