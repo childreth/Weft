@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 're
 import { docName, mode, scene } from '../editor/editor';
 import { listModels, resetAssist, sendPrompt, undoAssistTurn, type AssistEvent, type AssistModel } from '../editor/assist';
 import { useEditor } from '../editor/store';
+import { Markdown } from './Markdown';
 
 type Entry =
   | { kind: 'user'; text: string }
@@ -158,6 +159,8 @@ function AssistPrompt() {
                   {TOOL_LABELS[entry.name] ?? entry.name}
                   {entry.detail && <span className="gf-assist-detail">{entry.detail}</span>}
                 </>
+              ) : entry.kind === 'reply' ? (
+                <Markdown text={entry.text} />
               ) : (
                 entry.text
               )}

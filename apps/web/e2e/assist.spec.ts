@@ -18,7 +18,7 @@ test('prompt streams tool steps and the reply; Undo reverts the turn', async ({ 
       { type: 'tool_result', name: 'update_nodes', ok: false, text: 'Unknown style property "borderLeft"' },
       { type: 'tool', name: 'update_nodes', args: {} },
       { type: 'tool_result', name: 'update_nodes', ok: true, text: '{}' },
-      { type: 'message', text: 'Stacked the cards in one column.' },
+      { type: 'message', text: 'Stacked the cards in one column:\n- **Grid**: one column (`gridTemplateColumns: 1fr`).\n- **Gap**: `var(--space-4)` between cards.' },
       { type: 'done', edits: 1 },
     ];
     return route.fulfill({ contentType: 'application/x-ndjson', body: events.map((e) => JSON.stringify(e)).join('\n') + '\n' });
@@ -43,7 +43,11 @@ test('prompt streams tool steps and the reply; Undo reverts the turn', async ({ 
   await input.fill('stack these');
   await input.press('Enter');
   const log = page.getByTestId('assist-log');
-  await expect(log).toContainText('Stacked the cards in one column.');
+  await expect(log).toContainText('Stacked the cards in one column:');
+  // Replies render their Markdown.
+  await expect(log.locator('.is-reply li')).toHaveCount(2);
+  await expect(log.locator('.is-reply strong').first()).toHaveText('Grid');
+  await expect(log.locator('.is-reply code').first()).toHaveText('gridTemplateColumns: 1fr');
   await expect(log).toContainText('Unknown style property "borderLeft"');
   await expect(log.locator('.is-failed')).toHaveCount(1);
   expect(chatBody).toMatchObject({ prompt: 'stack these', model: 'granite4.1:3b', selection: [features] });
