@@ -92,7 +92,7 @@ export function Toolbar() {
         <button className="gf-tool" onClick={() => zoomToFit()} title="Zoom to fit (⇧1)">
           Fit
         </button>
-        <button className="gf-tool gf-zoom" onClick={() => zoomTo(1)} title="Zoom to 100% (⌘0)" data-testid="zoom">
+        <button className="gf-tool gf-zoom" onClick={() => zoomTo(1, useEditor.getState().selection)} title="Zoom to 100%, centred on the selection (⌘0)" data-testid="zoom">
           {Math.round(zoom * 100)}%
         </button>
       </div>

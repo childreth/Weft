@@ -12,8 +12,15 @@ export function zoomBy(factor: number) {
   useEditor.getState().zoomAt(w / 2, h / 2, factor);
 }
 
-export function zoomTo(zoom: number) {
-  zoomBy(zoom / useEditor.getState().camera.zoom);
+/** Sets the zoom, centred on the nodes when given (and rendered), otherwise on the viewport's center. */
+export function zoomTo(zoom: number, ids: readonly string[] = []) {
+  const box = renderedBounds(ids);
+  if (!box) return zoomBy(zoom / useEditor.getState().camera.zoom);
+  useEditor.getState().setCamera({
+    zoom,
+    x: box.canvas.width / 2 - (box.min.x + box.max.x) / 2 * zoom,
+    y: box.canvas.height / 2 - (box.min.y + box.max.y) / 2 * zoom,
+  });
 }
 
 export function zoomToFit(ids?: readonly string[]) {
@@ -35,26 +42,46 @@ export function zoomToFit(ids?: readonly string[]) {
   });
 }
 
-/** Fits the viewport to any nodes (not just artboards) using their rendered boxes. */
-export function zoomToNodes(ids: readonly string[]) {
+/** The nodes' rendered bounds in canvas coordinates (so a hug artboard's real height counts), or null. */
+function renderedBounds(ids: readonly string[]) {
   const canvas = document.querySelector<HTMLElement>('[data-canvas]');
   const rects = ids.flatMap((id) => {
     const el = nodeElements.get(id);
     return el ? [el.getBoundingClientRect()] : [];
   });
-  if (!canvas || rects.length === 0) return;
+  if (!canvas || rects.length === 0) return null;
   const c = canvas.getBoundingClientRect();
   const { camera } = useEditor.getState();
   const toCanvas = (x: number, y: number) => ({ x: (x - c.left - camera.x) / camera.zoom, y: (y - c.top - camera.y) / camera.zoom });
-  const min = toCanvas(Math.min(...rects.map((r) => r.left)), Math.min(...rects.map((r) => r.top)));
-  const max = toCanvas(Math.max(...rects.map((r) => r.right)), Math.max(...rects.map((r) => r.bottom)));
+  return {
+    canvas: c,
+    min: toCanvas(Math.min(...rects.map((r) => r.left)), Math.min(...rects.map((r) => r.top))),
+    max: toCanvas(Math.max(...rects.map((r) => r.right)), Math.max(...rects.map((r) => r.bottom))),
+  };
+}
+
+/**
+ * Fits the viewport to any nodes (not just artboards) using their rendered
+ * boxes. `maxZoom` 1 (agent focus) never zooms in past 100%; zoom to selection
+ * zooms in on small things.
+ */
+export function zoomToNodes(ids: readonly string[], maxZoom = 1) {
+  const box = renderedBounds(ids);
+  if (!box) return;
+  const { canvas: c, min, max } = box;
   const pad = 96;
   const w = Math.max(1, max.x - min.x);
   const h = Math.max(1, max.y - min.y);
-  const zoom = Math.min(MAX_ZOOM, (c.width - pad * 2) / w, (c.height - pad * 2) / h, 1);
+  const zoom = Math.min(MAX_ZOOM, maxZoom, (c.width - pad * 2) / w, (c.height - pad * 2) / h);
   useEditor.getState().setCamera({
     zoom,
     x: (c.width - w * zoom) / 2 - min.x * zoom,
     y: (c.height - h * zoom) / 2 - min.y * zoom,
   });
+}
+
+/** Zoom to selection (⇧2): fits the selected layers, or everything when nothing is selected. */
+export function zoomToSelection(ids: readonly string[]) {
+  if (ids.length && renderedBounds(ids)) zoomToNodes(ids, 4);
+  else zoomToFit();
 }
