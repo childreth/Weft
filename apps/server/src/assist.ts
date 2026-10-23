@@ -15,6 +15,9 @@ import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from
 export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 const MAX_STEPS = 12;
 const MAX_TOOL_RESULT_CHARS = 8000;
+/** Repeats refused before the model is made to answer without tools. */
+const MAX_REPEATS = 2;
+const ANSWER_NOW = 'You are repeating tool calls. Stop calling tools and answer the user now with what you already know: what you changed, or what you found and would change.';
 /** User turns of history sent back to the model. */
 const HISTORY_TURNS = 6;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
@@ -198,7 +201,15 @@ ${selection}`;
       // Snapshot the selection once: re-reading it after edits makes models think their change was already there.
       const system = this.systemPrompt(req);
       const seen = new Set<string>();
+      let repeats = 0;
       for (let step = 0; step < MAX_STEPS; step++) {
+        if (repeats >= MAX_REPEATS) {
+          // A looping model ignores "you already made this call"; without tools it has to answer.
+          const reply = await this.complete(session, req.model, `${system}\n\n${ANSWER_NOW}`, signal, false);
+          session.history.push(reply);
+          emit({ type: 'message', text: reply.content.trim() || 'Done.' });
+          return;
+        }
         const reply = await this.complete(session, req.model, system, signal);
         session.history.push(reply);
         const calls = reply.tool_calls ?? [];
@@ -213,6 +224,7 @@ ${selection}`;
           emit({ type: 'tool', name, args });
           // Small models loop on the same call; its result is already in the history.
           const key = `${name} ${JSON.stringify(args)}`;
+          if (seen.has(key)) repeats++;
           const text = seen.has(key)
             ? { text: 'You already made this exact call in this turn; its result is above. Use it, try something different, or answer the user.', isError: true }
             : await this.callTool(session, name, { ...args, doc: req.doc, model: req.model });
@@ -233,7 +245,7 @@ ${selection}`;
     }
   }
 
-  private async complete(session: Session, model: string, system: string, signal: AbortSignal): Promise<ChatMessage> {
+  private async complete(session: Session, model: string, system: string, signal: AbortSignal, withTools = true): Promise<ChatMessage> {
     const models = await this.models(signal).catch(() => []);
     const thinking = models.find((m) => m.name === model)?.thinking;
     const res = await fetch(`${this.ollamaUrl}/api/chat`, {
@@ -243,7 +255,7 @@ ${selection}`;
       body: JSON.stringify({
         model,
         messages: [{ role: 'system', content: system }, ...recent(session.history)],
-        tools: session.tools,
+        ...(withTools && { tools: session.tools }),
         stream: false,
         // Reasoning makes local models far slower for small edits.
         ...(thinking && { think: false }),

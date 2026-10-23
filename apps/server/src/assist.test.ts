@@ -112,13 +112,19 @@ describe('assist', () => {
     replies = [
       { role: 'assistant', content: '', tool_calls: [read] },
       { role: 'assistant', content: '', tool_calls: [read] },
-      { role: 'assistant', content: 'Looked.' },
+      { role: 'assistant', content: '', tool_calls: [read] },
+      { role: 'assistant', content: 'The board has 80 lines.' },
     ];
     const events = await chat({ prompt: 'look' });
     const results = events.filter((e) => e.type === 'tool_result') as Array<{ ok: boolean; text: string }>;
-    expect(results.map((r) => r.ok)).toEqual([true, false]);
+    expect(results.map((r) => r.ok)).toEqual([true, false, false]);
+    // After two refused repeats the model is asked to answer, with no tools to call.
+    expect(events.at(-2)).toEqual({ type: 'message', text: 'The board has 80 lines.' });
+    const last = requests.at(-1) as unknown as { tools?: unknown; messages: Array<{ content: string }> };
+    expect(last.tools).toBeUndefined();
+    expect(last.messages[0]!.content).toContain('Stop calling tools');
     expect(results[1]!.text).toContain('already made this exact call');
-    const canvas = requests.at(-1)!.messages.filter((m) => m.role === 'tool').at(-2)!;
+    const canvas = requests.at(-2)!.messages.filter((m) => m.role === 'tool').at(-2)!;
     expect(canvas.content).toContain('[Cut off:');
   });
 
