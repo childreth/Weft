@@ -74,10 +74,10 @@ const breakpointKey = z.enum(BREAKPOINT_IDS as [string, ...string[]]);
 
 const frameSchema = z
   .object({
-    x: z.number(),
-    y: z.number(),
-    width: z.number().positive(),
-    height: z.number().positive().describe('Fixed height; setting it without heightMode makes the artboard fixed'),
+    x: z.coerce.number(),
+    y: z.coerce.number(),
+    width: z.coerce.number().positive(),
+    height: z.coerce.number().positive().describe('Fixed height; setting it without heightMode makes the artboard fixed'),
     heightMode: z
       .enum(['fixed', 'hug'])
       .describe('"hug" sizes the artboard to its content (height is then the last measured value); "fixed" clips overflow'),
@@ -375,7 +375,7 @@ export function createMcpServer(
       inputSchema: {
         doc: docParam,
         rootId: z.string().optional().describe('Return only this node and its descendants'),
-        maxDepth: z.number().int().min(0).max(50).default(12),
+        maxDepth: z.coerce.number().int().min(0).max(50).default(12),
         detail: z.enum(['full', 'outline']).default('full').describe('"outline": structure and text only, no styles or attributes'),
         model: modelParam,
       },
@@ -402,7 +402,7 @@ export function createMcpServer(
     {
       title: 'Get user selection',
       description: 'Returns what each person with the document open has selected, with each selected subtree.',
-      inputSchema: { doc: docParam, maxDepth: z.number().int().min(0).max(50).default(6), model: modelParam },
+      inputSchema: { doc: docParam, maxDepth: z.coerce.number().int().min(0).max(50).default(6), model: modelParam },
       annotations: { readOnlyHint: true },
     },
     async ({ doc, maxDepth, model }) => {
@@ -729,7 +729,7 @@ export function createMcpServer(
         'Searches the bundled Material Symbols icon names (works offline) by name or meaning ("heart" finds favorite), most popular first. An icon is a text node whose text is the name, set in an icon font added with add_fonts; the result includes a node to copy.',
       inputSchema: {
         query: z.string().optional().describe('What the icon shows, e.g. "search", "heart", "chevron down"; omit for the most popular'),
-        limit: z.number().int().min(1).max(50).default(12),
+        limit: z.coerce.number().int().min(1).max(50).default(12),
       },
       annotations: { readOnlyHint: true },
     },
@@ -758,7 +758,7 @@ export function createMcpServer(
       inputSchema: {
         query: z.string().optional().describe('Part of a family name, e.g. "playfair"; omit for the most popular'),
         category: z.enum(['sans-serif', 'serif', 'display', 'handwriting', 'monospace', 'icons']).optional(),
-        limit: z.number().int().min(1).max(50).default(12),
+        limit: z.coerce.number().int().min(1).max(50).default(12),
       },
       annotations: { readOnlyHint: true },
     },
@@ -774,7 +774,7 @@ export function createMcpServer(
         'Adds Google Fonts to the document (or more weights to one it has). Each becomes a token: set fontFamily to var(--font-family-<slug>), e.g. "Playfair Display" → var(--font-family-playfair-display). Weights default to the usual 400–700 the family has. Fonts are cached locally after first use, so they keep working offline.',
       inputSchema: {
         doc: docParam,
-        fonts: z.array(z.object({ family: z.string(), weights: z.array(z.number().int()).optional() })).min(1).max(10),
+        fonts: z.array(z.object({ family: z.string(), weights: z.array(z.coerce.number().int()).optional() })).min(1).max(10),
         model: modelParam,
       },
     },
@@ -864,8 +864,8 @@ export function createMcpServer(
       inputSchema: {
         doc: docParam,
         id: z.string().optional().describe('Artboard or node id; defaults to the first artboard'),
-        width: z.number().int().min(200).max(3840).optional().describe("Render width in CSS px; defaults to the artboard's width"),
-        depth: z.number().int().min(0).max(6).default(2).describe('Levels of child boxes to report'),
+        width: z.coerce.number().int().min(200).max(3840).optional().describe("Render width in CSS px; defaults to the artboard's width"),
+        depth: z.coerce.number().int().min(0).max(6).default(2).describe('Levels of child boxes to report'),
         model: modelParam,
       },
       annotations: { readOnlyHint: true },

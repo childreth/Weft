@@ -190,6 +190,12 @@ describe('MCP tools', () => {
     expect(room.doc.getNode(pricing.children[1].children[0].id)!.text).toBe('Free');
   });
 
+  it('accepts numbers sent as strings', async () => {
+    const { data, isError } = await call('get_canvas', { doc: 'read', maxDepth: '0' });
+    expect(isError).toBe(false);
+    expect(data.nodes[0].children).toBeUndefined();
+  });
+
   it('infers a missing node type from text and children', async () => {
     const { data, isError } = await call('create_nodes', {
       doc: 'infer',
