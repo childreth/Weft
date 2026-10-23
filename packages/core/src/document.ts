@@ -5,6 +5,7 @@ import { defaultWeights, findFont, type DocumentFont } from './fonts';
 import {
   BREAKPOINTS,
   VOID_TAGS,
+  getStyleMeta,
   isBreakpointId,
   isStyleProp,
   isValidTag,
@@ -89,6 +90,9 @@ const ATTRIBUTE_NAME = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
 const UNSAFE_STYLE_VALUE = /[;{}<>]/;
 /** Values that would make the browser fetch something: url(), image-set(), …, or escapes that could hide them. */
 const EXTERNAL_STYLE_VALUE = /\b(?:url|image|image-set|-webkit-image-set|cross-fade|element|expression)\s*\(|\\/i;
+const GRADIENT = /\b(?:repeating-)?(?:linear|radial|conic)-gradient\s*\(/i;
+/** A gradient in a color property is dropped by CSS: the element paints nothing. */
+const isColorProp = (prop: StyleProp) => getStyleMeta(prop).tokenGroups?.includes('color') ?? false;
 const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800, heightMode: 'hug' };
 /** Space left between an artboard and a duplicate placed beside it. */
 const ARTBOARD_GAP = 100;
@@ -137,6 +141,28 @@ function checkLayerShapes(nodes: readonly unknown[], where: string, maxNodes: nu
 }
 
 /**
+ * Fixes layers saved before gradients in color properties were rejected: a
+ * background gradient moves to backgroundImage (where it was meant to be), and
+ * text or border gradients, which never painted, are dropped.
+ */
+function repairGradients(trees: readonly SceneTree[]): void {
+  const repair = (styles: Partial<Record<string, string>> | undefined) => {
+    if (!styles) return;
+    for (const [key, value] of Object.entries(styles)) {
+      if (typeof value !== 'string' || !isStyleProp(key) || !isColorProp(key) || !GRADIENT.test(value)) continue;
+      if (key === 'backgroundColor' && styles.backgroundImage === undefined) styles.backgroundImage = value;
+      delete styles[key];
+    }
+  };
+  const visit = (tree: SceneTree) => {
+    repair(tree.styles);
+    for (const styles of Object.values(tree.breakpoints ?? {})) repair(styles);
+    tree.children.forEach(visit);
+  };
+  trees.forEach(visit);
+}
+
+/**
  * Parses clipboard JSON into subtrees, checking only their shape: content is
  * validated by `insertTrees` like any other create.
  */
@@ -152,6 +178,7 @@ export function readClipboard(json: string): SceneTree[] {
     throw new GridError('Clipboard does not contain Weft layers');
   }
   checkLayerShapes(payload.nodes, 'on the clipboard', CLIPBOARD_MAX_NODES);
+  repairGradients(payload.nodes);
   return payload.nodes;
 }
 
@@ -198,6 +225,7 @@ export function readWeftFile(json: string): WeftFile {
   const artboards = sortSiblings(byParent.get(null) ?? []).map(build);
   checkLayerShapes(artboards, 'in the file', FILE_MAX_NODES);
   if (artboards.some((a) => !a.frame)) throw new GridError('Malformed layers in the file: a top-level layer is not an artboard');
+  repairGradients(artboards);
   const fonts: DocumentFont[] = [];
   for (const f of Array.isArray(file.fonts) ? (file.fonts as unknown[]) : []) {
     const font = findFont((f as Partial<DocumentFont> | null)?.family ?? '');
@@ -329,6 +357,9 @@ export function styleIssues(styles: Partial<Record<string, string | null>>): str
     else if (typeof value !== 'string') issues.push(`Style "${key}" must be a string`);
     else if (UNSAFE_STYLE_VALUE.test(value)) issues.push(`Style "${key}" contains forbidden characters`);
     else if (EXTERNAL_STYLE_VALUE.test(value)) issues.push(`Style "${key}" can't load external resources (url(), image-set()); gradients are fine`);
+    else if (GRADIENT.test(value) && isColorProp(key)) {
+      issues.push(`Style "${key}" takes a color, not a gradient${key === 'backgroundColor' ? ': put the gradient in backgroundImage' : ''}`);
+    }
   }
   return issues;
 }

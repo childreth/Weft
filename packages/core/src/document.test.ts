@@ -384,6 +384,20 @@ describe('weft files', () => {
     expect(readWeftFile(file([board, { ...board, id: 'x', parentId: 'y', frame: undefined }, { ...board, id: 'y', parentId: 'x', frame: undefined }])).artboards).toHaveLength(1);
     expect(readWeftFile(file([board], [{ family: 'Not A Font' }, { family: 'inter', weights: [400, 999] }])).fonts).toEqual([{ family: 'Inter', weights: [400] }]);
   });
+
+  it('repairs gradients saved in color properties when opening a file', () => {
+    const doc = new GridDocument();
+    const gradient = 'linear-gradient(180deg, #fff 0%, #f9fafb 100%)';
+    const board = {
+      id: 'a', type: 'frame', tag: 'main', name: 'A', parentId: null, index: 'a0', attributes: {}, frame: { x: 0, y: 0, width: 100, height: 100 },
+      styles: { backgroundColor: gradient, color: 'linear-gradient(red, blue)' },
+      breakpoints: { mobile: { backgroundColor: 'radial-gradient(red, blue)' } },
+    };
+    const [id] = doc.importFile(readWeftFile(JSON.stringify({ format: 'weft', version: 1, nodes: [board] })));
+    const node = doc.getNode(id!)!;
+    expect(node.styles).toEqual({ backgroundImage: gradient });
+    expect(node.breakpoints).toEqual({ mobile: { backgroundImage: 'radial-gradient(red, blue)' } });
+  });
 });
 
 describe('validation', () => {
@@ -400,6 +414,14 @@ describe('validation', () => {
       expect(styleIssues({ backgroundImage: value })[0]).toMatch(/external resources/);
     }
     expect(styleIssues({ boxShadow: '0 0 0 1px url(x)' })[0]).toMatch(/external resources/);
+  });
+
+  it('rejects gradients in color properties, which CSS would drop', () => {
+    expect(styleIssues({ backgroundColor: 'linear-gradient(180deg, #fff, #f9fafb)' })).toEqual([
+      'Style "backgroundColor" takes a color, not a gradient: put the gradient in backgroundImage',
+    ]);
+    expect(styleIssues({ color: 'conic-gradient(red, blue)' })).toEqual(['Style "color" takes a color, not a gradient']);
+    expect(styleIssues({ backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent)' })).toEqual([]);
   });
 
   it('lets headings and paragraphs hold inline spans', () => {
