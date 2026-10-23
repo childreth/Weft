@@ -25,6 +25,13 @@ const EXCLUDED_TOOLS = new Set(['read_skill', 'get_screenshot']);
 
 export const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
+/** Cuts a long tool result, saying so: silently cut JSON sends small models back to re-read it, deeper each time. */
+export function clipToolResult(text: string): string {
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
+  return `${text.slice(0, MAX_TOOL_RESULT_CHARS)}
+[Cut off: ${text.length} characters, showing the first ${MAX_TOOL_RESULT_CHARS}. Don't repeat this call or raise maxDepth. Pass rootId to read one part, or detail "outline" to find ids.]`;
+}
+
 /** Ollama's server address: `OLLAMA_HOST` may omit the scheme or port. */
 export function ollamaUrlFrom(host: string | undefined): string {
   if (!host) return DEFAULT_OLLAMA_URL;
@@ -165,7 +172,7 @@ export class Assistant {
     const room = this.rooms.get(req.doc);
     const selected = (req.selection ?? []).filter((id) => room.doc.has(id)).slice(0, 20);
     const selection = selected.length
-      ? `When the user sent this request they had selected these nodes ("this", "these", "it" refer to them). Your edits since are not reflected here:\n${JSON.stringify(
+      ? `When the user sent this request they had selected these nodes ("this", "these", "it" refer to them), with their styles: read them here instead of calling get_canvas. Your edits since are not reflected here:\n${JSON.stringify(
           selected.map((id) => compact(room.doc.getTree(id)[0]!, 4)),
         )}`
       : 'Nothing is selected. Call get_canvas to see the document.';
@@ -190,6 +197,7 @@ ${selection}`;
     try {
       // Snapshot the selection once: re-reading it after edits makes models think their change was already there.
       const system = this.systemPrompt(req);
+      const seen = new Set<string>();
       for (let step = 0; step < MAX_STEPS; step++) {
         const reply = await this.complete(session, req.model, system, signal);
         session.history.push(reply);
@@ -203,9 +211,14 @@ ${selection}`;
           const name = call.function.name;
           const args = parseArgs(call.function.arguments);
           emit({ type: 'tool', name, args });
-          const text = await this.callTool(session, name, { ...args, doc: req.doc, model: req.model });
+          // Small models loop on the same call; its result is already in the history.
+          const key = `${name} ${JSON.stringify(args)}`;
+          const text = seen.has(key)
+            ? { text: 'You already made this exact call in this turn; its result is above. Use it, try something different, or answer the user.', isError: true }
+            : await this.callTool(session, name, { ...args, doc: req.doc, model: req.model });
+          seen.add(key);
           emit({ type: 'tool_result', name, ok: !text.isError, text: text.text.slice(0, 400) });
-          session.history.push({ role: 'tool', tool_name: name, content: text.text.slice(0, MAX_TOOL_RESULT_CHARS) });
+          session.history.push({ role: 'tool', tool_name: name, content: clipToolResult(text.text) });
         }
       }
       emit({ type: 'error', message: `Stopped after ${MAX_STEPS} steps without a final answer.` });

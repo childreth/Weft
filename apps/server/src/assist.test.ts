@@ -104,6 +104,24 @@ describe('assist', () => {
     expect(events.at(-1)).toEqual({ type: 'done', edits: 0 });
   });
 
+  it('answers a repeated identical call from history and says when a result was cut off', async () => {
+    const doc = server.rooms.get('assist').doc;
+    const board = doc.createNode({ type: 'frame', name: 'Big', frame: { x: 0, y: 0, width: 400, height: 300 } });
+    for (let i = 0; i < 80; i++) doc.createNode({ type: 'text', parentId: board, text: `Line ${i} `.repeat(4), name: `Line ${i}` });
+    const read = { function: { name: 'get_canvas', arguments: { maxDepth: 12 } } };
+    replies = [
+      { role: 'assistant', content: '', tool_calls: [read] },
+      { role: 'assistant', content: '', tool_calls: [read] },
+      { role: 'assistant', content: 'Looked.' },
+    ];
+    const events = await chat({ prompt: 'look' });
+    const results = events.filter((e) => e.type === 'tool_result') as Array<{ ok: boolean; text: string }>;
+    expect(results.map((r) => r.ok)).toEqual([true, false]);
+    expect(results[1]!.text).toContain('already made this exact call');
+    const canvas = requests.at(-1)!.messages.filter((m) => m.role === 'tool').at(-2)!;
+    expect(canvas.content).toContain('[Cut off:');
+  });
+
   it('rejects cross-site origins and answers local CORS preflight', async () => {
     const evil = await fetch(`${server.httpUrl}/assist/models`, { headers: { origin: 'https://evil.example' } });
     expect(evil.status).toBe(403);
