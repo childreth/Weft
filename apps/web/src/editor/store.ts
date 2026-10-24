@@ -74,6 +74,8 @@ interface EditorState {
   setCollaborators(collaborators: Collaborator[]): void;
   setAgentActivity(activity: AgentActivity | null): void;
   setCollapsed(id: string, collapsed: boolean): void;
+  /** Collapses these layers and expands every other (⌥L passes every layer with children). */
+  collapseOnly(ids: Iterable<string>): void;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -114,4 +116,5 @@ export const useEditor = create<EditorState>()((set, get) => ({
     else next.delete(id);
     set({ collapsed: next });
   },
+  collapseOnly: (ids) => set({ collapsed: new Set(ids) }),
 }));

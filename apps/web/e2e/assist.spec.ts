@@ -16,7 +16,8 @@ const MODELS = {
   },
 };
 
-test('prompt streams tool steps and the reply; Undo reverts the turn', async ({ page }) => {
+test('prompt streams tool steps and the reply; Undo reverts the turn', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   let chatBody: Record<string, unknown> = {};
   await page.route('**/assist/chat', (route) => {
     chatBody = route.request().postDataJSON();
@@ -59,7 +60,15 @@ test('prompt streams tool steps and the reply; Undo reverts the turn', async ({ 
   await expect(log.locator('.is-failed')).toHaveCount(1);
   expect(chatBody).toMatchObject({ prompt: 'stack these', model: 'granite4.1:3b', selection: [features] });
   expect(typeof chatBody.session).toBe('string');
+
+  // Each message copies its text; a reply copies its Markdown source.
+  const reply = log.locator('.gf-assist-message.is-reply').first();
+  await reply.hover();
+  await expect(reply.getByRole('button', { name: 'Copy message' })).toBeVisible();
   await page.screenshot({ path: 'test-results/m3-assist.png' });
+  await reply.getByRole('button', { name: 'Copy message' }).click();
+  await expect(reply.getByRole('button', { name: 'Copy message' })).toHaveText('Copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('- **Grid**: one column');
 
   await page.getByRole('button', { name: 'Undo assist change' }).click();
   await expect(log).toContainText('Undid 1 change.');

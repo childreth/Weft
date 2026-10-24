@@ -307,9 +307,23 @@ body {
   background: var(--ui-panel-2);
   overflow-wrap: anywhere;
 }
+.gf-assist-message { display: flex; flex-direction: column; align-items: flex-start; }
+.gf-assist-message.is-user { align-self: flex-end; align-items: flex-end; max-width: 85%; }
+/* Shown on hover; a row is kept for it so messages don't shift. */
+.gf-assist-copy {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+}
+.gf-assist-copy:hover { color: var(--ui-text); }
+.gf-assist-message:hover .gf-assist-copy, .gf-assist-copy:focus-visible { opacity: 1; }
+@media (hover: none) { .gf-assist-copy { opacity: 1; } }
 .gf-assist-entry.is-user {
-  align-self: flex-end;
-  max-width: 85%;
   background: var(--ui-accent-soft);
   border-radius: 8px;
   padding: 4px 10px;

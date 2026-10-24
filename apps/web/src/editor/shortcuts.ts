@@ -57,6 +57,12 @@ function onKeyDown(e: KeyboardEvent) {
     state.select([...scene.children(first ? first.parentId : null)]);
     return;
   }
+  if (e.altKey && !mod && !e.shiftKey && e.code === 'KeyL') {
+    // ⌥L collapses every layer, like Figma.
+    e.preventDefault();
+    state.collapseOnly([...scene.nodes.keys()].filter((id) => scene.children(id).length > 0));
+    return;
+  }
   if (e.altKey && !mod && state.selection.length > 0) {
     // ⌥A/D/H left/right/center, ⌥W/S/V top/bottom/middle, ⌥⇧H/V distribute. Codes: ⌥ remaps e.key on macOS.
     const axis = e.shiftKey ? DISTRIBUTE_KEYS[e.code] : undefined;

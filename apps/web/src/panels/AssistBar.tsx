@@ -24,6 +24,8 @@ const TOOL_LABELS: Record<string, string> = {
   delete_nodes: 'Deleted nodes',
   undo_agent_change: 'Undid a change',
   select_nodes: 'Selected the result',
+  read_skill: 'Read the design guide',
+  get_screenshot: 'Took a screenshot',
 };
 
 const MODEL_KEY = 'weft:assist-model';
@@ -35,6 +37,25 @@ const savedModel = (): string | null => {
   }
 };
 const gb = (bytes: number) => (bytes > 0 ? ` · ${(bytes / 1e9).toFixed(1)} GB` : '');
+
+/** Copies a message's text (a reply's Markdown source), confirming briefly. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access denied: selecting the text still works.
+    }
+  };
+  return (
+    <button type="button" className="gf-assist-copy" aria-label="Copy message" onClick={() => void copy()}>
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
 
 /** Prompt bar at the bottom of the canvas: edits the document with an Ollama model (local or cloud) through the server. */
 export function AssistBar() {
@@ -155,21 +176,26 @@ function AssistPrompt() {
     <div className="gf-assist" data-testid="assist">
       {open && entries.length > 0 && (
         <div className="gf-assist-log" ref={logRef} data-testid="assist-log">
-          {entries.map((entry, i) => (
-            <div key={i} className={`gf-assist-entry is-${entry.kind}${entry.kind === 'tool' && entry.ok === false ? ' is-failed' : ''}`}>
-              {entry.kind === 'tool' ? (
-                <>
-                  <span className="gf-assist-tool-mark">{entry.ok === undefined ? '…' : entry.ok ? '✓' : '✕'}</span>
-                  {TOOL_LABELS[entry.name] ?? entry.name}
-                  {entry.detail && <span className="gf-assist-detail">{entry.detail}</span>}
-                </>
-              ) : entry.kind === 'reply' ? (
-                <Markdown text={entry.text} />
-              ) : (
-                entry.text
-              )}
-            </div>
-          ))}
+          {entries.map((entry, i) =>
+            entry.kind === 'reply' || entry.kind === 'user' ? (
+              <div key={i} className={`gf-assist-message is-${entry.kind}`}>
+                <div className={`gf-assist-entry is-${entry.kind}`}>{entry.kind === 'reply' ? <Markdown text={entry.text} /> : entry.text}</div>
+                <CopyButton text={entry.text} />
+              </div>
+            ) : (
+              <div key={i} className={`gf-assist-entry is-${entry.kind}${entry.kind === 'tool' && entry.ok === false ? ' is-failed' : ''}`}>
+                {entry.kind === 'tool' ? (
+                  <>
+                    <span className="gf-assist-tool-mark">{entry.ok === undefined ? '…' : entry.ok ? '✓' : '✕'}</span>
+                    {TOOL_LABELS[entry.name] ?? entry.name}
+                    {entry.detail && <span className="gf-assist-detail">{entry.detail}</span>}
+                  </>
+                ) : (
+                  entry.text
+                )}
+              </div>
+            ),
+          )}
           {running && <div className="gf-assist-entry is-pending">Thinking…</div>}
         </div>
       )}
