@@ -107,6 +107,23 @@ describe('MCP tools', () => {
     expect((await call('get_screenshot', { doc: 'shot', id: 'nope' })).text).toContain('not found');
   });
 
+  it('flags clipped or spilling content, not glyphs past a tight line height', async () => {
+    const room = server.rooms.get('shot-overflow');
+    const board = room.doc.createNode({ type: 'frame', name: 'Board', frame: { x: 0, y: 2000, width: 400, height: 600 }, styles: { display: 'flex', flexDirection: 'column', gap: '24px' } });
+    const text = (styles: Record<string, string>) =>
+      room.doc.createNode({ type: 'text', tag: 'p', parentId: board, text: 'Ember Pumpkin Spice Roast Chicken, slow roasted', styles });
+    const heading = text({ fontSize: '64px', lineHeight: '0.85', fontFamily: 'serif', margin: '0' });
+    // Three lines of text in a box one line tall.
+    const spill = text({ width: '120px', height: '20px', margin: '0' });
+    const clipped = text({ width: '120px', height: '20px', margin: '0', overflow: 'hidden' });
+    const res = (await client.callTool({ name: 'get_screenshot', arguments: { doc: 'shot-overflow', id: board, depth: 1 } })) as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    const boxes = JSON.parse(res.content.find((c) => c.type === 'text')!.text!) as { boxes: Array<{ id: string; overflows?: boolean }> };
+    const flagged = (id: string) => !!boxes.boxes.find((b) => b.id === id)!.overflows;
+    expect([flagged(heading), flagged(spill), flagged(clipped)]).toEqual([false, true, true]);
+  });
+
   it('never lets a render reach the network', async () => {
     let hits = 0;
     const { createServer } = await import('node:http');
@@ -432,7 +449,7 @@ describe('sync relay', () => {
     provider.destroy();
   });
 
-  it('reminds an agent that creates nodes before reading the style guide, until it reads it', async () => {
+  it('reminds an agent that creates or restyles nodes before reading the style guide, until it reads it', async () => {
     const fresh = new Client({ name: 'grok', version: '1.0.0' });
     await fresh.connect(new StreamableHTTPClientTransport(new URL(`${server.httpUrl}/mcp`)));
     const create = async () => {
@@ -443,10 +460,20 @@ describe('sync relay', () => {
       return JSON.parse(res.content[0]!.text) as { created: unknown[]; note?: string };
     };
     expect((await create()).note).toContain('read_skill');
+    const update = async (patch: Record<string, unknown>) => {
+      const id = server.rooms.get('remind').doc.getChildren(null)[0]!.id;
+      const res = (await fresh.callTool({ name: 'update_nodes', arguments: { doc: 'remind', updates: [{ id, ...patch }] } })) as {
+        content: Array<{ text: string }>;
+      };
+      return JSON.parse(res.content[0]!.text) as { note?: string };
+    };
+    expect((await update({ styles: { color: '#5a2a14' } })).note).toContain('read_skill');
+    expect((await update({ name: 'Renamed' })).note).toBeUndefined();
     await fresh.callTool({ name: 'read_skill', arguments: { path: 'layout.md' } });
     expect((await create()).note).toBeDefined();
     await fresh.callTool({ name: 'read_skill', arguments: { path: 'style.md' } });
     expect((await create()).note).toBeUndefined();
+    expect((await update({ styles: { color: '#5a2a14' } })).note).toBeUndefined();
     await fresh.close();
   });
 

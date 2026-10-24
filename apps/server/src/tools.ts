@@ -343,7 +343,7 @@ export interface ToolServices {
 /** Where rendered pages fetch fonts from; the renderer answers these itself from the cache. */
 const RENDER_FONTS = 'https://fonts.weft.invalid';
 
-/** `remindSkill`: nudge an agent that creates nodes without having read the style guide (off where read_skill isn't offered). */
+/** `remindSkill`: nudge an agent that creates or restyles nodes without having read the style guide (off where read_skill isn't offered). */
 export interface McpServerOptions {
   remindSkill?: boolean;
 }
@@ -552,7 +552,12 @@ export function createMcpServer(
           touched.add(id);
         }
         const warnings = [...backgroundWarnings(room, updates), ...iconWarnings(room, touched)];
-        return { updated: updates.map((u) => u.id), ...(warnings.length && { warnings }) };
+        const restyled = updates.some((u) => u.styles || u.breakpoints);
+        return {
+          updated: updates.map((u) => u.id),
+          ...(warnings.length && { warnings }),
+          ...(remindSkill && restyled && !identity.readStyleGuide && { note: SKILL_REMINDER }),
+        };
       });
     },
   );
@@ -900,7 +905,7 @@ export function createMcpServer(
     {
       title: 'Screenshot an artboard or node',
       description:
-        'Renders an artboard (or one node within it) to a PNG exactly as the browser lays it out, plus the boxes of its children (x, y, width, height relative to the image, and overflows when content is clipped). Works with no editor open. Pass width to render the artboard at another width (390 mobile, 768 tablet) and check its breakpoints. Use it after each section you build, and to compare with a reference image.',
+        'Renders an artboard (or one node within it) to a PNG exactly as the browser lays it out, plus the boxes of its children (x, y, width, height relative to the image, and overflows when content is clipped or spills well past its box). Works with no editor open. Pass width to render the artboard at another width (390 mobile, 768 tablet) and check its breakpoints. Use it after each section you build, and to compare with a reference image.',
       inputSchema: {
         doc: docParam,
         id: z.string().optional().describe('Artboard or node id; defaults to the first artboard'),
