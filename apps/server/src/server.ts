@@ -350,11 +350,12 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     close: async () => {
       clearInterval(sweep);
       assistant.close();
-      await services.renderer.close();
       for (const id of [...sessions.keys()]) endSession(id);
       for (const client of wss.clients) client.terminate();
       wss.close();
+      // Save documents before anything slow: tsx watch force-kills a process that takes too long to exit.
       rooms.close();
+      await services.renderer.close();
       await new Promise<void>((resolve) => {
         http.close(() => resolve());
         http.closeAllConnections(); // open SSE streams from agents
