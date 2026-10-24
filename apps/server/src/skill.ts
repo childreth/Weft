@@ -1,6 +1,15 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BREAKPOINTS, CONTAINER_TAGS, STYLE_PROPS, TEXT_TAGS } from '@weft/core';
+import {
+  BREAKPOINTS,
+  CONTAINER_TAGS,
+  STYLE_GROUP_LABELS,
+  STYLE_PROPS,
+  TEXT_TAGS,
+  UNSUPPORTED_STYLES,
+  getStyleMeta,
+  type StyleGroup,
+} from '@weft/core';
 
 /**
  * The Weft design skill (`apps/server/skill/*.md`), served to agents over MCP
@@ -12,7 +21,13 @@ import { BREAKPOINTS, CONTAINER_TAGS, STYLE_PROPS, TEXT_TAGS } from '@weft/core'
 const SKILL_DIR = join(import.meta.dirname, '../skill');
 
 const FILLS: Record<string, string> = {
-  STYLE_PROPS: STYLE_PROPS.join(', '),
+  // One line per kind, in the Inspector's order.
+  STYLE_PROPS: (Object.entries(STYLE_GROUP_LABELS) as Array<[StyleGroup, string]>)
+    .map(([group, label]) => `  - ${label}: ${STYLE_PROPS.filter((p) => getStyleMeta(p).group === group).join(', ')}`)
+    .join('\n'),
+  UNSUPPORTED_STYLES: Object.entries(UNSUPPORTED_STYLES)
+    .map(([name, instead]) => `\`${name}\` (${instead})`)
+    .join(', '),
   CONTAINER_TAGS: CONTAINER_TAGS.join(', '),
   TEXT_TAGS: TEXT_TAGS.join(', '),
   BREAKPOINTS: BREAKPOINTS.map((b) => `\`${b.id}\` (≤ ${b.maxWidth}px)`).join(', '),

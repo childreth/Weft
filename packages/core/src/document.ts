@@ -318,14 +318,19 @@ function patchFrame(frame: ArtboardFrame, patch: Partial<ArtboardFrame>): Artboa
   return normalizeFrame({ ...frame, ...patch, heightMode });
 }
 
-/** Common names that aren't style properties here, and what to use instead. */
-const STYLE_ALIASES: Record<string, string> = {
+/**
+ * Real CSS properties Weft doesn't take, and what to use instead. Agents are
+ * told about these by name; anything else they know from CSS is checked
+ * against the allowlist (`STYLE_PROPS`).
+ */
+export const UNSUPPORTED_STYLES: Readonly<Record<string, string>> = {
   background: 'use backgroundColor, or backgroundImage for a gradient',
   font: 'use fontFamily, fontSize, fontWeight and lineHeight',
-  textDecorationLine: 'use textDecoration',
-  transition: 'animation is not supported',
-  animation: 'animation is not supported',
+  transition: 'Weft has no hover states or animation yet',
+  animation: 'Weft has no hover states or animation yet',
   content: 'add a text node instead',
+  float: 'use flex or grid',
+  clear: 'use flex or grid',
 };
 
 function editDistance(a: string, b: string): number {
@@ -344,7 +349,7 @@ function editDistance(a: string, b: string): number {
 
 /** A short "what to use instead" for an unknown style property, or ''. */
 function styleHint(key: string): string {
-  const alias = STYLE_ALIASES[key];
+  const alias = UNSUPPORTED_STYLES[key];
   if (alias) return ` (${alias})`;
   const camel = key.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
   if (camel !== key && isStyleProp(camel)) return ` (use "${camel}")`;

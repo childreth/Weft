@@ -7,7 +7,7 @@ import {
   BREAKPOINT_IDS,
   DEFAULT_ARTBOARD_STYLES,
   GridError,
-  STYLE_PROPS,
+  UNSUPPORTED_STYLES,
   attributeIssues,
   breakpointIssues,
   defaultTokens,
@@ -49,7 +49,7 @@ Model:
 - Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
-- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Only the properties listed in create_nodes are allowed, so check that list instead of guessing; pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images aren't supported yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
+- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images aren't supported yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
@@ -66,7 +66,8 @@ Workflow: get_selection or get_canvas (detail "outline" first) to orient → cre
 
 Sessions end after ${SESSION_IDLE_MINUTES} minutes without a call, and when the Weft server restarts. On HTTP 404 "Session not found", initialize again: documents are saved, so nothing is lost.`;
 
-const AUTHORED_STYLES = `camelCase CSS properties. Allowed: ${STYLE_PROPS.join(', ')}`;
+// Agents know CSS: name what isn't allowed rather than list the ~170 properties that are (read_skill has them by kind).
+const AUTHORED_STYLES = `Standard CSS properties in camelCase (gridTemplateColumns, backgroundColor, textWrap, WebkitLineClamp), values as CSS strings. Not supported: ${Object.keys(UNSUPPORTED_STYLES).join(', ')}. No url() or other external resources. An unknown property is rejected with the closest match.`;
 
 const docParam = z.string().regex(ROOM_NAME).default('default').describe('Document name; omit for the default document');
 const modelParam = z
@@ -230,9 +231,9 @@ function mutate<T>(
       undo.redoStack.pop();
     }
     if (err instanceof GridError) {
-      // An agent that guessed a property name gets the whole list once, not just a hint.
-      const list = /Unknown style property/.test(err.message) ? `\nAllowed style properties: ${STYLE_PROPS.join(', ')}` : '';
-      return fail(`${err.message} (no changes were applied)${list}`);
+      // Typos get a "did you mean" from core; the full list (~170 names) is in read_skill, not repeated per error.
+      const more = /Unknown style property/.test(err.message) ? '\nread_skill lists every supported style property, by kind.' : '';
+      return fail(`${err.message} (no changes were applied)${more}`);
     }
     throw err;
   }

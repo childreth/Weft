@@ -1,18 +1,6 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { getStyleMeta, type StyleGroup, type StyleProp } from '@weft/core';
+import { STYLE_GROUP_LABELS as GROUP_LABELS, getStyleMeta, type StyleGroup, type StyleProp } from '@weft/core';
 
-const GROUP_LABELS: Record<StyleGroup, string> = {
-  layout: 'Layout',
-  grid: 'Grid',
-  child: 'Flex & grid child',
-  position: 'Position',
-  size: 'Size',
-  spacing: 'Spacing',
-  fill: 'Fill',
-  border: 'Border',
-  type: 'Type',
-  effects: 'Effects',
-};
 const GROUP_ORDER = Object.keys(GROUP_LABELS) as StyleGroup[];
 
 /** "gridTemplateColumns" → "Grid Template Columns". */
