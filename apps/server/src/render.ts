@@ -26,7 +26,13 @@ const MEASURE_BOXES = `function ({ selector, depth, max }) {
     if (id) {
       const r = el.getBoundingClientRect();
       const item = { id, tag: el.tagName.toLowerCase(), depth: d, x: Math.round(r.left - origin.left), y: Math.round(r.top - origin.top), width: Math.round(r.width), height: Math.round(r.height) };
-      if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) item.overflows = true;
+      // Where the box clips, any overflow hides content. Where it shows overflow, only a real
+      // spill counts: tight line heights let glyphs poke a few px out of every heading.
+      const style = getComputedStyle(el);
+      const slack = function (overflow) {
+        return overflow === 'visible' ? Math.max(2, parseFloat(style.fontSize) * 0.5) : 1;
+      };
+      if (el.scrollWidth > el.clientWidth + slack(style.overflowX) || el.scrollHeight > el.clientHeight + slack(style.overflowY)) item.overflows = true;
       out.push(item);
     }
     if (d < depth) for (const child of el.children) visit(child, id ? d + 1 : d);
@@ -43,7 +49,7 @@ export interface RenderBox {
   y: number;
   width: number;
   height: number;
-  /** Content wider or taller than the box (clipped or scrolling). */
+  /** Content clipped by the box, or spilling well past it (more than half a line). */
   overflows?: boolean;
 }
 
