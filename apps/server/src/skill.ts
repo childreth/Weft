@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BREAKPOINTS, CONTAINER_TAGS, STYLE_PROPS, TEXT_TAGS } from '@weft/core';
+import { BREAKPOINTS, CONTAINER_TAGS, STYLE_PROPS, TEXT_TAGS, defaultTokens, flattenTokens } from '@weft/core';
 
 /**
  * The Weft design skill (`apps/server/skill/*.md`), served to agents over MCP
@@ -16,6 +16,11 @@ const FILLS: Record<string, string> = {
   CONTAINER_TAGS: CONTAINER_TAGS.join(', '),
   TEXT_TAGS: TEXT_TAGS.join(', '),
   BREAKPOINTS: BREAKPOINTS.map((b) => `\`${b.id}\` (≤ ${b.maxWidth}px)`).join(', '),
+  // Color roles are the default color tokens that point at another token (color.accent → color.blue.600).
+  COLOR_ROLES: flattenTokens(defaultTokens.tokens)
+    .filter((t) => t.path[0] === 'color' && t.path.length === 2 && t.value.startsWith('var('))
+    .map((t) => `\`${t.name}\``)
+    .join(', '),
 };
 
 let files: Map<string, string> | null = null;

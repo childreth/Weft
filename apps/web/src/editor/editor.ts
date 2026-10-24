@@ -117,6 +117,7 @@ export const agentApi = {
   alignNodes: (ids: string[], align: Alignment) => doc.alignNodes(ids, align, ORIGIN_AGENT),
   distributeNodes: (ids: string[], axis: Axis) => doc.distributeNodes(ids, axis, ORIGIN_AGENT),
   importFile: (json: string) => doc.importFile(readWeftFile(json), ORIGIN_AGENT),
+  setTokens: (tokens: Record<string, string | null>) => doc.setTokens(tokens, ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),
 };
 

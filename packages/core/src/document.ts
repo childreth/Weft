@@ -1,7 +1,10 @@
 import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
-import { defaultWeights, findFont, type DocumentFont } from './fonts';
+import { defaultTokens } from './default-tokens';
+import { MAX_DOCUMENT_TOKENS, documentTokenIssues, withDocumentTokens } from './document-tokens';
+import { defaultWeights, findFont, withFontTokens, type DocumentFont } from './fonts';
+import type { TokenSet } from './tokens';
 import {
   BREAKPOINTS,
   VOID_TAGS,
@@ -71,6 +74,8 @@ export interface Snapshot {
   nodes: SceneNode[];
   /** Google Fonts the document uses (absent in older snapshots). */
   fonts?: DocumentFont[];
+  /** The document's own design tokens by path (absent in older snapshots). */
+  tokens?: Record<string, string>;
 }
 
 /** One node's share of an align or distribute command. */
@@ -196,6 +201,7 @@ export function readClipboard(json: string): SceneTree[] {
 export interface WeftFile {
   artboards: SceneTree[];
   fonts: DocumentFont[];
+  tokens: Record<string, string>;
 }
 
 /**
@@ -244,7 +250,13 @@ export function readWeftFile(json: string): WeftFile {
     const weights = Array.isArray(asked) ? asked.filter((w) => font.weights.includes(w)) : [];
     fonts.push({ family: font.family, weights: weights.length ? weights : defaultWeights(font) });
   }
-  return { artboards, fonts };
+  // Checked when imported, against the document they join.
+  const tokens: Record<string, string> = {};
+  const rawTokens = file.tokens as unknown;
+  if (rawTokens && typeof rawTokens === 'object' && !Array.isArray(rawTokens)) {
+    for (const [path, value] of Object.entries(rawTokens).slice(0, MAX_DOCUMENT_TOKENS)) if (typeof value === 'string') tokens[path] = value;
+  }
+  return { artboards, fonts, tokens };
 }
 
 export function readNode(y: YNode): SceneNode {
@@ -487,15 +499,46 @@ export class GridDocument {
   /** Fonts the document uses, by family. */
   readonly fonts: Y.Map<DocumentFont>;
 
+  /** The document's own design tokens (`withDocumentTokens`), value by path. */
+  readonly tokens: Y.Map<string>;
+
   constructor(ydoc: Y.Doc = new Y.Doc()) {
     this.ydoc = ydoc;
     this.nodes = ydoc.getMap<YNode>('nodes');
     this.fonts = ydoc.getMap<DocumentFont>('fonts');
+    this.tokens = ydoc.getMap<string>('tokens');
   }
 
   /** The Yjs types a per-user undo stack should track. */
   get undoScope(): Y.AbstractType<any>[] {
-    return [this.nodes, this.fonts];
+    return [this.nodes, this.fonts, this.tokens];
+  }
+
+  getTokens(): Record<string, string> {
+    return Object.fromEntries([...this.tokens.entries()].sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /**
+   * The tokens every consumer uses (canvas, Inspector, export, agents):
+   * `base` (the defaults), the document's own tokens, then its fonts.
+   */
+  tokenSet(base: TokenSet = defaultTokens): TokenSet {
+    return withFontTokens(withDocumentTokens(base, this.getTokens()), this.getFonts());
+  }
+
+  /**
+   * Adds or changes the document's own tokens; null removes one, bringing back
+   * the default it overrode, if any. All are checked before any changes.
+   */
+  setTokens(entries: Readonly<Record<string, string | null>>, origin: Origin = ORIGIN_LOCAL): void {
+    const base = withFontTokens(defaultTokens, this.getFonts());
+    throwIssues(documentTokenIssues(entries, this.getTokens(), base));
+    this.transact(() => {
+      for (const [path, value] of Object.entries(entries)) {
+        if (value === null) this.tokens.delete(path);
+        else this.tokens.set(path, value.trim());
+      }
+    }, origin);
   }
 
   getFonts(): DocumentFont[] {
@@ -949,13 +992,38 @@ export class GridDocument {
     throwIssues(treeIssues(file.artboards));
     return this.transact(() => {
       if (file.fonts.length) this.addFonts(file.fonts, origin);
+      this.importTokens(file.tokens, origin);
       return this.insertTrees(file.artboards, { parentId: null }, origin);
     }, origin);
   }
 
+  /**
+   * A file's tokens that this document doesn't have; the document's own win, so
+   * importing never restyles what's already here. Invalid ones are dropped.
+   */
+  private importTokens(tokens: Readonly<Record<string, string>>, origin: Origin): void {
+    let entries = Object.entries(tokens).filter(([path]) => !this.tokens.has(path));
+    const base = withFontTokens(defaultTokens, this.getFonts());
+    // Dropping one can break another's alias, so repeat until the rest are valid.
+    while (entries.length) {
+      const issues = documentTokenIssues(Object.fromEntries(entries), this.getTokens(), base);
+      if (issues.length === 0) return this.setTokens(Object.fromEntries(entries), origin);
+      const kept = entries.filter(([path]) => !issues.some((i) => i.startsWith(`"${path}"`)));
+      // An issue with no token named (too many tokens): import none.
+      entries = kept.length < entries.length ? kept : [];
+    }
+  }
+
   toSnapshot(): Snapshot {
     const fonts = this.getFonts();
-    return { format: 'weft', version: 1, nodes: sortSiblings(this.getNodes()), ...(fonts.length && { fonts }) };
+    const tokens = this.getTokens();
+    return {
+      format: 'weft',
+      version: 1,
+      nodes: sortSiblings(this.getNodes()),
+      ...(fonts.length && { fonts }),
+      ...(Object.keys(tokens).length && { tokens }),
+    };
   }
 
   loadSnapshot(snapshot: Snapshot, origin: Origin = ORIGIN_LOCAL): void {
@@ -964,7 +1032,9 @@ export class GridDocument {
     this.transact(() => {
       this.nodes.clear();
       this.fonts.clear();
+      this.tokens.clear();
       if (snapshot.fonts?.length) this.addFonts(snapshot.fonts, origin);
+      if (snapshot.tokens) this.setTokens(snapshot.tokens, origin);
       const byParent = new Map<string | null, SceneNode[]>();
       for (const n of snapshot.nodes) {
         const list = byParent.get(n.parentId) ?? [];
