@@ -7,7 +7,11 @@ import { startGridServer, type GridServer } from './server';
 /** A scripted stand-in for Ollama: replies are taken in order; requests are recorded. */
 let fake: Server;
 let replies: Array<Record<string, unknown>> = [];
-const requests: Array<{ messages: Array<{ role: string; content: string }>; tools: Array<{ function: { name: string; parameters: { properties?: object } } }> }> = [];
+const requests: Array<{
+  messages: Array<{ role: string; content: string; images?: string[] }>;
+  tools: Array<{ function: { name: string; parameters: { properties?: object } } }>;
+  think?: boolean;
+}> = [];
 let server: GridServer;
 const SESSION = 'test-session-1';
 
@@ -20,7 +24,8 @@ beforeAll(async () => {
             { name: 'small:1b', size: 1, capabilities: ['completion', 'tools'] },
             { name: 'big:27b', size: 27, capabilities: ['completion', 'tools', 'thinking'] },
             { name: 'vision-only', size: 5, capabilities: ['completion', 'vision'] },
-            { name: 'kimi:cloud', size: 100, capabilities: ['completion', 'tools'] },
+            { name: 'kimi:cloud', size: 100, capabilities: ['completion', 'tools', 'thinking'] },
+            { name: 'qwen3-vl:235b-cloud', size: 200, remote_host: 'https://ollama.com:443', capabilities: ['completion', 'tools', 'vision'] },
           ],
         }),
       );
@@ -49,11 +54,39 @@ async function chat(body: Record<string, unknown>): Promise<AssistEvent[]> {
 }
 
 describe('assist', () => {
-  it('lists local tool-capable models, largest first', async () => {
+  it('lists tool-capable models: local ones largest first, then cloud ones', async () => {
     const res = await fetch(`${server.httpUrl}/assist/models`);
-    const { models } = (await res.json()) as { models: Array<{ name: string; thinking: boolean }> };
-    expect(models.map((m: { name: string }) => m.name)).toEqual(['big:27b', 'small:1b']);
-    expect(models[0].thinking).toBe(true);
+    const { models } = (await res.json()) as { models: Array<{ name: string; thinking: boolean; cloud: boolean; vision: boolean }> };
+    expect(models.map((m) => m.name)).toEqual(['big:27b', 'small:1b', 'kimi:cloud', 'qwen3-vl:235b-cloud']);
+    expect(models.map((m) => m.cloud)).toEqual([false, false, true, true]);
+    expect(models[0]!.thinking).toBe(true);
+    expect(models[3]!.vision).toBe(true);
+  });
+
+  it('gives cloud models the skill, screenshots when they can see, and their reasoning', async () => {
+    const names = () => requests.at(-1)!.tools.map((t) => t.function.name);
+    await chat({ prompt: 'hi', model: 'big:27b' });
+    expect(names()).not.toContain('read_skill');
+    expect(requests.at(-1)!.think).toBe(false);
+    expect(requests.at(-1)!.messages[0]!.content).toContain('running on a local model');
+
+    await chat({ prompt: 'hi', model: 'kimi:cloud' });
+    expect(names()).toContain('read_skill');
+    expect(names()).not.toContain('get_screenshot');
+    expect(requests.at(-1)!.think).toBeUndefined();
+    expect(requests.at(-1)!.messages[0]!.content).toContain('running on a cloud model');
+
+    replies = [
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'read_skill', arguments: {} } }] },
+      { role: 'assistant', content: 'Read it.' },
+    ];
+    await chat({ prompt: 'design a page', model: 'qwen3-vl:235b-cloud' });
+    expect(names()).toContain('get_screenshot');
+    // The whole skill fits: no cut-off at the local limit.
+    const skill = requests.at(-1)!.messages.at(-1)!;
+    expect(skill).toMatchObject({ role: 'tool' });
+    expect(skill.content.length).toBeGreaterThan(8000);
+    expect(skill.content).not.toContain('[Cut off:');
   });
 
   it('runs tool calls against the document and undoes the whole turn', async () => {

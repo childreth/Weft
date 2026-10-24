@@ -69,6 +69,27 @@ const modelParam = z
   .max(60)
   .optional()
   .describe('Your model name, e.g. "Claude Opus 5.5" — shown on your cursor in the editor');
+/**
+ * Treats null as "not sent" for top-level arguments that can be left out:
+ * some models (gpt-oss) send null for parameters they skip, and coerced
+ * numbers would read it as 0. Arguments
+ * where null means something (parentId: null) are left alone. The published
+ * JSON schema is unchanged.
+ */
+function nullAsMissing<S extends z.ZodRawShape>(shape: S): S {
+  // Coerced numbers accept null too (as 0), so ask whether null stays null.
+  const meansSomething = (schema: z.core.$ZodType) => {
+    const parsed = z.safeParse(schema, null);
+    return parsed.success && parsed.data === null;
+  };
+  return Object.fromEntries(
+    Object.entries(shape).map(([key, schema]) => [
+      key,
+      meansSomething(schema) || !z.safeParse(schema, undefined).success ? schema : z.preprocess((v) => (v === null ? undefined : v), schema),
+    ]),
+  ) as S;
+}
+
 const BREAKPOINT_STYLES = `Style overrides per breakpoint (${BREAKPOINT_IDS.join(', ')}), layered over styles`;
 const breakpointKey = z.enum(BREAKPOINT_IDS as [string, ...string[]]);
 
@@ -213,6 +234,22 @@ function mutate<T>(
 }
 
 /**
+ * Updates that set a background color the node's backgroundImage paints over:
+ * models recoloring (e.g. a light version of a dark page) miss it and report
+ * the change as done.
+ */
+function backgroundWarnings(room: Room, updates: Array<{ id: string; styles?: Record<string, string | null> }>): string[] {
+  return updates.flatMap(({ id, styles }) => {
+    const node = room.doc.getNode(id);
+    const image = node?.styles.backgroundImage;
+    if (!node || !image || !styles?.backgroundColor || 'backgroundImage' in styles) return [];
+    return [
+      `${node.name} (${id}): its backgroundImage (${image.length > 60 ? `${image.slice(0, 60)}…` : image}) paints over backgroundColor, so the new color won't show. Set backgroundImage to null, or to a gradient in the new colors`,
+    ];
+  });
+}
+
+/**
  * Icon nodes the font can't draw: a name that isn't a Material Symbols icon, or
  * an icon font the document hasn't added. Either way the name shows as text.
  */
@@ -321,6 +358,9 @@ export function createMcpServer(
   { remindSkill = true }: McpServerOptions = {},
 ): McpServer {
   const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
+  const register = server.registerTool.bind(server);
+  server.registerTool = ((name, config, callback) =>
+    register(name, { ...config, inputSchema: config.inputSchema && (nullAsMissing(config.inputSchema as z.ZodRawShape) as typeof config.inputSchema) }, callback)) as typeof server.registerTool;
   /** Reading the whole skill, or style.md, counts as reading the style guide. */
   const markRead = (path?: string) => {
     if (path === undefined || path.replace(/^\.\//, '') === 'style.md') identity.readStyleGuide = true;
@@ -511,7 +551,7 @@ export function createMcpServer(
           room.doc.updateNode(id, patch as NodePatch, agent.identity.origin);
           touched.add(id);
         }
-        const warnings = iconWarnings(room, touched);
+        const warnings = [...backgroundWarnings(room, updates), ...iconWarnings(room, touched)];
         return { updated: updates.map((u) => u.id), ...(warnings.length && { warnings }) };
       });
     },

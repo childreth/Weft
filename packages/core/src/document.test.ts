@@ -398,6 +398,25 @@ describe('weft files', () => {
     expect(node.styles).toEqual({ backgroundImage: gradient });
     expect(node.breakpoints).toEqual({ mobile: { backgroundImage: 'radial-gradient(red, blue)' } });
   });
+
+  it('repairs gradients stored in a document, and copies layers that still have them', () => {
+    const doc = new GridDocument();
+    const board = doc.createNode({ type: 'frame', name: 'Board', frame: { x: 0, y: 0, width: 400, height: 300 } });
+    const card = doc.createNode({ type: 'frame', parentId: board, styles: { backgroundImage: 'linear-gradient(#000, #111)' } });
+    // Saved before color properties rejected gradients.
+    const stored = (id: string) => doc.nodes.get(id)!.get('styles') as Y.Map<string>;
+    stored(board).set('backgroundColor', 'linear-gradient(#fff, #eee)');
+    stored(card).set('backgroundColor', 'linear-gradient(#fff, #eee)');
+
+    const copy = doc.duplicateNode(board);
+    expect(doc.getNode(copy)!.styles).toEqual({ backgroundImage: 'linear-gradient(#fff, #eee)' });
+    expect(doc.getTree(copy)[0]!.children[0]!.styles).toEqual({ backgroundImage: 'linear-gradient(#000, #111)' });
+
+    expect(doc.repairGradients()).toBe(2);
+    expect(doc.getNode(board)!.styles).toEqual({ backgroundImage: 'linear-gradient(#fff, #eee)' });
+    expect(doc.getNode(card)!.styles).toEqual({ backgroundImage: 'linear-gradient(#000, #111)' });
+    expect(doc.repairGradients()).toBe(0);
+  });
 });
 
 describe('validation', () => {

@@ -140,6 +140,18 @@ function checkLayerShapes(nodes: readonly unknown[], where: string, maxNodes: nu
   for (const node of nodes) check(node, 0);
 }
 
+/** The style patch that `repairGradients` applies to one style set, or null when it's fine. */
+function gradientRepair(styles: Partial<Record<string, string>> | undefined): Record<string, string | null> | null {
+  let patch: Record<string, string | null> | null = null;
+  for (const [key, value] of Object.entries(styles ?? {})) {
+    if (typeof value !== 'string' || !isStyleProp(key) || !isColorProp(key) || !GRADIENT.test(value)) continue;
+    patch ??= {};
+    patch[key] = null;
+    if (key === 'backgroundColor' && styles!.backgroundImage === undefined) patch.backgroundImage = value;
+  }
+  return patch;
+}
+
 /**
  * Fixes layers saved before gradients in color properties were rejected: a
  * background gradient moves to backgroundImage (where it was meant to be), and
@@ -147,11 +159,9 @@ function checkLayerShapes(nodes: readonly unknown[], where: string, maxNodes: nu
  */
 function repairGradients(trees: readonly SceneTree[]): void {
   const repair = (styles: Partial<Record<string, string>> | undefined) => {
-    if (!styles) return;
-    for (const [key, value] of Object.entries(styles)) {
-      if (typeof value !== 'string' || !isStyleProp(key) || !isColorProp(key) || !GRADIENT.test(value)) continue;
-      if (key === 'backgroundColor' && styles.backgroundImage === undefined) styles.backgroundImage = value;
-      delete styles[key];
+    for (const [key, value] of Object.entries(gradientRepair(styles) ?? {})) {
+      if (value === null) delete styles![key];
+      else styles![key] = value;
     }
   };
   const visit = (tree: SceneTree) => {
@@ -822,7 +832,39 @@ export class GridDocument {
       frame = patchFrame(source.frame, patch);
       if (options.frame?.x === undefined) frame = this.besideRow(frame);
     }
+    // A copy is validated like a create: old layers must not make the original uncopyable.
+    repairGradients([tree!]);
     return this.transact(() => this.copyTree(tree!, source.parentId, beforeId, { name: options.name, frame }, origin), origin);
+  }
+
+  /**
+   * Repairs gradients saved in color properties before they were rejected (as
+   * opening a file does), so stored documents stop failing validation on copy.
+   * Returns how many layers changed.
+   */
+  repairGradients(origin: Origin = ORIGIN_SEED): number {
+    let changed = 0;
+    this.transact(() => {
+      for (const node of this.getNodes()) {
+        const styles = gradientRepair(node.styles);
+        const breakpoints = Object.fromEntries(
+          Object.entries(node.breakpoints ?? {}).flatMap(([bp, bpStyles]) => {
+            const patch = gradientRepair(bpStyles);
+            return patch ? [[bp, patch]] : [];
+          }),
+        );
+        if (!styles && Object.keys(breakpoints).length === 0) continue;
+        const y = this.requireY(node.id);
+        const map = y.get('styles') as Y.Map<string>;
+        for (const [k, v] of Object.entries(styles ?? {})) {
+          if (v === null) map.delete(k);
+          else map.set(k, v);
+        }
+        if (Object.keys(breakpoints).length > 0) writeBreakpoints(y, breakpoints);
+        changed++;
+      }
+    }, origin);
+    return changed;
   }
 
   /** Subtrees of `ids` for the clipboard: outermost nodes only, in document order. */

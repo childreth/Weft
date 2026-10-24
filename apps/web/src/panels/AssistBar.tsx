@@ -36,7 +36,7 @@ const savedModel = (): string | null => {
 };
 const gb = (bytes: number) => (bytes > 0 ? ` · ${(bytes / 1e9).toFixed(1)} GB` : '');
 
-/** Prompt bar at the bottom of the canvas: edits the document with a local model through the server. */
+/** Prompt bar at the bottom of the canvas: edits the document with an Ollama model (local or cloud) through the server. */
 export function AssistBar() {
   if (mode !== 'server') {
     return (
@@ -68,7 +68,8 @@ function AssistPrompt() {
       const names = found.map((m) => m.name);
       if (names.includes(current)) return current;
       const saved = savedModel();
-      return saved && names.includes(saved) ? saved : (names[0] ?? '');
+      // Offline-first: a cloud model is only picked when the user chose it.
+      return saved && names.includes(saved) ? saved : (found.find((m) => !m.cloud) ?? found[0])?.name ?? '';
     });
   };
   useEffect(() => {
@@ -144,6 +145,9 @@ function AssistPrompt() {
     setCanUndo(false);
   };
 
+  const cloud = !!models?.find((m) => m.name === model)?.cloud;
+  const local = models?.filter((m) => !m.cloud) ?? [];
+  const remote = models?.filter((m) => m.cloud) ?? [];
   const target =
     selection.length === 1 ? (scene.nodes.get(selection[0]!)?.name ?? 'the selection') : selection.length > 1 ? `${selection.length} layers` : 'the canvas';
 
@@ -184,7 +188,7 @@ function AssistPrompt() {
         )}
         {modelsError || models?.length === 0 ? (
           <span className="gf-assist-status" data-testid="assist-status">
-            {modelsError ?? 'No local models with tool calling. Pull one with ollama pull.'}{' '}
+            {modelsError ?? 'No models with tool calling. Pull one with ollama pull.'}{' '}
             <button type="button" className="gf-assist-link" onClick={() => void loadModels()}>
               Retry
             </button>
@@ -192,23 +196,41 @@ function AssistPrompt() {
         ) : (
           <select
             className="gf-assist-model"
-            aria-label="Local model"
+            aria-label="Assist model"
             value={model}
             disabled={!models || !!running}
             onChange={(e) => chooseModel(e.target.value)}
           >
             {!models && <option>Loading models…</option>}
-            {models?.map((m) => (
-              <option key={m.name} value={m.name} title={`${m.name}${gb(m.size)}`}>
-                {m.name}
-              </option>
-            ))}
+            {local.length > 0 && (
+              <optgroup label="Local · on this machine">
+                {local.map((m) => (
+                  <option key={m.name} value={m.name} title={`${m.name}${gb(m.size)}`}>
+                    {m.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {remote.length > 0 && (
+              <optgroup label="Cloud · ollama.com">
+                {remote.map((m) => (
+                  <option key={m.name} value={m.name} title={`${m.name} runs on ollama.com: your prompt and the document are sent there`}>
+                    ☁ {m.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
+        )}
+        {cloud && (
+          <span className="gf-assist-cloud" data-testid="assist-cloud" title="This model runs on ollama.com: your prompt and the document are sent there, and it needs a network">
+            Cloud
+          </span>
         )}
         <input
           className="gf-assist-input"
-          aria-label="Ask the local model"
-          placeholder={`Ask the local model to edit ${target}…`}
+          aria-label="Ask the model"
+          placeholder={`Ask the ${cloud ? 'cloud' : 'local'} model to edit ${target}…`}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

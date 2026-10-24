@@ -262,6 +262,15 @@ body {
   font: inherit;
   font-size: 12px;
 }
+.gf-assist-cloud {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--ui-accent);
+  border-radius: 4px;
+  color: var(--ui-accent);
+  font-size: 11px;
+  cursor: default;
+}
 .gf-assist-input {
   flex: 1;
   min-width: 0;
