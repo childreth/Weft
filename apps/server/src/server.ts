@@ -13,7 +13,7 @@ import { FontCache, type FontOrigins } from './fonts';
 import { Renderer } from './render';
 import { ROOM_NAME, RoomRegistry } from './room';
 import { decodeFontQuery } from '@weft/core';
-import { createMcpServer } from './tools';
+import { SESSION_IDLE_MINUTES, createMcpServer } from './tools';
 
 export interface GridServerOptions {
   port?: number;
@@ -39,7 +39,7 @@ const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 /** Set by tunnels and reverse proxies: the request came from elsewhere, whatever its Host says. */
 const PROXY_HEADERS = ['x-forwarded-for', 'x-forwarded-host', 'forwarded', 'cf-connecting-ip', 'x-real-ip'];
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
-const SESSION_IDLE_MS = 30 * 60 * 1000;
+const SESSION_IDLE_MS = SESSION_IDLE_MINUTES * 60 * 1000;
 
 /** One connected agent: an MCP session with its own identity (cursor). */
 interface AgentSession {
@@ -145,7 +145,14 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     const existing = found?.owner === owner ? found : undefined;
     if (sessionId && !existing) {
       // Unknown or expired session: the client must re-initialize.
-      return json(res, 404, { jsonrpc: '2.0', error: { code: -32001, message: 'Session not found' }, id: null });
+      return json(res, 404, {
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: `Session not found: sessions end after ${SESSION_IDLE_MINUTES} minutes without a call, and when the Weft server restarts. Initialize again; documents are saved.`,
+        },
+        id: null,
+      });
     }
     if (existing) {
       existing.lastSeen = Date.now();

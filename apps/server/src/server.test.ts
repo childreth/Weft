@@ -104,6 +104,10 @@ describe('MCP tools', () => {
     expect(info(node).boxes[0]).toMatchObject({ id: features.id, x: 0, y: 0 });
     expect(info(node).boxes.every((b: { depth: number }) => b.depth <= 1)).toBe(true);
 
+    const boxesOnly = (await client.callTool({ name: 'get_screenshot', arguments: { doc: 'shot', id: features.id, image: false } })) as Shot;
+    expect(boxesOnly.content.map((c) => c.type)).toEqual(['text']);
+    expect(info(boxesOnly).boxes[0]).toMatchObject({ id: features.id });
+
     expect((await call('get_screenshot', { doc: 'shot', id: 'nope' })).text).toContain('not found');
   });
 

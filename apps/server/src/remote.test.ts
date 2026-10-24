@@ -117,6 +117,7 @@ describe('remote MCP access', () => {
     const list = { jsonrpc: '2.0', id: 2, method: 'tools/list' };
     const asGrok = await send('/mcp', { method: 'POST', headers: { ...TUNNEL, authorization: `Bearer ${grok.token}`, 'mcp-session-id': sessionId }, body: list });
     expect(asGrok.status).toBe(404);
+    expect((JSON.parse(asGrok.body) as { error: { message: string } }).error.message).toMatch(/^Session not found: .*Initialize again/);
 
     expect((await settings('revoke', { id: muse.agent.id })).status).toBe(200);
     const revoked = await send('/mcp', { method: 'POST', headers: { ...TUNNEL, authorization: `Bearer ${muse.token}`, 'mcp-session-id': sessionId }, body: list });

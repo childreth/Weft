@@ -39,6 +39,9 @@ import type { Renderer } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
 import { readSkill, skillFiles } from './skill';
 
+/** MCP sessions end after this long without a request (and when the server restarts). */
+export const SESSION_IDLE_MINUTES = 30;
+
 export const SERVER_INSTRUCTIONS = `Weft is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.
 
 Model:
@@ -57,9 +60,11 @@ Model:
 
 Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
 
-Before designing or restyling anything, call read_skill with no path: it returns Weft's whole design guide (layout recipes, style and taste rules, how to check your work). Read it again when you start a new design.
+Before designing or restyling anything, call read_skill with no path: it returns Weft's whole design guide (layout recipes, style and taste rules, how to check your work). Once per session is enough; read it again only when it's no longer in your context.
 
-Workflow: get_selection or get_canvas (detail "outline" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile) → select_nodes to show the user what you changed.`;
+Workflow: get_selection or get_canvas (detail "outline" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile; image false for just the boxes) → select_nodes to show the user what you changed.
+
+Sessions end after ${SESSION_IDLE_MINUTES} minutes without a call, and when the Weft server restarts. On HTTP 404 "Session not found", initialize again: documents are saved, so nothing is lost.`;
 
 const AUTHORED_STYLES = `camelCase CSS properties. Allowed: ${STYLE_PROPS.join(', ')}`;
 
@@ -911,11 +916,12 @@ export function createMcpServer(
         id: z.string().optional().describe('Artboard or node id; defaults to the first artboard'),
         width: z.coerce.number().int().min(200).max(3840).optional().describe("Render width in CSS px; defaults to the artboard's width"),
         depth: z.coerce.number().int().min(0).max(6).default(2).describe('Levels of child boxes to report'),
+        image: z.boolean().default(true).describe('false returns only the boxes (sizes and overflow flags), far smaller than the PNG'),
         model: modelParam,
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, id, width, depth, model }) => {
+    async ({ doc, id, width, depth, image, model }) => {
       try {
         const { room, agent } = open(doc, model);
         const targetId = id ?? room.doc.getChildren(null)[0]?.id;
@@ -951,12 +957,9 @@ export function createMcpServer(
           ...(shot.truncated && { truncated: 'Only the top of this tall artboard is shown' }),
           boxes: shot.boxes.map((b) => ({ ...b, name: names.get(b.id) })),
         };
-        return {
-          content: [
-            { type: 'image', data: shot.png.toString('base64'), mimeType: 'image/png' },
-            { type: 'text', text: JSON.stringify(summary, null, 2) },
-          ],
-        };
+        const text = { type: 'text' as const, text: JSON.stringify(summary, null, 2) };
+        if (!image) return { content: [text] };
+        return { content: [{ type: 'image' as const, data: shot.png.toString('base64'), mimeType: 'image/png' }, text] };
       } catch (err) {
         return fail((err as Error).message);
       }
