@@ -45,6 +45,17 @@ test('collapse hides children; selecting a hidden child expands its ancestors', 
   await expect(row(page, ids.Nav!)).toBeVisible();
 });
 
+test('⌥L collapses every layer', async ({ page }) => {
+  const ids = await open(page);
+  await expect(row(page, ids.Nav!)).toBeVisible();
+  await page.keyboard.press('Alt+KeyL');
+  await expect(row(page, ids.artboard!)).toBeVisible();
+  await expect(row(page, ids.Header!)).toHaveCount(0);
+  await page.getByTestId(`twisty-${ids.artboard}`).click();
+  await expect(row(page, ids.Header!)).toBeVisible();
+  await expect(row(page, ids.Nav!)).toHaveCount(0);
+});
+
 test('hide and lock toggles; locked layers are click-through on the canvas', async ({ page }) => {
   const ids = await open(page);
   const hero = row(page, ids.Hero!);
