@@ -263,7 +263,7 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
   const row = (
     <div className="gf-style-row" data-style-prop={prop}>
       <span className="gf-row-label" title={prop}>{styleLabel(prop)}</span>
-      {meta.group === 'fill' || prop === 'color' || prop === 'borderColor' ? (
+      {meta.group === 'fill' || meta.tokenGroups?.includes('color') ? (
         <span className="gf-swatch" style={{ background: value }} />
       ) : null}
       {meta.options ? (

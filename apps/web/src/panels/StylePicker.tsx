@@ -40,15 +40,16 @@ export function StylePicker({ props, label, onPick }: { props: readonly StylePro
   const [active, setActive] = useState(0);
   const button = useRef<HTMLButtonElement>(null);
 
+  // CSS spelling works too: "text-decoration-" finds Text Decoration Style.
+  const q = query.replace(/[-_\s]+/g, ' ').trim().toLowerCase();
   const options = useMemo(() => {
-    const q = query.trim().toLowerCase();
     if (!q) return GROUP_ORDER.flatMap((g) => props.filter((p) => getStyleMeta(p).group === g));
     return props
       .map((p, i) => ({ p, r: rank(p, q), i }))
       .filter((o): o is { p: StyleProp; r: number; i: number } => o.r !== null)
       .sort((a, b) => a.r - b.r || a.i - b.i)
       .map((o) => o.p);
-  }, [props, query]);
+  }, [props, q]);
 
   const close = () => {
     setOpen(false);
@@ -74,7 +75,7 @@ export function StylePicker({ props, label, onPick }: { props: readonly StylePro
     }
   };
 
-  const grouped = !query.trim();
+  const grouped = !q;
   return (
     <>
       <button ref={button} type="button" className="gf-tool gf-add-style" aria-label={label} aria-expanded={open} onClick={() => (open ? close() : setOpen(true))}>

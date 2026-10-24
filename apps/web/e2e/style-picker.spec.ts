@@ -22,6 +22,9 @@ test('+ Add searches style properties: grouped list, type-ahead, keyboard, Esc',
   const search = page.getByLabel('Add style property: search');
   await search.fill('ar');
   await expect(picker.getByRole('option').first()).toContainText('Aspect Ratio');
+  // CSS spelling works too.
+  await search.fill('text-decoration-');
+  await expect(picker.getByRole('option')).toHaveText([/^Text Decoration(?! )/, /^Text Decoration Style/, /^Text Decoration Color/, /^Text Decoration Thickness/]);
   await search.fill('gaf');
   await expect(picker.getByRole('option').first()).toContainText('Grid Auto Flow');
   await search.press('Enter');
