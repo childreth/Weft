@@ -190,6 +190,35 @@ describe('MCP tools', () => {
     expect(room.doc.getNode(pricing.children[1].children[0].id)!.text).toBe('Free');
   });
 
+  it('accepts numbers sent as strings', async () => {
+    const { data, isError } = await call('get_canvas', { doc: 'read', maxDepth: '0' });
+    expect(isError).toBe(false);
+    expect(data.nodes[0].children).toBeUndefined();
+  });
+
+  it('treats null as a left-out argument, unless null means something', async () => {
+    const { data, isError } = await call('get_canvas', { doc: 'read', rootId: null, maxDepth: null, detail: null, model: null });
+    expect(isError).toBe(false);
+    expect(data.nodes[0].children.length).toBeGreaterThan(0);
+    const room = server.rooms.get('read');
+    const before = room.doc.getChildren(null).length;
+    const board = await call('create_nodes', { doc: 'read', parentId: null, nodes: [{ type: 'frame', frame: { width: 400 } }] });
+    expect(board.isError).toBe(false);
+    expect(room.doc.getChildren(null)).toHaveLength(before + 1);
+  });
+
+  it('infers a missing node type from text and children', async () => {
+    const { data, isError } = await call('create_nodes', {
+      doc: 'infer',
+      nodes: [{ tag: 'section', frame: { width: 400 }, children: [{ tag: 'h2', text: 'Hello' }, { tag: 'ul', children: [] }] }],
+    });
+    expect(isError).toBe(false);
+    const room = server.rooms.get('infer');
+    const [heading, list] = data.created[0].children;
+    expect(room.doc.getNode(heading.id)!.type).toBe('text');
+    expect(room.doc.getNode(list.id)!.type).toBe('frame');
+  });
+
   it('creates, updates and reads back breakpoint overrides', async () => {
     const { data } = await call('create_nodes', {
       doc: 'bp',
@@ -458,6 +487,17 @@ describe('sync relay', () => {
     const after = await call('create_nodes', { doc: 'icons', parentId: page!.id, nodes: [icon('expand_more')] });
     expect(after.data.warnings).toBeUndefined();
     const fixed = await call('update_nodes', { doc: 'icons', updates: [{ id: before.data.created[1].id, text: 'expand_more' }] });
+    expect(fixed.data.warnings).toBeUndefined();
+  });
+
+  it('warns when a new background color is hidden under a backgroundImage', async () => {
+    const room = server.rooms.get('backgrounds');
+    const [page] = room.doc.getTree();
+    const card = room.doc.createNode({ type: 'frame', parentId: page!.id, name: 'Card', styles: { backgroundImage: 'linear-gradient(#000, #111)' } });
+    const hidden = await call('update_nodes', { doc: 'backgrounds', updates: [{ id: card, styles: { backgroundColor: '#fff' } }] });
+    expect(hidden.data.warnings[0]).toContain('Card');
+    expect(hidden.data.warnings[0]).toContain('paints over backgroundColor');
+    const fixed = await call('update_nodes', { doc: 'backgrounds', updates: [{ id: card, styles: { backgroundColor: '#fff', backgroundImage: null } }] });
     expect(fixed.data.warnings).toBeUndefined();
   });
 

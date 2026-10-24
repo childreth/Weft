@@ -262,6 +262,15 @@ body {
   font: inherit;
   font-size: 12px;
 }
+.gf-assist-cloud {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--ui-accent);
+  border-radius: 4px;
+  color: var(--ui-accent);
+  font-size: 11px;
+  cursor: default;
+}
 .gf-assist-input {
   flex: 1;
   min-width: 0;
@@ -287,6 +296,17 @@ body {
   user-select: text;
 }
 .gf-assist-entry { line-height: 1.4; }
+.gf-assist-entry.is-reply > :is(p, ul, ol) { margin: 0 0 6px; }
+.gf-assist-entry.is-reply > :last-child { margin-bottom: 0; }
+.gf-assist-entry.is-reply :is(ul, ol) { padding-left: 18px; }
+.gf-assist-entry.is-reply li + li { margin-top: 2px; }
+.gf-assist-entry.is-reply code {
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--ui-panel-2);
+  overflow-wrap: anywhere;
+}
 .gf-assist-entry.is-user {
   align-self: flex-end;
   max-width: 85%;

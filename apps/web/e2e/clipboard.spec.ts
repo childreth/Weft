@@ -90,7 +90,7 @@ test('plain text pastes as a paragraph; bad clipboard data is refused; text fiel
 
   // In a text field the browser handles paste.
   await select(page, [ids.Actions!]);
-  const input = page.getByLabel('Ask the local model');
+  const input = page.getByLabel('Ask the model');
   if (await input.count()) {
     await input.focus();
     const n = await page.evaluate(() => window.weft.doc.getNodes().length);

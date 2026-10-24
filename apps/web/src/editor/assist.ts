@@ -1,6 +1,6 @@
 import { SERVER_URL } from './connection';
 
-/** Client for the server's in-editor assistant (a local model via Ollama). */
+/** Client for the server's in-editor assistant (an Ollama model: local, or an Ollama cloud model). */
 
 const HTTP_URL = SERVER_URL.replace(/^ws/, 'http');
 
@@ -8,6 +8,9 @@ export interface AssistModel {
   name: string;
   size: number;
   thinking: boolean;
+  vision: boolean;
+  /** Runs on ollama.com: the prompt and document leave the machine. */
+  cloud: boolean;
 }
 
 export type AssistEvent =

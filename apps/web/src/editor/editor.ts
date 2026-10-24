@@ -40,6 +40,7 @@ if (mode === 'ephemeral') {
   const persistence = new IndexeddbPersistence(`weft:${docName}`, doc.ydoc);
   persistence.once('synced', () => {
     if (doc.nodes.size === 0) seedLandingPage(doc);
+    else doc.repairGradients();
   });
 }
 
