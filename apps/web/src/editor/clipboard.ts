@@ -5,8 +5,8 @@ import { useEditor } from './store';
 
 /**
  * Layer copy/cut/paste through the browser's clipboard events, so ⌘C/⌘X/⌘V and
- * the browser's Edit menu both work. Text fields and text editing keep the
- * native behavior.
+ * the browser's Edit menu both work. Text fields, text editing and selected
+ * page text (e.g. an Assist reply) keep the native behavior.
  */
 
 const MIME = 'application/x-weft+json';
@@ -21,8 +21,12 @@ const plainText = (trees: SceneTree[]): string => {
   return parts.join('\n') || trees.map((t) => t.name).join('\n');
 };
 
+/** Text the user highlighted on the page: ⌘C copies it, not the selected layers. */
+const selectingText = () => !!document.getSelection()?.toString().trim();
+
 function onCopy(e: ClipboardEvent, cut: boolean) {
-  if (isTyping(e) || !e.clipboardData) return;
+  // ⌘X on highlighted text does nothing natively; it must not delete the layers either.
+  if (isTyping(e) || selectingText() || !e.clipboardData) return;
   const { selection, select } = useEditor.getState();
   const ids = outermost(selection).filter((id) => scene.nodes.has(id));
   if (ids.length === 0) return;

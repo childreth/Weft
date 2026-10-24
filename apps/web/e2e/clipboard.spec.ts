@@ -24,6 +24,19 @@ function menu(page: Page, type: 'copy' | 'cut' | 'paste', data: Record<string, s
   );
 }
 
+test('highlighted page text is copied natively, not the selected layers, and cut leaves the layers', async ({ page }) => {
+  const ids = await open(page);
+  await select(page, [ids.Actions!]);
+  await page.evaluate(() => {
+    const p = document.body.appendChild(document.createElement('p'));
+    p.textContent = 'An assist reply';
+    document.getSelection()!.selectAllChildren(p);
+  });
+  expect(await menu(page, 'copy')).toEqual({});
+  expect(await menu(page, 'cut')).toEqual({});
+  expect(await page.evaluate((id) => window.weft.scene.nodes.has(id), ids.Actions!)).toBe(true);
+});
+
 test('⌘C/⌘V duplicates a card after itself; paste into a selected container; one undo step each', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   const ids = await open(page);
