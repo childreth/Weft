@@ -12,7 +12,7 @@ Removing generic devices isn't enough: a page with every tell taken out and noth
 
 - Colors, spacing, radii, font sizes and shadows come from tokens: `var(--color-…)`, `var(--space-…)`, `var(--radius-…)`, `var(--font-size-…)`, `var(--shadow-…)`. Call `list_tokens` for the real names.
 - If the document already has a design system (its own tokens, or existing artboards with a clear look), use it before inventing anything.
-- Use raw values only when matching a reference or a palette the tokens can't express. Then keep a short fixed set (ground, surface, text, muted, accent, on-accent) and reuse exactly those values. Every new hex is a second palette starting.
+- When the tokens can't express the palette (a brand, a reference), add it with `set_tokens` instead of typing raw values. Set the roles first ({{COLOR_ROLES}}), so everything that already uses them follows; add named shades only for what the roles don't cover (`color.ember-100`). Then use exactly those tokens. Every new hex is a second palette starting.
 
 ## Color
 

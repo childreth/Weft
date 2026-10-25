@@ -1,13 +1,14 @@
 import { useMemo, useSyncExternalStore } from 'react';
-import { defaultTokens, encodeFontQuery, flattenTokens, googleFontsCSSUrl, withFontTokens, type DocumentFont, type FlatToken, type TokenSet } from '@weft/core';
+import { encodeFontQuery, flattenTokens, googleFontsCSSUrl, type DocumentFont, type FlatToken, type TokenSet } from '@weft/core';
 import { SERVER_URL } from './connection';
 import { doc, mode } from './editor';
 
 /**
- * The document's Google Fonts in the editor: a store over `doc.fonts`, the
- * token set they extend, and the one stylesheet that loads them. Fonts must
- * load in the main document: @font-face rules inside shadow roots are ignored,
- * but faces declared here are visible to every artboard.
+ * The document's Google Fonts and tokens in the editor: stores over
+ * `doc.fonts` and the full token set (`doc.tokenSet()`), and the one
+ * stylesheet that loads the fonts. Fonts must load in the main document:
+ * @font-face rules inside shadow roots are ignored, but faces declared here
+ * are visible to every artboard.
  */
 
 const HTTP_URL = SERVER_URL.replace(/^ws/, 'http');
@@ -26,11 +27,22 @@ const subscribe = (l: () => void) => {
 
 export const useDocFonts = (): DocumentFont[] => useSyncExternalStore(subscribe, () => fonts);
 
-/** Default tokens plus a `font-family` token per document font. */
-export function useDocTokens(): TokenSet {
-  const list = useDocFonts();
-  return useMemo(() => withFontTokens(defaultTokens, list), [list]);
-}
+let tokenSet: TokenSet = doc.tokenSet();
+const tokenListeners = new Set<() => void>();
+const updateTokens = () => {
+  tokenSet = doc.tokenSet();
+  for (const l of tokenListeners) l();
+};
+doc.fonts.observe(updateTokens);
+doc.tokens.observe(updateTokens);
+
+const subscribeTokens = (l: () => void) => {
+  tokenListeners.add(l);
+  return () => void tokenListeners.delete(l);
+};
+
+/** Default tokens, the document's own tokens, and a `font-family` token per document font. */
+export const useDocTokens = (): TokenSet => useSyncExternalStore(subscribeTokens, () => tokenSet);
 
 export function useFlatTokens(): FlatToken[] {
   const tokens = useDocTokens();

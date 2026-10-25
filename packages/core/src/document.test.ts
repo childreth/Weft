@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard, readWeftFile, styleIssues, treeIssues } from './document';
+import { exportArtboardHTML } from './export';
 import { History } from './history';
 import { seedLandingPage } from './seed';
 import { compileTokensCSS, flattenTokens } from './tokens';
@@ -161,6 +162,68 @@ describe('tokens', () => {
     const css = compileTokensCSS(defaultTokens, ':host', (m) => `:host([data-theme="${m}"])`);
     expect(css).toContain('--space-4: 16px;');
     expect(css).toContain(':host([data-theme="dark"])');
+  });
+  it("adds and overrides a document's own tokens, undoably, for every consumer", () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    const board = artboard(doc);
+    doc.setTokens({ 'color.ember-500': '#c2410c', 'color.accent': '{color.ember-500}', 'space.18': '72px' });
+    const flat = flattenTokens(doc.tokenSet().tokens);
+    expect(flat.find((t) => t.name === 'color.ember-500')).toMatchObject({ cssVar: '--color-ember-500', type: 'color', value: '#c2410c' });
+    expect(flat.find((t) => t.name === 'color.accent')?.value).toBe('var(--color-ember-500)');
+    expect(flat.find((t) => t.name === 'space.18')?.type).toBe('dimension');
+    // Defaults aren't changed, and export ships the document's tokens.
+    expect(flattenTokens(defaultTokens.tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-blue-600)');
+    expect(exportArtboardHTML(doc, board)).toContain('--color-ember-500: #c2410c;');
+
+    doc.setTokens({ 'color.accent': null });
+    expect(flattenTokens(doc.tokenSet().tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-blue-600)');
+    history.undo();
+    expect(doc.getTokens()['color.accent']).toBe('{color.ember-500}');
+
+    const copy = new GridDocument();
+    copy.loadSnapshot(doc.toSnapshot());
+    expect(copy.getTokens()).toEqual(doc.getTokens());
+  });
+
+  it('checks document tokens and changes nothing when one is wrong', () => {
+    const doc = new GridDocument();
+    const issues = (entries: Record<string, string | null>) => {
+      try {
+        doc.setTokens(entries);
+        return '';
+      } catch (err) {
+        return (err as Error).message;
+      }
+    };
+    expect(issues({ 'color.ok': '#fff', 'color.bad': 'linear-gradient(red, blue)' })).toContain('"color.bad": expected a color');
+    expect(doc.getTokens()).toEqual({});
+    expect(issues({ 'color.x': 'red; background: url(x)' })).toContain('expected a color');
+    expect(issues({ 'space.x': '12' })).toContain('expected a length');
+    expect(issues({ 'font-family.x': 'Inter' })).toContain('add_fonts');
+    expect(issues({ 'colour.x': '#fff' })).toContain('unknown group');
+    expect(issues({ 'color.Ember': '#fff' })).toContain('kebab-case');
+    expect(issues({ 'color.neutral': '#fff' })).toContain('is a group');
+    expect(issues({ 'color.accent.soft': '#fff' })).toContain('is a token, not a group');
+    expect(issues({ 'color.x': '{color.nope}' })).toContain("isn't a token");
+    expect(issues({ 'color.x': '{space.4}' })).toContain('another color token');
+    expect(issues({ 'color.a': '{color.b}', 'color.b': '{color.a}' })).toContain('in a circle');
+    expect(issues({ 'color.white': null })).toContain('nothing to remove');
+    expect(issues({ 'color.mix': 'color-mix(in oklab, var(--color-accent) 40%, white)', 'font-size.hero': 'clamp(40px, 6vw, 72px)' })).toBe('');
+  });
+
+  it("imports a file's tokens without overriding the document's own", () => {
+    const doc = new GridDocument();
+    doc.setTokens({ 'color.brand': '#111111' });
+    const board = { id: 'a', type: 'frame', tag: 'main', name: 'A', parentId: null, index: 'a0', styles: {}, attributes: {}, frame: { x: 0, y: 0, width: 100, height: 100 } };
+    const file = JSON.stringify({
+      format: 'weft',
+      version: 1,
+      nodes: [board],
+      tokens: { 'color.brand': '#222222', 'color.ember': '#c2410c', 'color.glow': '{color.ember}', 'color.bad': 'url(x)', 'color.lost': '{color.bad}' },
+    });
+    doc.importFile(readWeftFile(file));
+    expect(doc.getTokens()).toEqual({ 'color.brand': '#111111', 'color.ember': '#c2410c', 'color.glow': '{color.ember}' });
   });
 });
 

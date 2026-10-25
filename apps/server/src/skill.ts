@@ -7,6 +7,8 @@ import {
   STYLE_PROPS,
   TEXT_TAGS,
   UNSUPPORTED_STYLES,
+  defaultTokens,
+  flattenTokens,
   getStyleMeta,
   type StyleGroup,
 } from '@weft/core';
@@ -31,6 +33,11 @@ const FILLS: Record<string, string> = {
   CONTAINER_TAGS: CONTAINER_TAGS.join(', '),
   TEXT_TAGS: TEXT_TAGS.join(', '),
   BREAKPOINTS: BREAKPOINTS.map((b) => `\`${b.id}\` (≤ ${b.maxWidth}px)`).join(', '),
+  // Color roles are the default color tokens that point at another token (color.accent → color.blue.600).
+  COLOR_ROLES: flattenTokens(defaultTokens.tokens)
+    .filter((t) => t.path[0] === 'color' && t.path.length === 2 && t.value.startsWith('var('))
+    .map((t) => `\`${t.name}\``)
+    .join(', '),
 };
 
 let files: Map<string, string> | null = null;

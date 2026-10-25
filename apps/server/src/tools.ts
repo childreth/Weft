@@ -6,6 +6,7 @@ import {
   BREAKPOINTS,
   BREAKPOINT_IDS,
   DEFAULT_ARTBOARD_STYLES,
+  DOCUMENT_TOKEN_GROUPS,
   GridError,
   UNSUPPORTED_STYLES,
   attributeIssues,
@@ -18,7 +19,6 @@ import {
   isIconName,
   searchIcons,
   searchFonts,
-  withFontTokens,
   type FontCategory,
   styleIssues,
   tagIssue,
@@ -51,7 +51,7 @@ Model:
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
 - styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images aren't supported yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
-- Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
+- Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them. When the palette lacks what the design needs (a brand's warm browns), add tokens with set_tokens and use those instead of raw hex.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 
@@ -721,11 +721,39 @@ export function createMcpServer(
       annotations: { readOnlyHint: true },
     },
     async ({ doc, group }) => {
-      // The document's Google Fonts appear as font-family tokens.
-      const tokens = flattenTokens(withFontTokens(defaultTokens, rooms.get(doc).doc.getFonts()).tokens)
+      // The document's own tokens and its Google Fonts (as font-family tokens) are included.
+      const { doc: document } = rooms.get(doc);
+      const own = document.getTokens();
+      const tokens = flattenTokens(document.tokenSet().tokens)
         .filter((t) => !group || t.path[0] === group)
-        .map((t) => ({ name: t.name, use: `var(${t.cssVar})`, type: t.type, value: t.value }));
+        .map((t) => ({ name: t.name, use: `var(${t.cssVar})`, type: t.type, value: t.value, ...(t.name in own && { document: true }) }));
       return ok({ modes: ['light', ...Object.keys(defaultTokens.modes ?? {})], tokens });
+    },
+  );
+
+  server.registerTool(
+    'set_tokens',
+    {
+      title: 'Set design tokens',
+      description: `Adds or changes this document's design tokens, e.g. a brand palette the defaults lack: {"color.ember-500": "#c2410c", "color.ember-100": "#fdeee3", "color.accent": "{color.ember-500}"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')} (fonts come from add_fonts). A new name adds a token; an existing one (color.accent, color.surface, color.text…) overrides it everywhere it's used. "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. Use them in styles as var(--color-ember-500). One atomic, undoable step.`,
+      inputSchema: {
+        doc: docParam,
+        tokens: z.record(z.string(), z.string().nullable()).describe('Token path → value, or null to remove'),
+        model: modelParam,
+      },
+    },
+    async ({ doc, tokens, model }) => {
+      const { room, agent } = open(doc, model);
+      return mutate(room, agent, 'set_tokens', (_touched, report) => {
+        room.doc.setTokens(tokens, agent.identity.origin);
+        const paths = Object.keys(tokens);
+        report.action = `Setting ${plural(paths.length, 'token')}`;
+        const flat = new Map(flattenTokens(room.doc.tokenSet().tokens).map((t) => [t.name, t]));
+        return {
+          set: paths.filter((p) => tokens[p] !== null).map((p) => ({ name: p, use: `var(${flat.get(p)!.cssVar})`, value: flat.get(p)!.value })),
+          ...(paths.some((p) => tokens[p] === null) && { removed: paths.filter((p) => tokens[p] === null) }),
+        };
+      });
     },
   );
 
