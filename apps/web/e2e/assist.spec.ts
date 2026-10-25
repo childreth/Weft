@@ -96,6 +96,68 @@ test('cloud models are grouped apart, never picked by default, and flagged when 
   await page.screenshot({ path: 'test-results/m3-assist-cloud.png' });
 });
 
+/** A silent WAV, so the browser has something real to play. */
+function silentWav(ms = 200): Buffer {
+  const rate = 24000;
+  const samples = Math.round((rate * ms) / 1000);
+  const wav = Buffer.alloc(44 + samples * 2);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + samples * 2, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24);
+  wav.writeUInt32LE(rate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(samples * 2, 40);
+  return wav;
+}
+
+test('replies can be spoken with a local speech model: toggle, voice, plain text', async ({ page }) => {
+  const spoken: Array<{ text: string; voice: string }> = [];
+  await page.route('**/assist/speak', (route) => {
+    spoken.push(route.request().postDataJSON());
+    return route.fulfill({ contentType: 'audio/wav', body: silentWav() });
+  });
+  await page.route('**/assist/chat', (route) => {
+    const events = [
+      { type: 'message', text: 'Stacked the cards:\n- **Grid**: one column, gap `var(--space-4)`.' },
+      { type: 'done', edits: 0 },
+    ];
+    return route.fulfill({ contentType: 'application/x-ndjson', body: events.map((e) => JSON.stringify(e)).join('\n') + '\n' });
+  });
+  await open(page, { json: { ...MODELS.json, speech: { model: 'phonon:latest', voices: ['default', 'Miles', 'Zoey'] } } });
+
+  const toggle = page.getByRole('button', { name: 'Speak replies' });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByLabel('Voice')).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await page.getByLabel('Voice').selectOption('Miles');
+
+  const input = page.getByLabel('Ask the model');
+  await input.fill('stack these');
+  await input.press('Enter');
+  await expect(page.getByTestId('assist-log')).toContainText('Stacked the cards');
+  // Spoken as plain sentences: no Markdown symbols, tokens by name.
+  await expect.poll(() => spoken.length).toBe(1);
+  expect(spoken[0]).toEqual({ text: 'Stacked the cards: Grid: one column, gap space 4.', voice: 'Miles' });
+  await page.screenshot({ path: 'test-results/m3-assist-speech.png' });
+  await expect(page.getByTestId('assist-log')).not.toContainText('Speech:');
+
+  // Any reply can be read again; the choices are remembered.
+  const reply = page.locator('.gf-assist-message.is-reply').first();
+  await reply.hover();
+  await reply.getByRole('button', { name: 'Speak message' }).click();
+  await expect.poll(() => spoken.length).toBe(2);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Speak replies' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Voice')).toHaveValue('Miles');
+});
+
 test('shows why assist is unavailable, with a retry', async ({ page }) => {
   await open(page, { status: 503, json: { error: "Ollama isn't reachable at http://127.0.0.1:11434" } });
   await expect(page.getByTestId('assist-status')).toContainText("Ollama isn't reachable");

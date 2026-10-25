@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { docName, mode, scene } from '../editor/editor';
-import { listModels, resetAssist, sendPrompt, undoAssistTurn, type AssistEvent, type AssistModel } from '../editor/assist';
+import { listModels, resetAssist, sendPrompt, undoAssistTurn, type AssistEvent, type AssistModel, type SpeechInfo } from '../editor/assist';
+import { speak, stopSpeaking, useSpeaking } from '../editor/speech';
 import { useEditor } from '../editor/store';
 import { Markdown } from './Markdown';
 
 type Entry =
   | { kind: 'user'; text: string }
   | { kind: 'tool'; name: string; ok?: boolean; detail?: string }
-  | { kind: 'reply'; text: string }
+  | { kind: 'reply'; text: string; id: string }
   | { kind: 'error'; text: string };
 
 const TOOL_LABELS: Record<string, string> = {
@@ -29,11 +30,21 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const MODEL_KEY = 'weft:assist-model';
-const savedModel = (): string | null => {
+const SPEAK_KEY = 'weft:assist-speak';
+const VOICE_KEY = 'weft:assist-voice';
+/** Remembered choices are a convenience only: storage may be unavailable. */
+const saved = (key: string): string | null => {
   try {
-    return localStorage.getItem(MODEL_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
+  }
+};
+const remember = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Not remembered.
   }
 };
 const gb = (bytes: number) => (bytes > 0 ? ` · ${(bytes / 1e9).toFixed(1)} GB` : '');
@@ -57,6 +68,32 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Reads one reply aloud, or stops it. */
+function SpeakButton({ id, text, voice, onError }: { id: string; text: string; voice: string; onError(message: string): void }) {
+  const speaking = useSpeaking() === id;
+  return (
+    <button
+      type="button"
+      className="gf-assist-copy"
+      aria-label={speaking ? 'Stop speaking' : 'Speak message'}
+      onClick={() => (speaking ? stopSpeaking() : speak(id, text, voice).catch((err: Error) => onError(err.message)))}
+    >
+      {speaking ? 'Stop' : 'Speak'}
+    </button>
+  );
+}
+
+const SpeakerIcon = ({ on }: { on: boolean }) => (
+  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+    <path d="M2 5.5h2.2L7.5 2.8v8.4L4.2 8.5H2z" fill="currentColor" />
+    {on ? (
+      <path d="M9.6 4.6a3.4 3.4 0 0 1 0 4.8M11.2 3a5.6 5.6 0 0 1 0 8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    ) : (
+      <path d="m9.5 5.3 3 3.4m0-3.4-3 3.4" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    )}
+  </svg>
+);
+
 /** Prompt bar at the bottom of the canvas: edits the document with an Ollama model (local or cloud) through the server. */
 export function AssistBar() {
   if (mode !== 'server') {
@@ -79,23 +116,45 @@ function AssistPrompt() {
   const [open, setOpen] = useState(true);
   const [running, setRunning] = useState<AbortController | null>(null);
   const [canUndo, setCanUndo] = useState(false);
+  const [speech, setSpeech] = useState<SpeechInfo | null>(null);
+  const [speakOn, setSpeakOn] = useState(() => saved(SPEAK_KEY) === 'on');
+  const [voice, setVoice] = useState(() => saved(VOICE_KEY) ?? 'default');
   const logRef = useRef<HTMLDivElement>(null);
+  const replyIds = useRef(0);
+  // A reply arrives mid-turn: read the speech choices as they are then, not when the prompt was sent.
+  const speakRef = useRef({ on: false, voice });
+  speakRef.current = { on: speakOn && !!speech, voice: speech?.voices.includes(voice) ? voice : 'default' };
 
   const loadModels = async () => {
-    const { models: found, error } = await listModels();
+    const { models: found, speech: info, error } = await listModels();
     setModels(found);
+    setSpeech(info);
     setModelsError(error ?? null);
     setModel((current) => {
       const names = found.map((m) => m.name);
       if (names.includes(current)) return current;
-      const saved = savedModel();
+      const previous = saved(MODEL_KEY);
       // Offline-first: a cloud model is only picked when the user chose it.
-      return saved && names.includes(saved) ? saved : (found.find((m) => !m.cloud) ?? found[0])?.name ?? '';
+      return previous && names.includes(previous) ? previous : (found.find((m) => !m.cloud) ?? found[0])?.name ?? '';
     });
   };
   useEffect(() => {
     void loadModels();
+    return stopSpeaking;
   }, []);
+
+  const speechError = (message: string) => setEntries((list) => [...list, { kind: 'error', text: `Speech: ${message}` }]);
+  const speakReply = (id: string, text: string) => void speak(id, text, speakRef.current.voice).catch((err: Error) => speechError(err.message));
+  const toggleSpeak = () => {
+    const on = !speakOn;
+    setSpeakOn(on);
+    remember(SPEAK_KEY, on ? 'on' : 'off');
+    if (!on) stopSpeaking();
+  };
+  const chooseVoice = (name: string) => {
+    setVoice(name);
+    remember(VOICE_KEY, name);
+  };
 
   useLayoutEffect(() => {
     const log = logRef.current;
@@ -104,14 +163,12 @@ function AssistPrompt() {
 
   const chooseModel = (name: string) => {
     setModel(name);
-    try {
-      localStorage.setItem(MODEL_KEY, name);
-    } catch {
-      // Remembering the model is a convenience only.
-    }
+    remember(MODEL_KEY, name);
   };
 
   const onEvent = (e: AssistEvent) => {
+    const id = e.type === 'message' ? `reply-${replyIds.current++}` : '';
+    if (e.type === 'message' && speakRef.current.on) speakReply(id, e.text);
     setEntries((list) => {
       switch (e.type) {
         case 'tool':
@@ -124,7 +181,7 @@ function AssistPrompt() {
           return next;
         }
         case 'message':
-          return [...list, { kind: 'reply', text: e.text }];
+          return [...list, { kind: 'reply', text: e.text, id }];
         case 'error':
           return [...list, { kind: 'error', text: e.message }];
         case 'done':
@@ -139,6 +196,7 @@ function AssistPrompt() {
     const prompt = text.trim();
     if (!prompt || !model || running) return;
     const controller = new AbortController();
+    stopSpeaking();
     setRunning(controller);
     setText('');
     setOpen(true);
@@ -156,11 +214,13 @@ function AssistPrompt() {
   const undo = async () => {
     const { undone } = await undoAssistTurn();
     setCanUndo(false);
-    setEntries((list) => [...list, { kind: 'reply', text: undone ? `Undid ${undone} change${undone === 1 ? '' : 's'}.` : 'Nothing to undo.' }]);
+    const text = undone ? `Undid ${undone} change${undone === 1 ? '' : 's'}.` : 'Nothing to undo.';
+    setEntries((list) => [...list, { kind: 'reply', text, id: `reply-${replyIds.current++}` }]);
   };
 
   const newChat = async () => {
     running?.abort();
+    stopSpeaking();
     await resetAssist();
     setEntries([]);
     setCanUndo(false);
@@ -180,7 +240,10 @@ function AssistPrompt() {
             entry.kind === 'reply' || entry.kind === 'user' ? (
               <div key={i} className={`gf-assist-message is-${entry.kind}`}>
                 <div className={`gf-assist-entry is-${entry.kind}`}>{entry.kind === 'reply' ? <Markdown text={entry.text} /> : entry.text}</div>
-                <CopyButton text={entry.text} />
+                <div className="gf-assist-actions">
+                  <CopyButton text={entry.text} />
+                  {entry.kind === 'reply' && speech && <SpeakButton id={entry.id} text={entry.text} voice={speakRef.current.voice} onError={speechError} />}
+                </div>
               </div>
             ) : (
               <div key={i} className={`gf-assist-entry is-${entry.kind}${entry.kind === 'tool' && entry.ok === false ? ' is-failed' : ''}`}>
@@ -253,6 +316,27 @@ function AssistPrompt() {
             Cloud
           </span>
         )}
+        {speech && (
+          <button
+            type="button"
+            className={`gf-tool gf-assist-icon${speakOn ? ' is-active' : ''}`}
+            aria-label="Speak replies"
+            aria-pressed={speakOn}
+            title={`Speak replies aloud with ${speech.model} (on this machine)`}
+            onClick={toggleSpeak}
+          >
+            <SpeakerIcon on={speakOn} />
+          </button>
+        )}
+        {speech && speakOn && (
+          <select className="gf-assist-model gf-assist-voice" aria-label="Voice" value={speakRef.current.voice} onChange={(e) => chooseVoice(e.target.value)}>
+            {speech.voices.map((v) => (
+              <option key={v} value={v}>
+                {v === 'default' ? 'Default voice' : v}
+              </option>
+            ))}
+          </select>
+        )}
         <input
           className="gf-assist-input"
           aria-label="Ask the model"
@@ -261,13 +345,21 @@ function AssistPrompt() {
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
+              stopSpeaking();
               if (running) running.abort();
               else e.currentTarget.blur();
             }
           }}
         />
         {running ? (
-          <button type="button" className="gf-tool gf-assist-send" onClick={() => running.abort()}>
+          <button
+            type="button"
+            className="gf-tool gf-assist-send"
+            onClick={() => {
+              stopSpeaking();
+              running.abort();
+            }}
+          >
             Stop
           </button>
         ) : (

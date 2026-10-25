@@ -34,13 +34,19 @@ export const assistSession: string = (() => {
   }
 })();
 
-export async function listModels(): Promise<{ models: AssistModel[]; error?: string }> {
+/** The local speech model that can read replies aloud, with its voices ("default" first). */
+export interface SpeechInfo {
+  model: string;
+  voices: string[];
+}
+
+export async function listModels(): Promise<{ models: AssistModel[]; speech: SpeechInfo | null; error?: string }> {
   try {
     const res = await fetch(`${HTTP_URL}/assist/models`);
-    const body = (await res.json()) as { models?: AssistModel[]; error?: string };
-    return { models: body.models ?? [], error: body.error };
+    const body = (await res.json()) as { models?: AssistModel[]; speech?: SpeechInfo | null; error?: string };
+    return { models: body.models ?? [], speech: body.speech ?? null, error: body.error };
   } catch {
-    return { models: [], error: "The Weft server isn't reachable" };
+    return { models: [], speech: null, error: "The Weft server isn't reachable" };
   }
 }
 

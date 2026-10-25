@@ -12,6 +12,7 @@ const requests: Array<{
   tools: Array<{ function: { name: string; parameters: { properties?: object } } }>;
   think?: boolean;
 }> = [];
+const spoken: Array<Record<string, unknown>> = [];
 let server: GridServer;
 const SESSION = 'test-session-1';
 
@@ -26,12 +27,22 @@ beforeAll(async () => {
             { name: 'vision-only', size: 5, capabilities: ['completion', 'vision'] },
             { name: 'kimi:cloud', size: 100, capabilities: ['completion', 'tools', 'thinking'] },
             { name: 'qwen3-vl:235b-cloud', size: 200, remote_host: 'https://ollama.com:443', capabilities: ['completion', 'tools', 'vision'] },
+            { name: 'phonon:latest', size: 112, capabilities: ['speech'] },
           ],
         }),
       );
     }
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
+    if (req.url === '/v1/audio/speech') {
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as { voice?: string };
+      if (body.voice !== undefined && !['Miles', 'Zoey'].includes(body.voice)) {
+        res.statusCode = 400;
+        return res.end(JSON.stringify({ error: { message: `voice "${body.voice}" not found; available voices: Miles, Zoey, default` } }));
+      }
+      spoken.push(body);
+      return res.end('RIFF-fake-wav');
+    }
     requests.push(JSON.parse(Buffer.concat(chunks).toString()));
     res.end(JSON.stringify({ message: replies.shift() ?? { role: 'assistant', content: 'Done.' } }));
   });
@@ -167,6 +178,22 @@ describe('assist', () => {
     const preflight = await fetch(`${server.httpUrl}/assist/chat`, { method: 'OPTIONS', headers: { origin: 'http://localhost:5173' } });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+  });
+
+  it('reports the speech model and speaks text through it', async () => {
+    const { speech } = (await (await fetch(`${server.httpUrl}/assist/models`)).json()) as { speech: { model: string; voices: string[] } };
+    expect(speech).toEqual({ model: 'phonon:latest', voices: ['default', 'Miles', 'Zoey'] });
+
+    const say = (body: Record<string, unknown>) =>
+      fetch(`${server.httpUrl}/assist/speak`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await say({ text: 'Made the title larger.', voice: 'Miles' });
+    expect(res.headers.get('content-type')).toBe('audio/wav');
+    expect(await res.text()).toBe('RIFF-fake-wav');
+    expect(spoken.at(-1)).toMatchObject({ model: 'phonon:latest', input: 'Made the title larger.', voice: 'Miles', response_format: 'wav' });
+    // An unknown voice falls back to the default instead of failing.
+    await say({ text: 'Hi.', voice: 'Nobody' });
+    expect(spoken.at(-1)).not.toHaveProperty('voice');
+    expect((await say({ text: '' })).status).toBe(400);
   });
 
   it('normalizes OLLAMA_HOST', () => {
