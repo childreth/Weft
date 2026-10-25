@@ -21,6 +21,7 @@ import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
 import { DocumentFonts, FontPicker, fontForValue, fontVar } from './FontPicker';
+import { StylePicker, styleLabel } from './StylePicker';
 
 const PRESET_SUFFIX = new RegExp(` — (${ARTBOARD_PRESETS.map((p) => p.label).join('|')})$`);
 
@@ -39,7 +40,6 @@ function cloneAtPreset(id: string, name: string, preset: (typeof ARTBOARD_PRESET
   zoomToFit([id, copy]);
 }
 
-const label = (prop: string) => prop.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
 
 function tokenOptions(tokens: readonly FlatToken[], prop: StyleProp) {
   const groups = getStyleMeta(prop).tokenGroups ?? [];
@@ -231,12 +231,10 @@ function StyleSection({
     <Section
       title={title}
       actions={
-        <select
-          className="gf-input gf-add-style"
-          aria-label={breakpoint ? `Add ${breakpoint} override` : 'Add style property'}
-          value=""
-          onChange={(e) => {
-            const prop = e.target.value as StyleProp;
+        <StylePicker
+          props={missing}
+          label={breakpoint ? `Add ${breakpoint} override` : 'Add style property'}
+          onPick={(prop) => {
             const meta = getStyleMeta(prop);
             const initial =
               initialFor?.(prop) ??
@@ -244,12 +242,7 @@ function StyleSection({
               (tokenOptions(tokens, prop)[0] ? `var(${tokenOptions(tokens, prop)[0]!.cssVar})` : 'auto');
             set(prop, initial);
           }}
-        >
-          <option value="">+ Add</option>
-          {missing.map((p) => (
-            <option key={p} value={p}>{label(p)}</option>
-          ))}
-        </select>
+        />
       }
     >
       <div data-breakpoint={breakpoint ?? 'base'}>
@@ -269,8 +262,8 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
   const fonts = useDocFonts();
   const row = (
     <div className="gf-style-row" data-style-prop={prop}>
-      <span className="gf-row-label" title={prop}>{label(prop)}</span>
-      {meta.group === 'fill' || prop === 'color' || prop === 'borderColor' ? (
+      <span className="gf-row-label" title={prop}>{styleLabel(prop)}</span>
+      {meta.group === 'fill' || meta.tokenGroups?.includes('color') ? (
         <span className="gf-swatch" style={{ background: value }} />
       ) : null}
       {meta.options ? (

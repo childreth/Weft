@@ -490,6 +490,26 @@ describe('validation', () => {
     expect(styleIssues({ marginTop: '4px', whiteSpace: 'nowrap', textDecoration: 'underline', borderLeft: '2px solid red' })).toEqual([]);
   });
 
+  it('takes standard CSS beyond the basics, still without external resources', () => {
+    expect(
+      styleIssues({
+        textWrap: 'balance',
+        borderTopLeftRadius: 'var(--radius-lg)',
+        backgroundClip: 'text',
+        backdropFilter: 'blur(12px)',
+        clipPath: 'polygon(0 0, 100% 0, 100% 80%, 0 100%)',
+        WebkitLineClamp: '3',
+        fontVariationSettings: '"FILL" 1',
+        placeItems: 'center',
+      }),
+    ).toEqual([]);
+    expect(styleIssues({ clipPath: 'url(#shape)' })[0]).toContain("can't load external resources");
+    expect(styleIssues({ float: 'left' })[0]).toContain('use flex or grid');
+    expect(styleIssues({ transition: 'all 0.2s' })[0]).toContain('no hover states');
+    expect(styleIssues({ borderTopLeftRadious: '4px' })[0]).toContain('did you mean "borderTopLeftRadius"?');
+    expect(styleIssues({ textDecorationColor: 'linear-gradient(red, blue)' })[0]).toContain('takes a color, not a gradient');
+  });
+
   it('allows gradients but nothing the browser would fetch', () => {
     expect(styleIssues({ backgroundImage: 'linear-gradient(90deg, #fff, var(--color-accent))' })).toEqual([]);
     for (const value of ['url(https://x.example/a.png)', 'image-set("a.png" 1x)', 'linear-gradient(red, blue), URL( x )', 'u\\72l(x)']) {

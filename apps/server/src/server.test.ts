@@ -61,12 +61,18 @@ describe('MCP tools', () => {
     expect(client.getInstructions()).toContain('real HTML + CSS');
     const create = tools.find((t) => t.name === 'create_nodes')!;
     expect(JSON.stringify(create.inputSchema)).toContain('children');
+    // Styles are described by what isn't supported, not by listing every property.
+    const styles = JSON.stringify(create.inputSchema).match(/Standard CSS properties[^"]*/)![0];
+    expect(styles).toContain('Not supported: background, font, transition');
+    expect(styles.length).toBeLessThan(400);
   });
 
   it('serves the design skill as a tool and as resources, with schema lists filled in', async () => {
     const skill = await call('read_skill');
     expect(skill.text).toContain('# Designing in Weft');
     expect(skill.text).toContain('marginTop');
+    expect(skill.text).toMatch(/- Border: border, .*borderTopLeftRadius/);
+    expect(skill.text).toContain('`float` (use flex or grid)');
     expect(skill.text).not.toMatch(/\{\{\w+\}\}/);
     // No path is the whole guide, so agents can't stop at the overview.
     expect(skill.text).toContain('# Style and taste');
@@ -298,7 +304,7 @@ describe('MCP tools', () => {
       'nodes[0].children[0]: Tag <h7> is not valid for a frame node (allowed:',
       'nodes[0].children[1]: Tag <section> is not valid for a text node (use type "frame")',
       'nodes[1]: Unknown style property "colour" (did you mean "color"?)',
-      'Allowed style properties: display,',
+      'read_skill lists every supported style property',
     ]) {
       expect(res.text).toContain(line);
     }

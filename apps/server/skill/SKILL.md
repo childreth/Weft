@@ -32,7 +32,9 @@ Weft artboards are real web pages rendered by the browser. You build a tree of s
 - **frame** nodes are containers. Tags: {{CONTAINER_TAGS}}, or a `ds-*` custom element.
 - **text** nodes hold `text`. Tags: {{TEXT_TAGS}}.
 - **Mixed styles in one line** (a heading with one colored word): make the heading a frame with tag `h1` and give it `span` text children.
-- `styles` are camelCase CSS properties with CSS string values. Allowed: {{STYLE_PROPS}}. Anything else is rejected, so pick from this list instead of guessing.
+- `styles` are camelCase CSS properties with CSS string values. Standard CSS works, by kind:
+{{STYLE_PROPS}}
+  Not supported: {{UNSUPPORTED_STYLES}}. Anything else is rejected with the closest match.
 - `backgroundImage` takes gradients only. `url()` and images aren't supported yet. Don't fake photos or logos with shapes: use a plain block with a short label ("Product photo") so the user can see what goes there.
 - **Icons:** Material Symbols. `search_icons` finds names ("heart" finds `favorite`), `add_fonts` adds `Material Symbols Outlined` (or Rounded, Sharp) once, and an icon is a text `span` whose text is the name. Recipe in `layout.md`. Don't use emoji or Unicode symbols as icons.
 - **Fonts:** any Google Font. `search_fonts` to find one, `add_fonts` to add it to the document, then set `fontFamily: var(--font-family-<slug>)` (e.g. `var(--font-family-playfair-display)`). Fonts are cached locally, so they keep working offline.
