@@ -2,8 +2,7 @@ import { compileBreakpointCSS, GridError, type GridDocument } from './document';
 import { ARTBOARD_RESET_CSS } from './defaults';
 import { VOID_TAGS, type SceneNode, type SceneTree } from './schema';
 import { compileTokensCSS, type TokenSet } from './tokens';
-import { defaultTokens } from './default-tokens';
-import { googleFontsCSSUrl, withFontTokens } from './fonts';
+import { googleFontsCSSUrl } from './fonts';
 
 /**
  * Standalone HTML for one artboard: the same tokens, reset, inline styles and
@@ -63,7 +62,7 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
   };
   walk(tree, null);
   const css = [
-    compileTokensCSS(withFontTokens(options.tokens ?? defaultTokens, doc.getFonts())),
+    compileTokensCSS(doc.tokenSet(options.tokens)),
     'html, body { margin: 0; }',
     ARTBOARD_RESET_CSS.trim(),
     `.weft-artboard { width: ${width}px; height: ${height}; overflow: hidden; }`,

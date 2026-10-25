@@ -55,7 +55,7 @@ describe('MCP tools', () => {
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
         'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'export_html', 'import_file',
-        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons',
+        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');
@@ -519,6 +519,24 @@ describe('sync relay', () => {
     expect(after.data.warnings).toBeUndefined();
     const fixed = await call('update_nodes', { doc: 'icons', updates: [{ id: before.data.created[1].id, text: 'expand_more' }] });
     expect(fixed.data.warnings).toBeUndefined();
+  });
+
+  it('sets document tokens that list_tokens, export and undo see', async () => {
+    const res = await call('set_tokens', { doc: 'tokens', tokens: { 'color.ember-500': '#c2410c', 'color.accent': '{color.ember-500}' } });
+    expect(res.isError).toBe(false);
+    expect(res.data.set).toContainEqual({ name: 'color.ember-500', use: 'var(--color-ember-500)', value: '#c2410c' });
+    const listed = (await call('list_tokens', { doc: 'tokens', group: 'color' })).data.tokens as Array<{ name: string; value: string; document?: boolean }>;
+    expect(listed.find((t) => t.name === 'color.accent')).toMatchObject({ value: 'var(--color-ember-500)', document: true });
+    expect(listed.find((t) => t.name === 'color.surface')?.document).toBeUndefined();
+    const [page] = server.rooms.get('tokens').doc.getTree();
+    expect((await call('export_html', { doc: 'tokens', id: page!.id })).text).toContain('--color-ember-500: #c2410c;');
+
+    const bad = await call('set_tokens', { doc: 'tokens', tokens: { 'color.glow': 'linear-gradient(red, blue)' } });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('"color.glow": expected a color');
+
+    await call('undo_agent_change', { doc: 'tokens' });
+    expect(server.rooms.get('tokens').doc.getTokens()).toEqual({});
   });
 
   it('warns when a new background color is hidden under a backgroundImage', async () => {

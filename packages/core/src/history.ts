@@ -37,6 +37,15 @@ export class History {
     return this.manager.canRedo();
   }
 
+  /** Calls `listener` whenever undo or redo may have become available or not. */
+  subscribe(listener: () => void): () => void {
+    const events = ['stack-item-added', 'stack-item-popped', 'stack-cleared'] as const;
+    for (const e of events) this.manager.on(e, listener);
+    return () => {
+      for (const e of events) this.manager.off(e, listener);
+    };
+  }
+
   beginGesture(): void {
     if (this.gestureDepth++ === 0) {
       this.manager.stopCapturing();

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { history, scene } from '../editor/editor';
+import { history } from '../editor/editor';
 import { openDocument, saveDocument } from '../editor/files';
 import { useEditor, type Tool } from '../editor/store';
 import { zoomTo, zoomToFit } from '../editor/viewport';
@@ -25,8 +25,11 @@ export function Toolbar() {
   const connection = useEditor((s) => s.connection);
   const collaborators = useEditor((s) => s.collaborators);
   const activity = useEditor((s) => s.agentActivity);
-  // Re-render when the document changes so undo/redo enablement stays current.
-  useSyncExternalStore(scene.subscribe, () => scene.nodes);
+  // Undo/redo enablement follows the stack, including steps that change only fonts or tokens.
+  useSyncExternalStore(
+    (l) => history.subscribe(l),
+    () => `${history.canUndo()} ${history.canRedo()}`,
+  );
 
   return (
     <header className="gf-toolbar">
