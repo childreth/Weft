@@ -263,125 +263,133 @@ function AssistPrompt() {
         </div>
       )}
       <form className="gf-assist-bar" onSubmit={submit}>
-        {entries.length > 0 && (
-          <button
-            type="button"
-            className="gf-tool gf-assist-icon"
-            aria-label={open ? 'Hide conversation' : 'Show conversation'}
-            onClick={() => setOpen((o) => !o)}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ transform: open ? 'none' : 'rotate(180deg)' }}>
-              <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        )}
-        {modelsError || models?.length === 0 ? (
-          <span className="gf-assist-status" data-testid="assist-status">
-            {modelsError ?? 'No models with tool calling. Pull one with ollama pull.'}{' '}
-            <button type="button" className="gf-assist-link" onClick={() => void loadModels()}>
-              Retry
-            </button>
-          </span>
-        ) : (
-          <select
-            className="gf-assist-model"
-            aria-label="Assist model"
-            value={model}
-            disabled={!models || !!running}
-            onChange={(e) => chooseModel(e.target.value)}
-          >
-            {!models && <option>Loading models…</option>}
-            {local.length > 0 && (
-              <optgroup label="Local · on this machine">
-                {local.map((m) => (
-                  <option key={m.name} value={m.name} title={`${m.name}${gb(m.size)}`}>
-                    {m.name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {remote.length > 0 && (
-              <optgroup label="Cloud · ollama.com">
-                {remote.map((m) => (
-                  <option key={m.name} value={m.name} title={`${m.name} runs on ollama.com: your prompt and the document are sent there`}>
-                    ☁ {m.name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        )}
-        {cloud && (
-          <span className="gf-assist-cloud" data-testid="assist-cloud" title="This model runs on ollama.com: your prompt and the document are sent there, and it needs a network">
-            Cloud
-          </span>
-        )}
-        {speech && (
-          <button
-            type="button"
-            className={`gf-tool gf-assist-icon${speakOn ? ' is-active' : ''}`}
-            aria-label="Speak replies"
-            aria-pressed={speakOn}
-            title={`Speak replies aloud with ${speech.model} (on this machine)`}
-            onClick={toggleSpeak}
-          >
-            <SpeakerIcon on={speakOn} />
-          </button>
-        )}
-        {speech && speakOn && (
-          <select className="gf-assist-model gf-assist-voice" aria-label="Voice" value={speakRef.current.voice} onChange={(e) => chooseVoice(e.target.value)}>
-            {speech.voices.map((v) => (
-              <option key={v} value={v}>
-                {v === 'default' ? 'Default voice' : v}
-              </option>
-            ))}
-          </select>
-        )}
-        <input
+        <textarea
           className="gf-assist-input"
           aria-label="Ask the model"
           placeholder={`Ask the ${cloud ? 'cloud' : 'local'} model to edit ${target}…`}
+          rows={2}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') {
+            // Enter sends, Shift+Enter starts a new line (not while an IME is composing).
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              e.currentTarget.form?.requestSubmit();
+            } else if (e.key === 'Escape') {
               stopSpeaking();
               if (running) running.abort();
               else e.currentTarget.blur();
             }
           }}
         />
-        {running ? (
+        <div className="gf-assist-controls">
+          {entries.length > 0 && (
+            <button
+              type="button"
+              className="gf-tool gf-assist-icon"
+              aria-label={open ? 'Hide conversation' : 'Show conversation'}
+              onClick={() => setOpen((o) => !o)}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ transform: open ? 'none' : 'rotate(180deg)' }}>
+                <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+          {modelsError || models?.length === 0 ? (
+            <span className="gf-assist-status" data-testid="assist-status">
+              {modelsError ?? 'No models with tool calling. Pull one with ollama pull.'}{' '}
+              <button type="button" className="gf-assist-link" onClick={() => void loadModels()}>
+                Retry
+              </button>
+            </span>
+          ) : (
+            <select
+              className="gf-assist-model"
+              aria-label="Assist model"
+              value={model}
+              disabled={!models || !!running}
+              onChange={(e) => chooseModel(e.target.value)}
+            >
+              {!models && <option>Loading models…</option>}
+              {local.length > 0 && (
+                <optgroup label="Local · on this machine">
+                  {local.map((m) => (
+                    <option key={m.name} value={m.name} title={`${m.name}${gb(m.size)}`}>
+                      {m.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {remote.length > 0 && (
+                <optgroup label="Cloud · ollama.com">
+                  {remote.map((m) => (
+                    <option key={m.name} value={m.name} title={`${m.name} runs on ollama.com: your prompt and the document are sent there`}>
+                      ☁ {m.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          )}
+          {cloud && (
+            <span className="gf-assist-cloud" data-testid="assist-cloud" title="This model runs on ollama.com: your prompt and the document are sent there, and it needs a network">
+              Cloud
+            </span>
+          )}
+          {speech && (
+            <button
+              type="button"
+              className={`gf-tool gf-assist-icon${speakOn ? ' is-active' : ''}`}
+              aria-label="Speak replies"
+              aria-pressed={speakOn}
+              title={`Speak replies aloud with ${speech.model} (on this machine)`}
+              onClick={toggleSpeak}
+            >
+              <SpeakerIcon on={speakOn} />
+            </button>
+          )}
+          {speech && speakOn && (
+            <select className="gf-assist-model gf-assist-voice" aria-label="Voice" value={speakRef.current.voice} onChange={(e) => chooseVoice(e.target.value)}>
+              {speech.voices.map((v) => (
+                <option key={v} value={v}>
+                  {v === 'default' ? 'Default voice' : v}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="gf-assist-spacer" />
           <button
             type="button"
-            className="gf-tool gf-assist-send"
-            onClick={() => {
-              stopSpeaking();
-              running.abort();
-            }}
+            className="gf-tool"
+            aria-label="Undo assist change"
+            title="Undo the model's last change (⌘Z undoes only your own edits)"
+            disabled={!canUndo || !!running}
+            onClick={() => void undo()}
           >
-            Stop
+            Undo
           </button>
-        ) : (
-          <button type="submit" className="gf-tool gf-assist-send is-active" disabled={!text.trim() || !model}>
-            Send
-          </button>
-        )}
-        <button
-          type="button"
-          className="gf-tool"
-          aria-label="Undo assist change"
-          title="Undo the model's last change (⌘Z undoes only your own edits)"
-          disabled={!canUndo || !!running}
-          onClick={() => void undo()}
-        >
-          Undo
-        </button>
-        {entries.length > 0 && (
-          <button type="button" className="gf-tool" disabled={!!running} onClick={() => void newChat()}>
-            New
-          </button>
-        )}
+          {entries.length > 0 && (
+            <button type="button" className="gf-tool" disabled={!!running} onClick={() => void newChat()}>
+              New
+            </button>
+          )}
+          {running ? (
+            <button
+              type="button"
+              className="gf-tool gf-assist-send"
+              onClick={() => {
+                stopSpeaking();
+                running.abort();
+              }}
+            >
+              Stop
+            </button>
+          ) : (
+            <button type="submit" className="gf-tool gf-assist-send is-active" disabled={!text.trim() || !model}>
+              Send
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );
