@@ -334,7 +334,10 @@ body {
   opacity: 0;
 }
 .gf-assist-copy:hover { color: var(--ui-text); }
-.gf-assist-message:hover .gf-assist-copy, .gf-assist-copy:focus-visible { opacity: 1; }
+.gf-assist-actions { display: flex; gap: 10px; }
+.gf-assist-voice { max-width: 120px; }
+/* A speaking reply keeps its actions shown, so Stop is always reachable. */
+.gf-assist-message:hover .gf-assist-copy, .gf-assist-copy:focus-visible, .gf-assist-message:has([aria-label='Stop speaking']) .gf-assist-copy { opacity: 1; }
 @media (hover: none) { .gf-assist-copy { opacity: 1; } }
 .gf-assist-entry.is-user {
   background: var(--ui-accent-soft);

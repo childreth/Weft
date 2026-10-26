@@ -8,6 +8,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { AgentRoster, type AgentIdentity } from './agents';
 import { Assistant, SESSION_ID, ollamaUrlFrom, type AssistEvent, type ChatRequest } from './assist';
+import { MAX_SPOKEN_CHARS, Speech } from './speech';
 import { RemoteAccess } from './remote';
 import { FontCache, type FontOrigins } from './fonts';
 import { Renderer } from './render';
@@ -113,6 +114,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
   const services = { renderer: new Renderer(), fonts: new FontCache(options.dataDir ? join(options.dataDir, 'fonts') : null, options.fontOrigins) };
   const sessions = new Map<string, AgentSession>();
   const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST), services);
+  const speech = new Speech(assistant.ollamaUrl);
   // Clients that skip sessions share one identity per owner.
   const sessionless = new Map<string, AgentIdentity>();
 
@@ -193,12 +195,16 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
   async function handleAssist(req: IncomingMessage, res: ServerResponse, route: string): Promise<void> {
     if (route === 'models' && req.method === 'GET') {
       try {
-        return json(res, 200, { ollama: assistant.ollamaUrl, models: await assistant.models(AbortSignal.timeout(3000)) });
+        const models = await assistant.models(AbortSignal.timeout(3000));
+        // Speaking replies is optional: no speech model (or an older Ollama) just leaves it off.
+        const voice = await speech.info(AbortSignal.timeout(3000)).catch(() => null);
+        return json(res, 200, { ollama: assistant.ollamaUrl, models, speech: voice });
       } catch {
         return json(res, 503, { ollama: assistant.ollamaUrl, error: `Ollama isn't reachable at ${assistant.ollamaUrl}` });
       }
     }
     if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+    if (route === 'speak') return handleSpeak(req, res);
     const body = (await readJson(req)) as Partial<ChatRequest>;
     if (typeof body.session !== 'string' || !SESSION_ID.test(body.session)) return json(res, 400, { error: 'Invalid session' });
     if (route === 'undo') return json(res, 200, { undone: assistant.undoTurn(body.session) });
@@ -230,6 +236,31 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     } catch (err) {
       emit({ type: 'error', message: (err as Error).message });
       emit({ type: 'done', edits: 0 });
+    }
+    res.end();
+  }
+
+  /** WAV of a reply, piped from Ollama as it's generated; closing the request (Stop) aborts it. */
+  async function handleSpeak(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = (await readJson(req)) as { text?: unknown; voice?: unknown };
+    if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_SPOKEN_CHARS) {
+      return json(res, 400, { error: `text is required (at most ${MAX_SPOKEN_CHARS} characters)` });
+    }
+    const voice = typeof body.voice === 'string' ? body.voice.slice(0, 60) : undefined;
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    let audio: Response;
+    try {
+      audio = await speech.speak(body.text, voice, controller.signal);
+    } catch (err) {
+      if (controller.signal.aborted) return void res.end();
+      return json(res, 503, { error: (err as Error).message });
+    }
+    res.writeHead(200, { 'content-type': 'audio/wav', 'cache-control': 'no-cache' });
+    try {
+      for await (const chunk of audio.body!) res.write(chunk);
+    } catch {
+      // Stopped by the editor.
     }
     res.end();
   }
