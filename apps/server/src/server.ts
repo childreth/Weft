@@ -10,10 +10,11 @@ import { AgentRoster, type AgentIdentity } from './agents';
 import { Assistant, SESSION_ID, ollamaUrlFrom, type AssistEvent, type ChatRequest } from './assist';
 import { MAX_SPOKEN_CHARS, Speech } from './speech';
 import { RemoteAccess } from './remote';
+import { AssetError, AssetStore } from './assets';
 import { FontCache, type FontOrigins } from './fonts';
 import { Renderer } from './render';
 import { ROOM_NAME, RoomRegistry } from './room';
-import { decodeFontQuery } from '@weft/core';
+import { MAX_IMAGE_BYTES, decodeFontQuery } from '@weft/core';
 import { SESSION_IDLE_MINUTES, createMcpServer } from './tools';
 
 export interface GridServerOptions {
@@ -82,15 +83,19 @@ function originAllowed(req: IncomingMessage): boolean {
   return host !== null && LOCAL_HOSTNAMES.has(host);
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readBody(req: IncomingMessage, max: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new Error('Request body too large');
+    if (size > max) throw new Error('Request body too large');
     chunks.push(chunk as Buffer);
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  return Buffer.concat(chunks);
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  return JSON.parse((await readBody(req, MAX_BODY_BYTES)).toString('utf8'));
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -111,7 +116,11 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
   const rooms = new RoomRegistry(options.dataDir ?? null);
   const roster = new AgentRoster();
   const remote = new RemoteAccess(options.dataDir ?? null);
-  const services = { renderer: new Renderer(), fonts: new FontCache(options.dataDir ? join(options.dataDir, 'fonts') : null, options.fontOrigins) };
+  const services = {
+    renderer: new Renderer(),
+    fonts: new FontCache(options.dataDir ? join(options.dataDir, 'fonts') : null, options.fontOrigins),
+    assets: new AssetStore(options.dataDir ? join(options.dataDir, 'assets') : null),
+  };
   const sessions = new Map<string, AgentSession>();
   const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST), services);
   const speech = new Speech(assistant.ollamaUrl);
@@ -313,6 +322,29 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
       const file = await services.fonts.file(pathname.slice('/fonts/files/'.length));
       if (!file) return json(res, 404, { error: 'Font file unavailable' });
       return void res.writeHead(200, { 'content-type': file.type, 'cache-control': 'public, max-age=31536000, immutable' }).end(file.body);
+    }
+
+    // Images: POST the file's bytes to store it (returns its asset name); GET /assets/<name> serves it.
+    if (pathname === '/assets' || pathname.startsWith('/assets/')) {
+      if (!originAllowed(req)) return json(res, 403, { error: 'Forbidden origin' });
+      allowLocalOrigin(req, res);
+      if (req.method === 'OPTIONS') return void res.writeHead(204).end();
+      if (pathname === '/assets' && req.method === 'POST') {
+        try {
+          const expected = url.searchParams.get('name') ?? undefined;
+          return json(res, 200, services.assets.put(await readBody(req, MAX_IMAGE_BYTES + 1), expected));
+        } catch (err) {
+          const tooLarge = (err as Error).message === 'Request body too large';
+          if (err instanceof AssetError || tooLarge) return json(res, tooLarge ? 413 : 400, { error: tooLarge ? `Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB` : (err as Error).message });
+          throw err;
+        }
+      }
+      const file = req.method === 'GET' ? services.assets.get(pathname.slice('/assets/'.length)) : null;
+      if (!file) return json(res, 404, { error: 'Image not found' });
+      return void res
+        // Vary: the canvas's <img> loads (no Origin) and export's fetches (CORS) must not share a cache entry.
+        .writeHead(200, { 'content-type': file.type, 'cache-control': 'public, max-age=31536000, immutable', 'x-content-type-options': 'nosniff', vary: 'origin' })
+        .end(file.body);
     }
 
     if (pathname === '/remote' || pathname.startsWith('/remote/')) {

@@ -635,3 +635,60 @@ describe('fonts', () => {
     expect(exportArtboardHTML(doc, board, { fontCSSUrl: null })).not.toContain('<link rel="stylesheet"');
   });
 });
+
+describe('images', () => {
+  const hash = 'a'.repeat(64);
+  const src = `asset:${hash}.png`;
+
+  it('sniffs image types from their bytes', async () => {
+    const { sniffImage } = await import('./assets');
+    expect(sniffImage(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]))).toBe('png');
+    expect(sniffImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe('jpg');
+    expect(sniffImage(new TextEncoder().encode('RIFF\0\0\0\0WEBPVP8 '))).toBe('webp');
+    expect(sniffImage(new TextEncoder().encode('GIF89a'))).toBe('gif');
+    expect(sniffImage(new TextEncoder().encode('\0\0\0\x1cftypavif'))).toBe('avif');
+    expect(sniffImage(new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBeNull();
+  });
+
+  it('takes uploaded assets and small data URIs as src, never remote URLs, and needs alt text', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const img = doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src, alt: 'A dog' } });
+    doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src: 'data:image/svg+xml,%3Csvg%2F%3E', alt: '' } });
+    expect(() => doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src: 'https://x.example/a.png', alt: 'x' } })).toThrow(/remote URLs/);
+    expect(() => doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src: `asset:${hash}.svg`, alt: 'x' } })).toThrow(/uploaded image/);
+    expect(() => doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src, srcset: `${src} 2x`, alt: 'x' } })).toThrow(/srcset/);
+    expect(() => doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src } })).toThrow(/alt/);
+    expect(() => doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src: `data:image/png;base64,${'A'.repeat(100_001)}`, alt: '' } })).toThrow(/too large/);
+    expect(() => doc.updateNode(img, { attributes: { alt: null } })).toThrow(/alt/);
+    const div = doc.createNode({ type: 'frame', parentId: root });
+    expect(() => doc.updateNode(div, { tag: 'img' })).toThrow(/alt/);
+    doc.updateNode(div, { tag: 'img', attributes: { alt: '' } });
+    expect(treeIssues([{ type: 'frame', tag: 'img', attributes: { src } }])).toEqual([expect.stringMatching(/alt/)]);
+  });
+
+  it('repairs images from older files: remote sources dropped, missing alt made decorative', () => {
+    const board = { id: 'a', type: 'frame', tag: 'div', name: 'A', parentId: null, index: 'a0', styles: {}, attributes: {}, frame: { x: 0, y: 0, width: 100, height: 100 } };
+    const img = { ...board, id: 'i', parentId: 'a', tag: 'img', frame: undefined, attributes: { src: 'https://x.example/a.png', srcset: 'b.png 2x' } };
+    const kept = { ...img, id: 'k', index: 'a1', attributes: { src, alt: 'Kept' } };
+    const file = readWeftFile(JSON.stringify({ format: 'weft', version: 1, nodes: [board, img, kept], assets: { [`${hash}.png`]: 'iVBO', 'bad.png': 'x', [`${hash}.jpg`]: 7 } }));
+    expect(file.artboards[0]!.children.map((c) => c.attributes)).toEqual([{ alt: '' }, { src, alt: 'Kept' }]);
+    expect(file.assets).toEqual({ [`${hash}.png`]: 'iVBO' });
+    new GridDocument().importFile(file);
+  });
+
+  it('export resolves asset refs, keeps data URIs and drops sources that would load remotely', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { src, alt: 'A dog' } });
+    // An old document synced before src was checked.
+    doc.createNode({ type: 'frame', tag: 'img', parentId: root, attributes: { alt: 'Remote' } });
+    const remote = doc.getChildren(root)[1]!.id;
+    ((doc as unknown as { nodes: Y.Map<Y.Map<unknown>> }).nodes.get(remote)!.get('attributes') as Y.Map<string>).set('src', 'https://x.example/a.png');
+    expect(exportArtboardHTML(doc, root)).toContain(`src="assets/${hash}.png" alt="A dog"`);
+    const html = exportArtboardHTML(doc, root, { assetUrl: (name) => `data:image/png;base64,${name.slice(0, 4)}` });
+    expect(html).toContain('src="data:image/png;base64,aaaa"');
+    expect(html).not.toContain('x.example');
+    expect(html).toContain('<img data-gf-id');
+  });
+});

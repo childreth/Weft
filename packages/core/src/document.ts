@@ -5,6 +5,7 @@ import { defaultTokens } from './default-tokens';
 import { MAX_DOCUMENT_TOKENS, documentTokenIssues, withDocumentTokens } from './document-tokens';
 import { defaultWeights, findFont, withFontTokens, type DocumentFont } from './fonts';
 import type { TokenSet } from './tokens';
+import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
 import {
   BREAKPOINTS,
   VOID_TAGS,
@@ -76,6 +77,11 @@ export interface Snapshot {
   fonts?: DocumentFont[];
   /** The document's own design tokens by path (absent in older snapshots). */
   tokens?: Record<string, string>;
+  /**
+   * The images its layers use, base64 by asset name (`<sha256>.<ext>`). Only in
+   * files saved from the editor; the server keeps assets beside its documents.
+   */
+  assets?: Record<string, string>;
 }
 
 /** One node's share of an align or distribute command. */
@@ -111,6 +117,29 @@ export interface ClipboardPayload {
   format: 'weft-clipboard';
   version: 1;
   nodes: SceneTree[];
+}
+
+/**
+ * Fixes images from before `src` and `alt` were checked: a source that won't be
+ * loaded (a remote URL) is dropped, and missing alt text becomes "" (the image
+ * is announced as decorative, as it effectively was).
+ */
+function repairImages(trees: readonly SceneTree[]): void {
+  const visit = (tree: SceneTree) => {
+    // Shape-checked only: attributes may be missing.
+    const attrs = (tree.attributes ??= {});
+    if (attrs.src !== undefined && loadableSrc(attrs.src) === undefined) delete attrs.src;
+    if (attrs.srcset !== undefined) delete attrs.srcset;
+    if (altIssue(tree.tag, attrs)) attrs.alt = '';
+    tree.children.forEach(visit);
+  };
+  trees.forEach(visit);
+}
+
+/** Layers from outside the document, brought up to today's rules before they're validated. */
+function repairLayers(trees: readonly SceneTree[]): void {
+  repairGradients(trees);
+  repairImages(trees);
 }
 
 /**
@@ -193,7 +222,7 @@ export function readClipboard(json: string): SceneTree[] {
     throw new GridError('Clipboard does not contain Weft layers');
   }
   checkLayerShapes(payload.nodes, 'on the clipboard', CLIPBOARD_MAX_NODES);
-  repairGradients(payload.nodes);
+  repairLayers(payload.nodes);
   return payload.nodes;
 }
 
@@ -202,7 +231,12 @@ export interface WeftFile {
   artboards: SceneTree[];
   fonts: DocumentFont[];
   tokens: Record<string, string>;
+  /** Images by asset name, base64; to be stored (and their hashes checked) before importing. */
+  assets: Record<string, string>;
 }
+
+/** Longest base64 an asset can be in a file. */
+const MAX_ASSET_BASE64 = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
 
 /**
  * Parses a saved document. Like the clipboard, it may come from anywhere: this
@@ -241,7 +275,7 @@ export function readWeftFile(json: string): WeftFile {
   const artboards = sortSiblings(byParent.get(null) ?? []).map(build);
   checkLayerShapes(artboards, 'in the file', FILE_MAX_NODES);
   if (artboards.some((a) => !a.frame)) throw new GridError('Malformed layers in the file: a top-level layer is not an artboard');
-  repairGradients(artboards);
+  repairLayers(artboards);
   const fonts: DocumentFont[] = [];
   for (const f of Array.isArray(file.fonts) ? (file.fonts as unknown[]) : []) {
     const font = findFont((f as Partial<DocumentFont> | null)?.family ?? '');
@@ -256,7 +290,14 @@ export function readWeftFile(json: string): WeftFile {
   if (rawTokens && typeof rawTokens === 'object' && !Array.isArray(rawTokens)) {
     for (const [path, value] of Object.entries(rawTokens).slice(0, MAX_DOCUMENT_TOKENS)) if (typeof value === 'string') tokens[path] = value;
   }
-  return { artboards, fonts, tokens };
+  const assets: Record<string, string> = {};
+  const rawAssets = file.assets as unknown;
+  if (rawAssets && typeof rawAssets === 'object' && !Array.isArray(rawAssets)) {
+    for (const [name, data] of Object.entries(rawAssets)) {
+      if (ASSET_NAME.test(name) && typeof data === 'string' && data.length <= MAX_ASSET_BASE64) assets[name] = data;
+    }
+  }
+  return { artboards, fonts, tokens, assets };
 }
 
 export function readNode(y: YNode): SceneNode {
@@ -405,6 +446,11 @@ export function attributeIssues(attributes: Record<string, string | null>): stri
     else if (name === 'style' || name === 'class') issues.push(`Use styles instead of the "${name}" attribute`);
     else if (value !== null && typeof value !== 'string') issues.push(`Attribute "${name}" must be a string`);
     else if (typeof value === 'string' && /^\s*javascript:/i.test(value)) issues.push(`Unsafe URL in "${name}"`);
+    else if (name === 'srcset') issues.push('Use "src" (one image) instead of "srcset"');
+    else if (name === 'src' && typeof value === 'string') {
+      const issue = imageSrcIssue(value);
+      if (issue) issues.push(issue);
+    }
   }
   return issues;
 }
@@ -443,6 +489,7 @@ export function treeIssues(nodes: readonly TreeInput[], path = 'nodes'): string[
     if (node.styles) add(styleIssues(node.styles));
     if (node.breakpoints) add(breakpointIssues(node.breakpoints));
     if (node.attributes) add(attributeIssues(node.attributes));
+    add([altIssue(tag, node.attributes ?? {}) ?? []].flat());
     const children = node.children ?? [];
     if (children.length && (node.type === 'text' || VOID_TAGS.has(tag))) {
       add([node.type === 'text' ? 'Text nodes cannot have children (make it a frame with the same tag and span text children)' : `<${tag}> cannot contain other layers`]);
@@ -664,6 +711,7 @@ export class GridDocument {
       ...(input.styles ? styleIssues(input.styles) : []),
       ...(input.breakpoints ? breakpointIssues(input.breakpoints) : []),
       ...(input.attributes ? attributeIssues(input.attributes) : []),
+      ...[altIssue(tag, input.attributes ?? {}) ?? []].flat(),
     ]);
     const id = input.id ?? createId(input.type === 'text' ? 't' : 'f');
     if (this.nodes.has(id)) throw new GridError(`Node ${id} already exists`);
@@ -706,6 +754,9 @@ export class GridDocument {
       ...(patch.styles ? styleIssues(patch.styles) : []),
       ...(patch.breakpoints ? breakpointIssues(patch.breakpoints) : []),
       ...(patch.attributes ? attributeIssues(patch.attributes) : []),
+      ...(patch.tag !== undefined || patch.attributes
+        ? [altIssue(patch.tag ?? (y.get('tag') as string), { ...(y.get('attributes') as Y.Map<string>).toJSON(), ...patch.attributes }) ?? []].flat()
+        : []),
     ]);
 
     this.transact(() => {
@@ -881,7 +932,7 @@ export class GridDocument {
       if (options.frame?.x === undefined) frame = this.besideRow(frame);
     }
     // A copy is validated like a create: old layers must not make the original uncopyable.
-    repairGradients([tree!]);
+    repairLayers([tree!]);
     return this.transact(() => this.copyTree(tree!, source.parentId, beforeId, { name: options.name, frame }, origin), origin);
   }
 

@@ -7,6 +7,13 @@ function canvasSize() {
   return el ? { w: el.clientWidth, h: el.clientHeight } : { w: window.innerWidth, h: window.innerHeight };
 }
 
+/** The canvas point at the middle of the view. */
+export function viewCenter(): { x: number; y: number } {
+  const { w, h } = canvasSize();
+  const c = useEditor.getState().camera;
+  return { x: (w / 2 - c.x) / c.zoom, y: (h / 2 - c.y) / c.zoom };
+}
+
 export function zoomBy(factor: number) {
   const { w, h } = canvasSize();
   useEditor.getState().zoomAt(w / 2, h / 2, factor);
