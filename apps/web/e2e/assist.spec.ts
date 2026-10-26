@@ -48,6 +48,10 @@ test('prompt streams tool steps and the reply; Undo reverts the turn', async ({ 
   await expect(page.getByLabel('Assist model')).toHaveValue('qwen3.8:27b-mlx');
   await page.getByLabel('Assist model').selectOption('granite4.1:3b');
 
+  // Shift+Enter starts a new line; Enter sends.
+  await input.fill('stack');
+  await input.press('Shift+Enter');
+  await expect(input).toHaveValue('stack\n');
   await input.fill('stack these');
   await input.press('Enter');
   const log = page.getByTestId('assist-log');

@@ -260,10 +260,13 @@ body {
 .gf-assist-bar, .gf-assist-log {
   background: var(--ui-panel);
   border: 1px solid var(--ui-border);
-  border-radius: 10px;
+  border-radius: 14px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
 }
-.gf-assist-bar { display: flex; align-items: center; gap: 4px; padding: 6px; }
+.gf-assist-bar { display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 8px; }
+.gf-assist-bar:focus-within { border-color: var(--ui-text-muted); }
+.gf-assist-controls { display: flex; align-items: center; gap: 4px; }
+.gf-assist-spacer { flex: 1; }
 .gf-assist-off { padding: 10px 14px; color: var(--ui-text-muted); font-size: 12px; }
 .gf-assist-model {
   max-width: 180px;
@@ -284,14 +287,16 @@ body {
   font-size: 11px;
   cursor: default;
 }
+/* Two lines tall, so a long prompt stays readable; it scrolls past that. */
 .gf-assist-input {
-  flex: 1;
-  min-width: 0;
+  resize: none;
   background: transparent;
   color: var(--ui-text);
   border: 0;
-  padding: 6px 8px;
+  padding: 2px 8px;
   font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
 }
 .gf-assist-input:focus { outline: none; }
 .gf-assist-input::placeholder { color: var(--ui-text-muted); }
