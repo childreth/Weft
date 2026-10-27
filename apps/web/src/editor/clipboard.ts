@@ -1,7 +1,9 @@
 import { GridError, VOID_TAGS, readClipboard, type ClipboardPayload, type SceneTree } from '@weft/core';
+import { imageFiles, insertImages } from './assets';
 import { doc, run, scene } from './editor';
 import { isTyping, outermost } from './shortcuts';
 import { useEditor } from './store';
+import { viewCenter } from './viewport';
 
 /**
  * Layer copy/cut/paste through the browser's clipboard events, so ⌘C/⌘X/⌘V and
@@ -47,7 +49,7 @@ function onCopy(e: ClipboardEvent, cut: boolean) {
  * Where pasted layers go, from the last selected layer: into it if it can hold
  * layers (unless it's one of the copied layers), otherwise right after it.
  */
-function pasteTarget(copied: ReadonlySet<string>): { parentId: string | null; beforeId: string | null } {
+export function pasteTarget(copied: ReadonlySet<string> = new Set()): { parentId: string | null; beforeId: string | null } {
   const { selection } = useEditor.getState();
   const node = scene.nodes.get(selection.at(-1) ?? '');
   if (!node) return { parentId: null, beforeId: null };
@@ -56,8 +58,21 @@ function pasteTarget(copied: ReadonlySet<string>): { parentId: string | null; be
   return { parentId: node.parentId, beforeId: siblings[siblings.indexOf(node.id) + 1] ?? null };
 }
 
+/** Where new images go: like a paste, or on their own artboard in the middle of the view. */
+export function imageTarget(): Parameters<typeof insertImages>[1] {
+  const target = pasteTarget();
+  return target.parentId ? { parentId: target.parentId, beforeId: target.beforeId } : { at: viewCenter() };
+}
+
 function onPaste(e: ClipboardEvent) {
   if (isTyping(e) || !e.clipboardData) return;
+  // An image (a screenshot, or one copied from a page) beats the text that may come with it.
+  const images = imageFiles(e.clipboardData.files);
+  if (images.length) {
+    e.preventDefault();
+    void insertImages(images, imageTarget());
+    return;
+  }
   const text = e.clipboardData.getData('text/plain');
   const json = e.clipboardData.getData(MIME) || (lastCopy && text === lastCopy.text ? lastCopy.json : '');
   if (!json && !text.trim()) return;

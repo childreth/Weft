@@ -165,7 +165,7 @@ const LayerRow = memo(function LayerRow({ id, depth }: { id: string; depth: numb
 
   if (!node) return null;
 
-  const icon = node.parentId === null ? '▣' : node.type === 'text' ? 'T' : node.styles.display === 'grid' ? '▦' : '▢';
+  const icon = node.parentId === null ? '▣' : node.type === 'text' ? 'T' : node.tag === 'img' ? '◪' : node.styles.display === 'grid' ? '▦' : '▢';
   // Text layers created on the canvas keep the default name; show their text instead.
   const label = node.type === 'text' && node.text && node.name === 'Text' ? node.text : node.name;
   const toggle = (flag: 'hidden' | 'locked') => (e: MouseEvent) => {

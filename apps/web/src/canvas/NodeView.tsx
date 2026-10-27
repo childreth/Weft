@@ -1,5 +1,6 @@
 import { createElement, memo, useLayoutEffect, useRef, type CSSProperties } from 'react';
 import { VOID_TAGS, type SceneNode } from '@weft/core';
+import { displaySrc } from '../editor/assets';
 import { doc, history, run, useChildren, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { nodeElements } from './elements';
@@ -88,6 +89,9 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
     ref: registerRef(id),
     style: toStyle(node, isRoot),
   };
+  if (node.attributes.src !== undefined) props.src = displaySrc(node.attributes.src);
+  // The canvas handles drags itself; a dragged image would start the browser's own.
+  if (node.tag === 'img') props.draggable = false;
 
   if (node.type === 'text') {
     if (editing) return <EditableText node={node} props={props} />;

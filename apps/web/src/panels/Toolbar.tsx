@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { history } from '../editor/editor';
-import { openDocument, saveDocument } from '../editor/files';
+import { openDocument, pickImages, saveDocument } from '../editor/files';
 import { useEditor, type Tool } from '../editor/store';
 import { zoomTo, zoomToFit } from '../editor/viewport';
 import { RemoteAccess } from './RemoteAccess';
@@ -46,9 +46,12 @@ export function Toolbar() {
             {t.label}
           </button>
         ))}
+        <button className="gf-tool" onClick={pickImages} title="Add images (or drop or paste them onto the canvas)">
+          Image…
+        </button>
       </div>
       <div className="gf-tool-group" role="group" aria-label="File">
-        <button className="gf-tool" onClick={saveDocument} title="Download this document as a .weft file">
+        <button className="gf-tool" onClick={() => void saveDocument()} title="Download this document as a .weft file">
           Save
         </button>
         <button className="gf-tool" onClick={openDocument} title="Add the artboards from a .weft file to this document">

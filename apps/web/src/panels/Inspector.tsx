@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import {
   ARTBOARD_PRESETS,
   BREAKPOINTS,
+  GridError,
+  IMAGE_TYPES,
   STYLE_PROPS,
   compileTokensCSS,
   getStyleMeta,
@@ -13,6 +15,7 @@ import {
   type StyleProp,
 } from '@weft/core';
 import { artboardHeight } from '../canvas/elements';
+import { displaySrc, imageAttributes, imageFiles } from '../editor/assets';
 import { doc, history, recordHugHeight, run, updateArtboardFrame, useNode } from '../editor/editor';
 import { useDocFonts, useDocTokens, useFlatTokens } from '../editor/fonts';
 import { exportArtboard } from '../editor/files';
@@ -173,13 +176,15 @@ function NodeInspector({ id }: { id: string }) {
               type="button"
               className="gf-input gf-preset"
               title="Download this artboard as a standalone HTML page"
-              onClick={() => exportArtboard(id)}
+              onClick={() => void exportArtboard(id)}
             >
               Export HTML
             </button>
           </div>
         </Section>
       )}
+
+      {node.tag === 'img' && <ImageSection id={id} attributes={node.attributes} />}
 
       {node.type === 'text' && (
         <Section title="Text">
@@ -205,6 +210,53 @@ function NodeInspector({ id }: { id: string }) {
         />
       ))}
     </>
+  );
+}
+
+/** An image layer: what it shows, its alt text, and swapping the file. */
+function ImageSection({ id, attributes }: { id: string; attributes: Record<string, string> }) {
+  const src = displaySrc(attributes.src);
+  const replace = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = Object.values(IMAGE_TYPES).join(',');
+    input.onchange = async () => {
+      const [file] = imageFiles(input.files ?? []);
+      if (!file) return;
+      try {
+        const next = await imageAttributes(file);
+        // Sizes from the old file would distort the new one.
+        run(() => doc.updateNode(id, { attributes: { width: null, height: null, ...next } }));
+      } catch (err) {
+        if (err instanceof GridError) useEditor.getState().setNotice(err.message);
+        else throw err;
+      }
+    };
+    input.click();
+  };
+  return (
+    <Section title="Image">
+      <div className="gf-image-preview">{src ? <img src={src} alt="" /> : <span className="gf-empty">No image</span>}</div>
+      {attributes.width && attributes.height && (
+        <p className="gf-meta">
+          {attributes.width} × {attributes.height}
+        </p>
+      )}
+      <Row label="Alt text">
+        <CommitInput
+          label="Alt text"
+          value={attributes.alt ?? ''}
+          placeholder="Describe the image"
+          onCommit={(alt) => run(() => doc.updateNode(id, { attributes: { alt: alt.trim() } }))}
+        />
+      </Row>
+      {!attributes.alt?.trim() && <p className="gf-meta gf-hint">No alt text: screen readers skip this image. Describe it unless it's only decoration.</p>}
+      <div className="gf-presets">
+        <button type="button" className="gf-input gf-preset" onClick={replace}>
+          Replace…
+        </button>
+      </div>
+    </Section>
   );
 }
 

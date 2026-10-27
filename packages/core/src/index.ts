@@ -10,3 +10,4 @@ export { createId } from './ids';
 export { exportArtboardHTML, type ArtboardHTMLOptions } from './export';
 export * from './fonts';
 export * from './icons';
+export * from './assets';

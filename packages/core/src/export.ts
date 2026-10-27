@@ -3,6 +3,7 @@ import { ARTBOARD_RESET_CSS } from './defaults';
 import { VOID_TAGS, type SceneNode, type SceneTree } from './schema';
 import { compileTokensCSS, type TokenSet } from './tokens';
 import { googleFontsCSSUrl } from './fonts';
+import { assetName, loadableSrc } from './assets';
 
 /**
  * Standalone HTML for one artboard: the same tokens, reset, inline styles and
@@ -28,13 +29,23 @@ function styleAttr(node: SceneTree, isRoot: boolean): string {
   return css ? ` style="${escapeAttr(css)}"` : '';
 }
 
-function renderNode(node: SceneTree, isRoot: boolean): string {
-  const attrs = Object.entries(node.attributes)
+type AssetUrl = (name: string) => string | undefined;
+
+function renderNode(node: SceneTree, isRoot: boolean, assetUrl: AssetUrl): string {
+  const attributes: Record<string, string> = { ...node.attributes };
+  if (attributes.src !== undefined) {
+    // Asset refs become the caller's URLs; sources nothing may load (old remote URLs) are dropped.
+    const name = assetName(attributes.src);
+    const src = name ? assetUrl(name) : loadableSrc(attributes.src);
+    if (src === undefined) delete attributes.src;
+    else attributes.src = src;
+  }
+  const attrs = Object.entries(attributes)
     .map(([name, value]) => ` ${name}="${escapeAttr(value)}"`)
     .join('');
   const open = `<${node.tag} data-gf-id="${escapeAttr(node.id)}"${attrs}${styleAttr(node, isRoot)}>`;
   if (VOID_TAGS.has(node.tag)) return open;
-  const inner = node.type === 'text' ? escapeText(node.text ?? '') : node.children.map((c) => renderNode(c, false)).join('');
+  const inner = node.type === 'text' ? escapeText(node.text ?? '') : node.children.map((c) => renderNode(c, false, assetUrl)).join('');
   return `${open}${inner}</${node.tag}>`;
 }
 
@@ -45,6 +56,12 @@ export interface ArtboardHTMLOptions {
   title?: string;
   /** Stylesheet for the document's fonts; defaults to Google Fonts, null for none. */
   fontCSSUrl?: string | null;
+  /**
+   * Where an image's file is, by asset name (`<sha256>.<ext>`): a data URI for
+   * a single-file export, a routed URL for screenshots. Defaults to
+   * `assets/<name>`, beside the page. Undefined leaves the image out.
+   */
+  assetUrl?: (name: string) => string | undefined;
 }
 
 export function exportArtboardHTML(doc: GridDocument, artboardId: string, options: ArtboardHTMLOptions = {}): string {
@@ -81,7 +98,7 @@ ${css}
 </style>
 </head>
 <body>
-<div class="weft-artboard">${renderNode(tree, true)}</div>
+<div class="weft-artboard">${renderNode(tree, true, options.assetUrl ?? ((name) => `assets/${name}`))}</div>
 </body>
 </html>
 `;

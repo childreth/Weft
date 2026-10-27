@@ -3,9 +3,11 @@ import {
   DEFAULT_ARTBOARD_STYLES,
   DEFAULT_FRAME_STYLES,
   DEFAULT_TEXT_STYLES,
+  IMAGE_TYPES,
   VOID_TAGS,
   type ArtboardFrame,
 } from '@weft/core';
+import { imageFiles, insertImages } from '../editor/assets';
 import { doc, history, isLocked, recordHugHeight, run, scene, useChildren } from '../editor/editor';
 import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';
@@ -475,8 +477,36 @@ export function Canvas() {
       if (!gesture) useEditor.getState().setHovered(null);
     };
 
+    // Image files dropped from the desktop: into the layout under the pointer (the same
+    // insertion line as a layer drag), or onto their own artboard on the empty canvas.
+    const carriesFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+    const onDragOver = (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = 'copy';
+      setDrag({ ids: [], dx: 0, dy: 0, target: dropTargetAt(e.clientX, e.clientY, new Set()) });
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!el.contains(e.relatedTarget as Node | null)) setDrag(null);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      setDrag(null);
+      const files = imageFiles(e.dataTransfer!.files);
+      if (files.length === 0) {
+        useEditor.getState().setNotice(`Drop images (${Object.keys(IMAGE_TYPES).join(', ')}); open .weft files with Open…`);
+        return;
+      }
+      const target = dropTargetAt(e.clientX, e.clientY, new Set());
+      void insertImages(files, target ? { parentId: target.parentId, beforeId: target.beforeId } : { at: toCanvas(e.clientX, e.clientY) });
+    };
+
     const listeners = [
       ['wheel', onWheel, { passive: false }],
+      ['dragover', onDragOver, undefined],
+      ['dragleave', onDragLeave, undefined],
+      ['drop', onDrop, undefined],
       ['pointerdown', onPointerDown, undefined],
       ['pointermove', onPointerMove, undefined],
       ['pointerup', onPointerUp, undefined],

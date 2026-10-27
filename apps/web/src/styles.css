@@ -565,5 +565,18 @@ body {
 .gf-arrange-btn:hover:not(:disabled) { background: var(--ui-panel-2); }
 .gf-arrange-btn:disabled { color: var(--ui-text-muted); opacity: 0.4; cursor: default; }
 .gf-presets { display: flex; gap: 6px; margin-top: 8px; }
+/* Image layers: a checkerboard behind the preview shows transparency. */
+.gf-image-preview {
+  display: grid;
+  place-items: center;
+  grid-template-rows: 100%;
+  height: 120px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: repeating-conic-gradient(var(--ui-panel-2) 0 25%, transparent 0 50%) 0 0 / 16px 16px;
+  overflow: hidden;
+}
+.gf-image-preview img { width: 100%; height: 100%; object-fit: contain; }
+.gf-hint { font-family: inherit; font-size: 11px; color: var(--ui-warn); }
 .gf-preset { flex: 1; cursor: pointer; text-align: center; }
 .gf-preset.is-active { border-color: var(--ui-accent); color: var(--ui-accent); }

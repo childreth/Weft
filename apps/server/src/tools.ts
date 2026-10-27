@@ -34,6 +34,7 @@ import {
   type StyleMap,
 } from '@weft/core';
 import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
+import { AssetError, type AssetStore } from './assets';
 import type { FontCache } from './fonts';
 import type { Renderer } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
@@ -49,7 +50,7 @@ Model:
 - Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
-- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images aren't supported yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
+- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required ("" if decorative); remote URLs aren't loaded, and agents can't add image files yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them. When the palette lacks what the design needs (a brand's warm browns), add tokens with set_tokens and use those instead of raw hex.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
@@ -344,10 +345,12 @@ interface LayoutBox {
 export interface ToolServices {
   renderer: Renderer;
   fonts: FontCache;
+  assets: AssetStore;
 }
 
-/** Where rendered pages fetch fonts from; the renderer answers these itself from the cache. */
+/** Where rendered pages fetch fonts and images from; the renderer answers these itself from the caches. */
 const RENDER_FONTS = 'https://fonts.weft.invalid';
+const RENDER_ASSETS = 'https://assets.weft.invalid';
 
 /** `remindSkill`: nudge an agent that creates or restyles nodes without having read the style guide (off where read_skill isn't offered). */
 export interface McpServerOptions {
@@ -899,7 +902,15 @@ export function createMcpServer(
     async ({ doc, json, model }) => {
       const { room, agent } = open(doc, model);
       return mutate(room, agent, 'import_file', (touched, report) => {
-        const ids = room.doc.importFile(readWeftFile(json), agent.identity.origin);
+        const file = readWeftFile(json);
+        for (const [name, data] of Object.entries(file.assets)) {
+          try {
+            services.assets.put(Buffer.from(data, 'base64'), name);
+          } catch (err) {
+            throw err instanceof AssetError ? new GridError(err.message) : err;
+          }
+        }
+        const ids = room.doc.importFile(file, agent.identity.origin);
         Object.assign(report, { kind: 'create', roots: ids, flash: ids, focus: ids, action: `Importing ${plural(ids.length, 'artboard')}` });
         ids.forEach((id) => touched.add(id));
         return { created: ids };
@@ -964,12 +975,14 @@ export function createMcpServer(
         const html = exportArtboardHTML(room.doc, artboard.id, {
           width: renderWidth,
           fontCSSUrl: fonts.length ? `${RENDER_FONTS}/fonts.css` : null,
+          assetUrl: (name) => `${RENDER_ASSETS}/${name}`,
         });
         const shot = await services.renderer.screenshot(html, {
           width: renderWidth,
           resource: async (url) => {
             if (url === `${RENDER_FONTS}/fonts.css`) return { body: await services.fonts.css(fonts, `${RENDER_FONTS}/files`), type: 'text/css' };
             if (url.startsWith(`${RENDER_FONTS}/files/`)) return services.fonts.file(url.slice(`${RENDER_FONTS}/files/`.length));
+            if (url.startsWith(`${RENDER_ASSETS}/`)) return services.assets.get(url.slice(`${RENDER_ASSETS}/`.length));
             return null;
           },
           target: targetId === artboard.id ? undefined : targetId,

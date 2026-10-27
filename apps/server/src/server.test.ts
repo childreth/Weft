@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync } from 'node:fs';
+import { deflateSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -142,12 +144,55 @@ describe('MCP tools', () => {
     const url = `http://127.0.0.1:${(bait.address() as { port: number }).port}/pixel.png`;
     const room = server.rooms.get('shot-net');
     const [page] = room.doc.getTree();
-    room.doc.createNode({ type: 'frame', tag: 'img', parentId: page!.id, attributes: { src: url, alt: 'x' } });
+    // Commands refuse remote sources; a document synced before that rule could still hold one.
+    const img = room.doc.createNode({ type: 'frame', tag: 'img', parentId: page!.id, attributes: { alt: 'x' } });
+    (room.ydoc.getMap('nodes').get(img) as Y.Map<Y.Map<string>>).get('attributes')!.set('src', url);
     room.doc.createNode({ type: 'text', tag: 'a', parentId: page!.id, text: 'link', attributes: { href: url } });
     const res = (await client.callTool({ name: 'get_screenshot', arguments: { doc: 'shot-net' } })) as { isError?: boolean };
     expect(res.isError).toBeFalsy();
     expect(hits).toBe(0);
     bait.close();
+  });
+
+  it('stores images by content, serves them, and renders them in screenshots', async () => {
+    const png = testPng(40, 20);
+    const upload = (body: Uint8Array, name?: string) =>
+      fetch(`${server.httpUrl}/assets${name ? `?name=${name}` : ''}`, { method: 'POST', body, headers: { origin: 'http://localhost:5173' } });
+    const res = await upload(png);
+    expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+    const stored = (await res.json()) as { name: string; type: string };
+    expect(stored).toMatchObject({ name: expect.stringMatching(/^[0-9a-f]{64}\.png$/), type: 'image/png', bytes: png.length });
+    expect(((await (await upload(png)).json()) as { name: string }).name).toBe(stored.name);
+    expect(await (await upload(new TextEncoder().encode('<svg/>'))).json()).toEqual({ error: expect.stringMatching(/Not a supported image/) });
+    expect((await upload(png, `${'b'.repeat(64)}.png`)).status).toBe(400);
+    expect((await fetch(`${server.httpUrl}/assets`, { method: 'POST', body: png, headers: { origin: 'https://evil.example' } })).status).toBe(403);
+
+    const served = await fetch(`${server.httpUrl}/assets/${stored.name}`);
+    expect(served.headers.get('content-type')).toBe('image/png');
+    expect(served.headers.get('cache-control')).toContain('immutable');
+    expect(Buffer.from(await served.arrayBuffer()).equals(Buffer.from(png))).toBe(true);
+    expect((await fetch(`${server.httpUrl}/assets/../remote.json`)).status).toBe(404);
+
+    // A saved file carries its images; importing stores them (checked against their names).
+    const source = new GridDocument();
+    const board = source.createNode({ type: 'frame', name: 'Photo', frame: { x: 0, y: 0, width: 200, height: 100 } });
+    const other = testPng(8, 8, 1);
+    const otherName = `${createHash('sha256').update(other).digest('hex')}.png`;
+    source.createNode({ type: 'frame', tag: 'img', parentId: board, attributes: { src: `asset:${otherName}`, alt: 'A test pattern' } });
+    const json = JSON.stringify({ ...source.toSnapshot(), assets: { [otherName]: Buffer.from(other).toString('base64') } });
+    const imported = await call('import_file', { doc: 'img-shot', json });
+    const [artboard] = imported.data.created as string[];
+    expect((await fetch(`${server.httpUrl}/assets/${otherName}`)).status).toBe(200);
+    const lying = JSON.stringify({ ...source.toSnapshot(), assets: { [otherName]: Buffer.from(png).toString('base64') } });
+    expect((await call('import_file', { doc: 'img-shot', json: lying })).text).toMatch(/doesn't match its content/);
+
+    // The renderer answers image requests from the store: the img lays out at the file's size.
+    const room = server.rooms.get('img-shot');
+    room.doc.createNode({ type: 'frame', tag: 'img', name: 'Upload', parentId: artboard!, attributes: { src: `asset:${stored.name}`, alt: 'Upload' } });
+    const shot = await call('get_screenshot', { doc: 'img-shot', id: artboard, image: false });
+    const boxes = shot.data.boxes as { name: string; width: number; height: number }[];
+    expect(boxes.find((b) => b.name === 'Upload')).toMatchObject({ width: 40, height: 20 });
+    expect(boxes.find((b) => b.name === 'Img')).toMatchObject({ width: 8, height: 8 });
   });
 
   it('reads the canvas as a compact outline', async () => {
@@ -632,3 +677,38 @@ describe('sync relay', () => {
     expect(await tryOpen(`${server.wsUrl}/a/b`)).toBe('404');
   });
 });
+
+/** A real PNG, `width` × `height`, filled with one gray level. */
+function testPng(width: number, height: number, shade = 128): Uint8Array {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf: Buffer) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff]! ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bit depth
+  header[9] = 0; // grayscale
+  const rows = Buffer.alloc((width + 1) * height, shade);
+  for (let y = 0; y < height; y++) rows[y * (width + 1)] = 0; // filter: none
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(rows)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
