@@ -137,6 +137,32 @@ describe('assist', () => {
     expect(doc.getNode(title)!.styles.color).toBeUndefined();
   });
 
+  it('parses array and object arguments a model sent as JSON strings', async () => {
+    const doc = server.rooms.get('assist').doc;
+    replies = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            function: {
+              name: 'create_nodes',
+              arguments: {
+                nodes: JSON.stringify([{ type: 'frame', name: 'Listing', frame: { x: 0, y: 900, width: 390 }, children: [{ type: 'text', tag: 'h1', text: 'BMW M2' }] }]),
+              },
+            },
+          },
+        ],
+      },
+      { role: 'assistant', content: 'Added the listing.' },
+    ];
+    const events = await chat({ prompt: 'make a listing page' });
+    expect(events.find((e) => e.type === 'tool_result')).toMatchObject({ ok: true });
+    const board = doc.getNodes().find((n) => n.name === 'Listing');
+    expect(board).toBeDefined();
+    expect(doc.getChildren(board!.id).map((n) => n.text)).toEqual(['BMW M2']);
+  });
+
   it('feeds tool errors back to the model instead of failing', async () => {
     replies = [
       { role: 'assistant', content: '', tool_calls: [{ function: { name: 'update_nodes', arguments: { updates: [{ id: 'nope', text: 'x' }] } } }] },

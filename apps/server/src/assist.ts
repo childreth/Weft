@@ -128,6 +128,23 @@ function parseArgs(raw: unknown): Record<string, unknown> {
   return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
 }
 
+/** Some models send a large array or object argument as a JSON string; parse it where the schema expects one. */
+function unstringifyArgs(args: Record<string, unknown>, tool: OllamaTool | undefined): Record<string, unknown> {
+  const properties = (tool?.function.parameters.properties ?? {}) as Record<string, { type?: unknown }>;
+  const out = { ...args };
+  for (const [key, value] of Object.entries(args)) {
+    const type = properties[key]?.type;
+    if (typeof value !== 'string' || (type !== 'array' && type !== 'object')) continue;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (type === 'array' ? Array.isArray(parsed) : parsed && typeof parsed === 'object' && !Array.isArray(parsed)) out[key] = parsed;
+    } catch {
+      // Not JSON: leave it for the tool's validation to report.
+    }
+  }
+  return out;
+}
+
 /** History trimmed to the last few user turns, so a turn's tool messages stay with it. */
 function recent(history: ChatMessage[]): ChatMessage[] {
   let turns = 0;
@@ -252,7 +269,7 @@ ${selection}`;
         for (const call of calls) {
           if (signal.aborted) return;
           const name = call.function.name;
-          const args = parseArgs(call.function.arguments);
+          const args = unstringifyArgs(parseArgs(call.function.arguments), tools.find((t) => t.function.name === name));
           emit({ type: 'tool', name, args });
           // Small models loop on the same call; its result is already in the history.
           const key = `${name} ${JSON.stringify(args)}`;
