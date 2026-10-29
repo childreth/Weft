@@ -590,6 +590,57 @@ describe('sync relay', () => {
     expect(server.rooms.get('tokens').doc.getTokens()).toEqual({});
   });
 
+  it('creates a theme with set_tokens, applies it with update_nodes, and removes it', async () => {
+    const room = server.rooms.get('themes');
+    const [page] = room.doc.getTree();
+    const res = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: { 'color.accent': '#c2410c', 'color.surface': '#fff7ed' } });
+    expect(res.isError).toBe(false);
+    expect(res.data).toMatchObject({ theme: 'ember', set: [{ name: 'color.accent', value: '#c2410c' }, { name: 'color.surface', value: '#fff7ed' }] });
+    const bad = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: { 'color.brand': '#111' } });
+    expect(bad.text).toContain(`"color.brand" isn't a token`);
+
+    const listed = (await call('list_tokens', { doc: 'themes', group: 'color' })).data;
+    expect(listed.themes.ember).toMatchObject({ 'color.accent': '#c2410c' });
+    expect(listed.themes.dark['color.surface']).toBe('var(--color-neutral-950)');
+
+    expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'nope' }] })).text).toContain('Unknown theme "nope"');
+    // The seed page colors with the tokens, so the theme shows: no warning.
+    expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'ember' }] })).data.warnings).toBeUndefined();
+    expect((await call('get_canvas', { doc: 'themes', detail: 'outline' })).text).toContain('"theme":"ember"');
+    const html = (await call('export_html', { doc: 'themes', id: page!.id })).text;
+    expect(html).toContain('data-theme="ember"');
+    expect(html).toContain('[data-theme="ember"] {');
+
+    const removed = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: null });
+    expect(removed.data).toEqual({ removedTheme: 'ember', themes: ['dark'] });
+    expect(room.doc.getNode(page!.id)?.theme).toBeUndefined();
+    await call('undo_agent_change', { doc: 'themes' });
+    expect(room.doc.getNode(page!.id)?.theme).toBe('ember');
+  });
+
+  it('warns when a themed frame has nothing the theme changes', async () => {
+    const room = server.rooms.get('theme-warnings');
+    const [page] = room.doc.getTree();
+    const raw = room.doc.createNode({ type: 'frame', parentId: page!.id, name: 'Raw card', styles: { backgroundColor: '#faf5ee' } });
+    room.doc.createNode({ type: 'text', parentId: raw, name: 'Title', text: 'Stew', styles: { color: '#3d2e1f' } });
+    const res = await call('update_nodes', { doc: 'theme-warnings', updates: [{ id: raw, theme: 'dark' }] });
+    expect(res.data.warnings[0]).toContain('Raw card');
+    expect(res.data.warnings[0]).toContain('raw values like #faf5ee');
+
+    // A theme that overrides a shade reaches frames through the aliases that point at it.
+    expect((await call('set_tokens', { doc: 'theme-warnings', theme: 'deep', tokens: { 'color.blue.600': '#1e3a8a' } })).isError).toBe(false);
+    const accent = room.doc.createNode({ type: 'frame', parentId: page!.id, name: 'Accent card', styles: { backgroundColor: 'var(--color-accent)' } });
+    const aliased = await call('update_nodes', { doc: 'theme-warnings', updates: [{ id: accent, theme: 'deep' }] });
+    expect(aliased.isError).toBe(false);
+    expect(aliased.data.warnings).toBeUndefined();
+    const created = await call('create_nodes', {
+      doc: 'theme-warnings',
+      parentId: page!.id,
+      nodes: [{ type: 'frame', name: 'New raw', theme: 'deep', styles: { color: 'rgb(0, 0, 0)' } }],
+    });
+    expect(created.data.warnings[0]).toContain('New raw');
+  });
+
   it('warns when a new background color is hidden under a backgroundImage', async () => {
     const room = server.rooms.get('backgrounds');
     const [page] = room.doc.getTree();

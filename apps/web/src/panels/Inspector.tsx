@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import {
   ARTBOARD_PRESETS,
   BREAKPOINTS,
@@ -16,7 +16,7 @@ import {
 } from '@weft/core';
 import { artboardHeight } from '../canvas/elements';
 import { displaySrc, imageAttributes, imageFiles } from '../editor/assets';
-import { doc, history, recordHugHeight, run, updateArtboardFrame, useNode } from '../editor/editor';
+import { doc, history, recordHugHeight, run, scene, updateArtboardFrame, useNode } from '../editor/editor';
 import { useDocFonts, useDocTokens, useFlatTokens } from '../editor/fonts';
 import { exportArtboard } from '../editor/files';
 import { useEditor } from '../editor/store';
@@ -49,13 +49,24 @@ function tokenOptions(tokens: readonly FlatToken[], prop: StyleProp) {
   return tokens.filter((t) => groups.includes(t.path[0]!));
 }
 
+/** The theme a node renders with: its own, or its nearest themed ancestor's. */
+function useEffectiveTheme(id: string | undefined): string | undefined {
+  return useSyncExternalStore(scene.subscribe, () => {
+    for (let node = id ? scene.nodes.get(id) : undefined; node; node = node.parentId ? scene.nodes.get(node.parentId) : undefined) {
+      if (node.theme) return node.theme;
+    }
+    return undefined;
+  });
+}
+
 export function Inspector() {
   const selection = useEditor((s) => s.selection);
   const tokens = useDocTokens();
-  // Token values resolve inside the panel too, for swatches and font samples.
+  // Token values resolve inside the panel too, for swatches and font samples, in the selection's theme.
   const scopeCSS = useMemo(() => compileTokensCSS(tokens, '.gf-token-scope'), [tokens]);
+  const theme = useEffectiveTheme(selection.length === 1 ? selection[0] : undefined);
   return (
-    <aside className="gf-panel gf-inspector gf-token-scope" data-testid="inspector">
+    <aside className="gf-panel gf-inspector gf-token-scope" data-testid="inspector" data-theme={theme}>
       <style>{scopeCSS}</style>
       <TokenDatalists />
       {selection.length === 0 && (
@@ -87,6 +98,33 @@ function TokenDatalists() {
   );
 }
 
+const themeLabel = (name: string) => name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, ' ');
+
+/** The theme a frame and its contents use: its token values come from that theme. */
+function ThemeRow({ id, theme, isArtboard }: { id: string; theme: string | undefined; isArtboard: boolean }) {
+  const tokens = useDocTokens();
+  const names = Object.keys(tokens.modes ?? {}).sort();
+  return (
+    <Row label="Theme">
+      <select
+        className="gf-input"
+        aria-label="Theme"
+        value={theme ?? ''}
+        title="Token values for this layer and everything in it"
+        onChange={(e) => run(() => doc.updateNode(id, { theme: e.target.value || null }))}
+      >
+        {/* Without a theme, a nested frame uses its parent's. */}
+        <option value="">{isArtboard ? 'Default' : 'Inherit'}</option>
+        {names.map((name) => (
+          <option key={name} value={name}>
+            {themeLabel(name)}
+          </option>
+        ))}
+      </select>
+    </Row>
+  );
+}
+
 function NodeInspector({ id }: { id: string }) {
   const node = useNode(id);
   if (!node) return null;
@@ -114,6 +152,7 @@ function NodeInspector({ id }: { id: string }) {
             ))}
           </select>
         </Row>
+        {node.type === 'frame' && <ThemeRow id={id} theme={node.theme} isArtboard={!!node.frame} />}
         <p className="gf-meta">{node.id}</p>
       </Section>
 

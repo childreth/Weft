@@ -43,6 +43,9 @@ export const defaultTokens: TokenSet = {
       $type: 'fontFamily',
       sans: { $value: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'] },
       mono: { $value: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'] },
+      // Roles: designs use these, a document points them at its fonts, and themes can swap them.
+      heading: { $value: '{font-family.sans}' },
+      body: { $value: '{font-family.sans}' },
     },
     'font-size': {
       $type: 'dimension',

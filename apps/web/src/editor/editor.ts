@@ -118,6 +118,8 @@ export const agentApi = {
   distributeNodes: (ids: string[], axis: Axis) => doc.distributeNodes(ids, axis, ORIGIN_AGENT),
   importFile: (json: string) => doc.importFile(readWeftFile(json), ORIGIN_AGENT),
   setTokens: (tokens: Record<string, string | null>) => doc.setTokens(tokens, ORIGIN_AGENT),
+  setTheme: (name: string, tokens: Record<string, string | null>) => doc.setTheme(name, tokens, ORIGIN_AGENT),
+  removeTheme: (name: string) => doc.removeTheme(name, ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),
 };
 

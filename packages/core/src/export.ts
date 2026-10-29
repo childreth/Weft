@@ -43,7 +43,8 @@ function renderNode(node: SceneTree, isRoot: boolean, assetUrl: AssetUrl): strin
   const attrs = Object.entries(attributes)
     .map(([name, value]) => ` ${name}="${escapeAttr(value)}"`)
     .join('');
-  const open = `<${node.tag} data-gf-id="${escapeAttr(node.id)}"${attrs}${styleAttr(node, isRoot)}>`;
+  const theme = node.theme ? ` data-theme="${escapeAttr(node.theme)}"` : '';
+  const open = `<${node.tag} data-gf-id="${escapeAttr(node.id)}"${theme}${attrs}${styleAttr(node, isRoot)}>`;
   if (VOID_TAGS.has(node.tag)) return open;
   const inner = node.type === 'text' ? escapeText(node.text ?? '') : node.children.map((c) => renderNode(c, false, assetUrl)).join('');
   return `${open}${inner}</${node.tag}>`;
@@ -78,8 +79,12 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
     children.forEach((c) => walk(c, t.id));
   };
   walk(tree, null);
+  // Only the themes this artboard uses; each one declares every token.
+  const set = doc.tokenSet(options.tokens);
+  const used = new Set(subtree.flatMap((n) => n.theme ?? []));
+  const modes = Object.fromEntries(Object.entries(set.modes ?? {}).filter(([name]) => used.has(name)));
   const css = [
-    compileTokensCSS(doc.tokenSet(options.tokens)),
+    compileTokensCSS({ ...set, modes }, ':root', (mode) => `[data-theme="${mode}"]`),
     'html, body { margin: 0; }',
     ARTBOARD_RESET_CSS.trim(),
     `.weft-artboard { width: ${width}px; height: ${height}; overflow: hidden; }`,

@@ -86,6 +86,7 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
   const props: Record<string, unknown> = {
     ...node.attributes,
     'data-gf-id': id,
+    ...(node.theme && { 'data-theme': node.theme }),
     ref: registerRef(id),
     style: toStyle(node, isRoot),
   };

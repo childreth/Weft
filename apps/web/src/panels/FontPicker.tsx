@@ -1,7 +1,8 @@
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { findFont, fontSlug, searchFonts, type DocumentFont } from '@weft/core';
+import { FONT_ROLES, findFont, fontSlug, searchFonts, type DocumentFont } from '@weft/core';
 import { doc, history, run } from '../editor/editor';
-import { useDocFonts } from '../editor/fonts';
+import { useDocFonts, useDocTokens } from '../editor/fonts';
+import { Row } from './controls';
 
 const RESULTS = 8;
 
@@ -93,6 +94,49 @@ export function FontPicker({ onPick, label, autoFocus }: { onPick(family: string
   );
 }
 
+const ROLE_LABELS: Record<(typeof FONT_ROLES)[number], string> = { heading: 'Headings', body: 'Body' };
+const DEFAULT_ROLE = '{font-family.sans}';
+
+/**
+ * The font roles designs use (`var(--font-family-heading)`), each pointed at a
+ * font. Themes can point them elsewhere; this sets the document's default.
+ */
+function FontRoles({ fonts }: { fonts: readonly DocumentFont[] }) {
+  useDocTokens(); // re-render when the roles change
+  const own = doc.getTokens();
+  const choices = [
+    { value: DEFAULT_ROLE, label: 'System sans' },
+    { value: '{font-family.mono}', label: 'System mono' },
+    ...fonts.filter((f) => findFont(f.family)?.category !== 'icons').map((f) => ({ value: `{font-family.${fontSlug(f.family)}}`, label: f.family })),
+  ];
+  return (
+    <>
+      {FONT_ROLES.map((role) => {
+        const path = `font-family.${role}`;
+        const value = own[path] ?? DEFAULT_ROLE;
+        const options = choices.some((c) => c.value === value) ? choices : [{ value, label: value }, ...choices];
+        return (
+          <Row key={role} label={ROLE_LABELS[role]}>
+            <select
+              className="gf-input"
+              aria-label={`${ROLE_LABELS[role]} font`}
+              title={`var(--font-family-${role})`}
+              value={value}
+              onChange={(e) => run(() => doc.setTokens({ [path]: e.target.value === DEFAULT_ROLE && path in own ? null : e.target.value }))}
+            >
+              {options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Row>
+        );
+      })}
+    </>
+  );
+}
+
 /** Document-level list of fonts, shown in the Inspector when nothing is selected. */
 export function DocumentFonts() {
   const fonts = useDocFonts();
@@ -130,6 +174,7 @@ export function DocumentFonts() {
         </div>
       ))}
       {adding && <FontPicker label="Add a font" autoFocus onPick={() => undefined} />}
+      <FontRoles fonts={fonts} />
     </section>
   );
 }

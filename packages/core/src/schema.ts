@@ -310,6 +310,8 @@ export interface SceneNode {
   breakpoints?: BreakpointStyles;
   attributes: Record<string, string>;
   frame?: ArtboardFrame;
+  /** A theme applied to this frame and everything in it (`data-theme`). */
+  theme?: string;
   hidden?: boolean;
   locked?: boolean;
 }
