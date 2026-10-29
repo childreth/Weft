@@ -2,9 +2,9 @@ import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
 import { defaultTokens } from './default-tokens';
-import { MAX_DOCUMENT_TOKENS, documentTokenIssues, withDocumentTokens } from './document-tokens';
+import { MAX_DOCUMENT_TOKENS, MAX_THEMES, documentTokenIssues, themeIssues, themeNameIssue, withDocumentTokens } from './document-tokens';
 import { defaultWeights, findFont, withFontTokens, type DocumentFont } from './fonts';
-import type { TokenSet } from './tokens';
+import { flattenTokens, mergeTokenGroups, type TokenGroup, type TokenSet } from './tokens';
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
 import {
   BREAKPOINTS,
@@ -53,6 +53,8 @@ export interface CreateNodeInput {
   breakpoints?: BreakpointStyles;
   attributes?: Record<string, string>;
   frame?: ArtboardFrame;
+  /** A theme (`getThemeNames`) for this frame and everything in it. */
+  theme?: string;
 }
 
 export interface NodePatch {
@@ -67,6 +69,8 @@ export interface NodePatch {
   /** Merged per breakpoint like `styles`; a null breakpoint clears all its overrides. */
   breakpoints?: Partial<Record<BreakpointId, Partial<Record<StyleProp, string | null>> | null>>;
   attributes?: Record<string, string | null>;
+  /** null removes the frame's theme. */
+  theme?: string | null;
 }
 
 export interface Snapshot {
@@ -77,6 +81,8 @@ export interface Snapshot {
   fonts?: DocumentFont[];
   /** The document's own design tokens by path (absent in older snapshots). */
   tokens?: Record<string, string>;
+  /** The document's themes: token overrides by path, by theme name (absent in older snapshots). */
+  themes?: Record<string, Record<string, string>>;
   /**
    * The images its layers use, base64 by asset name (`<sha256>.<ext>`). Only in
    * files saved from the editor; the server keeps assets beside its documents.
@@ -161,6 +167,7 @@ function checkLayerShapes(nodes: readonly unknown[], where: string, maxNodes: nu
       !text(n.name) ||
       !text(n.text) ||
       !text(n.tag) ||
+      !text(n.theme) ||
       !record(n.styles) ||
       !record(n.attributes) ||
       !record(n.breakpoints) ||
@@ -231,6 +238,7 @@ export interface WeftFile {
   artboards: SceneTree[];
   fonts: DocumentFont[];
   tokens: Record<string, string>;
+  themes: Record<string, Record<string, string>>;
   /** Images by asset name, base64; to be stored (and their hashes checked) before importing. */
   assets: Record<string, string>;
 }
@@ -290,6 +298,16 @@ export function readWeftFile(json: string): WeftFile {
   if (rawTokens && typeof rawTokens === 'object' && !Array.isArray(rawTokens)) {
     for (const [path, value] of Object.entries(rawTokens).slice(0, MAX_DOCUMENT_TOKENS)) if (typeof value === 'string') tokens[path] = value;
   }
+  const themes: Record<string, Record<string, string>> = {};
+  const rawThemes = file.themes as unknown;
+  if (rawThemes && typeof rawThemes === 'object' && !Array.isArray(rawThemes)) {
+    for (const [name, raw] of Object.entries(rawThemes).slice(0, MAX_THEMES)) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const theme: Record<string, string> = {};
+      for (const [path, value] of Object.entries(raw).slice(0, MAX_DOCUMENT_TOKENS)) if (typeof value === 'string') theme[path] = value;
+      themes[name] = theme;
+    }
+  }
   const assets: Record<string, string> = {};
   const rawAssets = file.assets as unknown;
   if (rawAssets && typeof rawAssets === 'object' && !Array.isArray(rawAssets)) {
@@ -297,7 +315,7 @@ export function readWeftFile(json: string): WeftFile {
       if (ASSET_NAME.test(name) && typeof data === 'string' && data.length <= MAX_ASSET_BASE64) assets[name] = data;
     }
   }
-  return { artboards, fonts, tokens, assets };
+  return { artboards, fonts, tokens, themes, assets };
 }
 
 export function readNode(y: YNode): SceneNode {
@@ -325,6 +343,8 @@ export function readNode(y: YNode): SceneNode {
   if (frame) node.frame = { ...frame };
   if (y.get('hidden') === true) node.hidden = true;
   if (y.get('locked') === true) node.locked = true;
+  const theme = y.get('theme');
+  if (typeof theme === 'string') node.theme = theme;
   return node;
 }
 
@@ -553,17 +573,20 @@ export class GridDocument {
 
   /** The document's own design tokens (`withDocumentTokens`), value by path. */
   readonly tokens: Y.Map<string>;
+  /** The document's themes: token overrides (path → value) by theme name. */
+  readonly themes: Y.Map<Record<string, string>>;
 
   constructor(ydoc: Y.Doc = new Y.Doc()) {
     this.ydoc = ydoc;
     this.nodes = ydoc.getMap<YNode>('nodes');
     this.fonts = ydoc.getMap<DocumentFont>('fonts');
     this.tokens = ydoc.getMap<string>('tokens');
+    this.themes = ydoc.getMap<Record<string, string>>('themes');
   }
 
   /** The Yjs types a per-user undo stack should track. */
   get undoScope(): Y.AbstractType<any>[] {
-    return [this.nodes, this.fonts, this.tokens];
+    return [this.nodes, this.fonts, this.tokens, this.themes];
   }
 
   getTokens(): Record<string, string> {
@@ -575,7 +598,67 @@ export class GridDocument {
    * `base` (the defaults), the document's own tokens, then its fonts.
    */
   tokenSet(base: TokenSet = defaultTokens): TokenSet {
-    return withFontTokens(withDocumentTokens(base, this.getTokens()), this.getFonts());
+    const set = withFontTokens(withDocumentTokens(base, this.getTokens()), this.getFonts());
+    const known = new Set(flattenTokens(set.tokens).map((t) => t.name));
+    const modes: Record<string, TokenGroup> = { ...base.modes };
+    for (const [name, overrides] of Object.entries(this.getThemes())) {
+      // A token removed after the theme overrode it is skipped, not brought back.
+      const entries = Object.fromEntries(Object.entries(overrides).filter(([path]) => known.has(path)));
+      modes[name] = mergeTokenGroups(modes[name] ?? {}, withDocumentTokens({ tokens: {} }, entries).tokens);
+    }
+    return { ...set, modes };
+  }
+
+  /** The document's own themes, by name; built-in ones (`dark`) appear only once the document overrides them. */
+  getThemes(): Record<string, Record<string, string>> {
+    return Object.fromEntries([...this.themes.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, t]) => [name, { ...t }]));
+  }
+
+  /** Every theme a frame can use: the built-in ones and the document's. */
+  getThemeNames(): string[] {
+    return [...new Set([...Object.keys(defaultTokens.modes ?? {}), ...this.themes.keys()])].sort();
+  }
+
+  /**
+   * Creates theme `name` or changes its overrides (token path → value; null
+   * removes one). Themes override existing tokens only. All are checked first.
+   */
+  setTheme(name: string, entries: Readonly<Record<string, string | null>>, origin: Origin = ORIGIN_LOCAL): void {
+    const current = this.themes.get(name) ?? {};
+    const issues = themeIssues(name, entries, current, this.tokenSet());
+    if (!this.themes.has(name) && !this.getThemeNames().includes(name) && this.themes.size >= MAX_THEMES) {
+      issues.push(`A document can have at most ${MAX_THEMES} themes`);
+    }
+    throwIssues(issues);
+    const next: Record<string, string> = { ...current };
+    for (const [path, value] of Object.entries(entries)) {
+      if (value === null) delete next[path];
+      else next[path] = value.trim();
+    }
+    this.transact(() => this.themes.set(name, next), origin);
+  }
+
+  /**
+   * Removes a document theme. Frames that use it lose their theme, unless a
+   * built-in theme of that name remains (removing `dark` resets it to the default).
+   */
+  removeTheme(name: string, origin: Origin = ORIGIN_LOCAL): void {
+    if (!this.themes.has(name)) throw new GridError(`"${name}" isn't one of this document's themes`);
+    const builtIn = name in (defaultTokens.modes ?? {});
+    this.transact(() => {
+      this.themes.delete(name);
+      if (builtIn) return;
+      for (const y of this.nodes.values()) if (y.get('theme') === name) y.delete('theme');
+    }, origin);
+  }
+
+  /** Why a node can't take `theme`, or null. */
+  private themeIssue(type: NodeType, theme: string): string | null {
+    if (type !== 'frame') return 'Only frames take a theme';
+    if (!this.getThemeNames().includes(theme)) {
+      return `Unknown theme "${theme}" (themes: ${this.getThemeNames().join(', ')}; create one with set_tokens and a theme)`;
+    }
+    return null;
   }
 
   /**
@@ -712,6 +795,7 @@ export class GridDocument {
       ...(input.breakpoints ? breakpointIssues(input.breakpoints) : []),
       ...(input.attributes ? attributeIssues(input.attributes) : []),
       ...[altIssue(tag, input.attributes ?? {}) ?? []].flat(),
+      ...(input.theme !== undefined ? [this.themeIssue(input.type, input.theme) ?? []].flat() : []),
     ]);
     const id = input.id ?? createId(input.type === 'text' ? 't' : 'f');
     if (this.nodes.has(id)) throw new GridError(`Node ${id} already exists`);
@@ -728,6 +812,7 @@ export class GridDocument {
       y.set('index', index);
       if (input.type === 'text') y.set('text', input.text ?? '');
       if (parentId === null) y.set('frame', normalizeFrame(input.frame ?? DEFAULT_FRAME));
+      if (input.theme !== undefined) y.set('theme', input.theme);
       const styles = new Y.Map<string>();
       y.set('styles', styles);
       for (const [k, v] of Object.entries(input.styles ?? {})) if (v) styles.set(k, v.trim());
@@ -757,6 +842,7 @@ export class GridDocument {
       ...(patch.tag !== undefined || patch.attributes
         ? [altIssue(patch.tag ?? (y.get('tag') as string), { ...(y.get('attributes') as Y.Map<string>).toJSON(), ...patch.attributes }) ?? []].flat()
         : []),
+      ...(typeof patch.theme === 'string' ? [this.themeIssue(type, patch.theme) ?? []].flat() : []),
     ]);
 
     this.transact(() => {
@@ -767,6 +853,8 @@ export class GridDocument {
         if (patch[flag] === true) y.set(flag, true);
         else if (patch[flag] === false) y.delete(flag);
       }
+      if (patch.theme === null || patch.theme === '') y.delete('theme');
+      else if (patch.theme !== undefined) y.set('theme', patch.theme);
       if (patch.frame) {
         y.set('frame', patchFrame(y.get('frame') as ArtboardFrame, patch.frame));
       }
@@ -1030,6 +1118,8 @@ export class GridDocument {
         breakpoints: node.breakpoints,
         attributes: node.attributes,
         frame: root.frame ?? node.frame,
+        // Layers from another document may name a theme this one lacks.
+        ...(node.theme && node.type === 'frame' && this.getThemeNames().includes(node.theme) && { theme: node.theme }),
       },
       origin,
     );
@@ -1049,6 +1139,7 @@ export class GridDocument {
     return this.transact(() => {
       if (file.fonts.length) this.addFonts(file.fonts, origin);
       this.importTokens(file.tokens, origin);
+      this.importThemes(file.themes, origin);
       return this.insertTrees(file.artboards, { parentId: null }, origin);
     }, origin);
   }
@@ -1070,15 +1161,30 @@ export class GridDocument {
     }
   }
 
+  /**
+   * A file's themes that this document doesn't have (the document's own win);
+   * overrides that aren't valid here are dropped.
+   */
+  private importThemes(themes: Readonly<Record<string, Record<string, string>>>, origin: Origin): void {
+    for (const [name, overrides] of Object.entries(themes)) {
+      if (this.themes.has(name) || themeNameIssue(name) || this.themes.size >= MAX_THEMES) continue;
+      const set = this.tokenSet();
+      const valid = Object.fromEntries(Object.entries(overrides).filter(([path, value]) => themeIssues(name, { [path]: value }, {}, set).length === 0));
+      this.setTheme(name, valid, origin);
+    }
+  }
+
   toSnapshot(): Snapshot {
     const fonts = this.getFonts();
     const tokens = this.getTokens();
+    const themes = this.getThemes();
     return {
       format: 'weft',
       version: 1,
       nodes: sortSiblings(this.getNodes()),
       ...(fonts.length && { fonts }),
       ...(Object.keys(tokens).length && { tokens }),
+      ...(Object.keys(themes).length && { themes }),
     };
   }
 
@@ -1089,8 +1195,10 @@ export class GridDocument {
       this.nodes.clear();
       this.fonts.clear();
       this.tokens.clear();
+      this.themes.clear();
       if (snapshot.fonts?.length) this.addFonts(snapshot.fonts, origin);
       if (snapshot.tokens) this.setTokens(snapshot.tokens, origin);
+      for (const [name, overrides] of Object.entries(snapshot.themes ?? {})) this.setTheme(name, overrides, origin);
       const byParent = new Map<string | null, SceneNode[]>();
       for (const n of snapshot.nodes) {
         const list = byParent.get(n.parentId) ?? [];

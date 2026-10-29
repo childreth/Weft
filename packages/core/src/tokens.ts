@@ -83,6 +83,23 @@ function declarations(tokens: FlatToken[]): string {
   return tokens.map((t) => `  ${t.cssVar}: ${t.value};`).join('\n');
 }
 
+/** `base` with `overrides` laid over it, group by group; neither is changed. */
+export function mergeTokenGroups(base: TokenGroup, overrides: TokenGroup): TokenGroup {
+  const out: TokenGroup = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    const current = out[key];
+    const isGroup = (v: unknown) => typeof v === 'object' && v !== null && !isToken(v);
+    out[key] = isGroup(value) && isGroup(current) ? mergeTokenGroups(current as TokenGroup, value as TokenGroup) : value;
+  }
+  return out;
+}
+
+/**
+ * CSS custom properties for a token set. Each mode (theme) block declares every
+ * token, not just its overrides: an alias (`--color-accent: var(--color-blue-600)`)
+ * is resolved where it's declared, so it must be declared again under the theme
+ * for an override of what it points to to reach it.
+ */
 export function compileTokensCSS(
   set: TokenSet,
   selector = ':root',
@@ -90,7 +107,7 @@ export function compileTokensCSS(
 ): string {
   const blocks = [`${selector} {\n${declarations(flattenTokens(set.tokens))}\n}`];
   for (const [mode, overrides] of Object.entries(set.modes ?? {})) {
-    blocks.push(`${modeSelector(mode)} {\n${declarations(flattenTokens(overrides))}\n}`);
+    blocks.push(`${modeSelector(mode)} {\n${declarations(flattenTokens(mergeTokenGroups(set.tokens, overrides)))}\n}`);
   }
   return blocks.join('\n\n');
 }

@@ -227,6 +227,107 @@ describe('tokens', () => {
   });
 });
 
+describe('themes', () => {
+  it('declares every token in a theme block, so aliases follow an overridden primitive', () => {
+    const css = compileTokensCSS({ tokens: defaultTokens.tokens, modes: { ember: { color: { blue: { 600: { $value: '#c2410c' } } } } } }, ':host', (m) => `[data-theme="${m}"]`);
+    const block = css.slice(css.indexOf('[data-theme="ember"]'));
+    expect(block).toContain('--color-blue-600: #c2410c;');
+    expect(block).toContain('--color-accent: var(--color-blue-600);');
+    expect(block).toContain('--space-4: 16px;');
+  });
+
+  it('creates themes over existing tokens, applies them to frames, and undoes', () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    const board = artboard(doc);
+    const section = doc.createNode({ type: 'frame', parentId: board, tag: 'section' });
+    const title = doc.createNode({ type: 'text', parentId: section, text: 'Hi' });
+    expect(doc.getThemeNames()).toEqual(['dark']);
+
+    doc.setTokens({ 'color.ember-500': '#c2410c' });
+    doc.setTheme('ember', { 'color.accent': '{color.ember-500}', 'color.surface': '#fff7ed' });
+    expect(doc.getThemeNames()).toEqual(['dark', 'ember']);
+    const ember = flattenTokens(doc.tokenSet().modes!.ember!);
+    expect(ember.find((t) => t.name === 'color.accent')?.value).toBe('var(--color-ember-500)');
+
+    // The document can override the built-in dark theme too; its other overrides stay.
+    doc.setTheme('dark', { 'color.accent': '#f97316' });
+    const dark = flattenTokens(doc.tokenSet().modes!.dark!);
+    expect(dark.find((t) => t.name === 'color.accent')?.value).toBe('#f97316');
+    expect(dark.find((t) => t.name === 'color.surface')?.value).toBe('var(--color-neutral-950)');
+
+    doc.updateNode(board, { theme: 'ember' });
+    doc.updateNode(section, { theme: 'dark' });
+    expect(doc.getNode(board)?.theme).toBe('ember');
+    expect(() => doc.updateNode(title, { theme: 'dark' })).toThrow('Only frames take a theme');
+    expect(() => doc.updateNode(board, { theme: 'nope' })).toThrow('Unknown theme "nope"');
+
+    const html = exportArtboardHTML(doc, board);
+    expect(html).toContain(`data-gf-id="${board}" data-theme="ember"`);
+    expect(html).toContain('[data-theme="ember"] {');
+    expect(html).toContain('[data-theme="dark"] {');
+
+    doc.updateNode(section, { theme: null });
+    expect(doc.getNode(section)?.theme).toBeUndefined();
+    expect(exportArtboardHTML(doc, board)).not.toContain('[data-theme="dark"]');
+    history.undo();
+    expect(doc.getNode(section)?.theme).toBe('dark');
+
+    // Removing a theme clears it from frames, as one step; the built-in dark stays.
+    doc.removeTheme('ember');
+    expect(doc.getNode(board)?.theme).toBeUndefined();
+    history.undo();
+    expect(doc.getNode(board)?.theme).toBe('ember');
+    doc.removeTheme('dark');
+    expect(doc.getNode(section)?.theme).toBe('dark');
+    expect(doc.getThemes()).toEqual({ ember: { 'color.accent': '{color.ember-500}', 'color.surface': '#fff7ed' } });
+  });
+
+  it('checks theme names and overrides, and changes nothing when one is wrong', () => {
+    const doc = new GridDocument();
+    const issues = (name: string, entries: Record<string, string | null>) => {
+      try {
+        doc.setTheme(name, entries);
+        return '';
+      } catch (err) {
+        return (err as Error).message;
+      }
+    };
+    expect(issues('Ember', {})).toContain('kebab-case');
+    expect(issues('default', {})).toContain('without a theme');
+    expect(issues('ember', { 'color.surface': '#000', 'color.brand': '#111' })).toContain(`"color.brand" isn't a token`);
+    expect(doc.getThemes()).toEqual({});
+    expect(issues('ember', { 'space.4': 'red' })).toContain('expected a length');
+    expect(issues('ember', { 'font-family.sans': 'Inter' })).toContain("fonts can't be themed");
+    expect(issues('ember', { 'color.surface': '{color.nope}' })).toContain("isn't a token");
+    expect(issues('ember', { 'color.blue.600': '{color.accent}' })).toContain('in a circle');
+    expect(issues('ember', { 'color.surface': null })).toContain('nothing to remove');
+    expect(issues('ember', { 'color.surface': '{color.neutral.900}', 'space.4': '20px' })).toBe('');
+  });
+
+  it('round-trips themes through snapshots and files, and drops themes a document lacks from pasted layers', () => {
+    const doc = new GridDocument();
+    const board = artboard(doc);
+    doc.setTheme('ember', { 'color.surface': '#fff7ed' });
+    doc.updateNode(board, { theme: 'ember' });
+
+    const copy = new GridDocument();
+    copy.loadSnapshot(doc.toSnapshot());
+    expect(copy.getThemes()).toEqual(doc.getThemes());
+    expect(copy.getNode(board)?.theme).toBe('ember');
+
+    // Opening the file elsewhere brings its themes; the document's own win.
+    const other = new GridDocument();
+    other.setTheme('ember', { 'color.surface': '#000000' });
+    other.importFile(readWeftFile(JSON.stringify({ ...doc.toSnapshot(), themes: { ember: { 'color.surface': '#fff7ed' }, sea: { 'color.accent': '#0ea5e9', 'color.bad': '#fff' } } })));
+    expect(other.getThemes()).toEqual({ ember: { 'color.surface': '#000000' }, sea: { 'color.accent': '#0ea5e9' } });
+
+    const bare = new GridDocument();
+    const [pasted] = bare.insertTrees(doc.getTree(board), { parentId: null });
+    expect(bare.getNode(pasted!)?.theme).toBeUndefined();
+  });
+});
+
 describe('align and distribute', () => {
   const board = (doc: GridDocument, x: number, y: number, width: number, height: number) =>
     doc.createNode({ type: 'frame', frame: { x, y, width, height } });

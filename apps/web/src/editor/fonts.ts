@@ -35,13 +35,14 @@ const updateTokens = () => {
 };
 doc.fonts.observe(updateTokens);
 doc.tokens.observe(updateTokens);
+doc.themes.observe(updateTokens);
 
 const subscribeTokens = (l: () => void) => {
   tokenListeners.add(l);
   return () => void tokenListeners.delete(l);
 };
 
-/** Default tokens, the document's own tokens, and a `font-family` token per document font. */
+/** Default tokens, the document's own tokens, a `font-family` token per document font, and every theme. */
 export const useDocTokens = (): TokenSet => useSyncExternalStore(subscribeTokens, () => tokenSet);
 
 export function useFlatTokens(): FlatToken[] {

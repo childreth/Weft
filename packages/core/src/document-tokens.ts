@@ -99,6 +99,81 @@ export function documentTokenIssues(
   return issues;
 }
 
+/** A theme name: kebab-case, like a token name (`dark`, `ember`, `high-contrast`). */
+const THEME_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+export const MAX_THEMES = 20;
+
+/** Problems with a theme's name, e.g. before creating it. */
+export function themeNameIssue(name: string): string | null {
+  if (!THEME_NAME.test(name) || name.length > 32) return `"${name}": a theme name is kebab-case, up to 32 characters (dark, ember, high-contrast)`;
+  if (name === 'default') return `"default" is the document without a theme; pick another name`;
+  return null;
+}
+
+/**
+ * Problems with setting `entries` on theme `name`, whose current overrides are
+ * `current` (null removes one), over `base` (the full token set without themes).
+ * A theme only overrides tokens that exist; fonts aren't themed.
+ */
+export function themeIssues(
+  name: string,
+  entries: Readonly<Record<string, string | null>>,
+  current: Readonly<Record<string, string>>,
+  base: TokenSet,
+): string[] {
+  const nameIssue = themeNameIssue(name);
+  if (nameIssue) return [nameIssue];
+  const flat = new Map(flattenTokens(base.tokens).map((t) => [t.name, t]));
+  const next: Record<string, string> = { ...current };
+  for (const [path, value] of Object.entries(entries)) {
+    if (value === null) delete next[path];
+    else next[path] = value.trim();
+  }
+  const issues: string[] = [];
+  for (const [path, raw] of Object.entries(entries)) {
+    const at = `${name}: "${path}"`;
+    if (raw === null) {
+      if (!(path in current)) issues.push(`${at} isn't set in this theme, so there's nothing to remove`);
+      continue;
+    }
+    const group = path.split('.')[0]!;
+    const rule = GROUPS[group];
+    if (!flat.has(path)) {
+      issues.push(`${at} isn't a token; a theme overrides existing tokens (add new ones with set_tokens first)`);
+      continue;
+    }
+    if (!rule) {
+      issues.push(`${at}: ${group === 'font-family' ? 'fonts' : `${group} tokens`} can't be themed`);
+      continue;
+    }
+    const value = raw.trim();
+    const alias = ALIAS.exec(value)?.[1];
+    if (!value || value.length > MAX_VALUE_LENGTH) issues.push(`${at}: the value must be 1–${MAX_VALUE_LENGTH} characters`);
+    else if (alias !== undefined) {
+      if (alias === path) issues.push(`${at} can't refer to itself`);
+      else if (!flat.has(alias)) issues.push(`${at} refers to {${alias}}, which isn't a token`);
+      else if (!alias.startsWith(`${group}.`)) issues.push(`${at} must refer to another ${group} token`);
+      else if (cycles(path, { ...aliasesOf(base.tokens), ...next })) issues.push(`${at}: its references go in a circle`);
+    } else if (FORBIDDEN.test(value) || !rule.valid(value)) issues.push(`${at}: expected ${rule.expect}, got "${value}"`);
+  }
+  if (Object.keys(next).length > MAX_DOCUMENT_TOKENS) issues.push(`A theme can override at most ${MAX_DOCUMENT_TOKENS} tokens`);
+  return issues;
+}
+
+/** Every token in a group whose value is an alias, as path → `{alias}`. */
+function aliasesOf(group: TokenGroup, path: string[] = []): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(group)) {
+    if (key.startsWith('$') || typeof value !== 'object' || value === null) continue;
+    const at = [...path, key];
+    if ('$value' in value) {
+      const v = (value as { $value: unknown }).$value;
+      if (typeof v === 'string' && ALIAS.test(v)) out[at.join('.')] = v;
+    } else Object.assign(out, aliasesOf(value as TokenGroup, at));
+  }
+  return out;
+}
+
 /** The groups a token sits in: `color.neutral.100` → `color`, `color.neutral`. */
 function groupsOf(name: string): string[] {
   const parts = name.split('.');

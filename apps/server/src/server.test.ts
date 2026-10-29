@@ -590,6 +590,33 @@ describe('sync relay', () => {
     expect(server.rooms.get('tokens').doc.getTokens()).toEqual({});
   });
 
+  it('creates a theme with set_tokens, applies it with update_nodes, and removes it', async () => {
+    const room = server.rooms.get('themes');
+    const [page] = room.doc.getTree();
+    const res = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: { 'color.accent': '#c2410c', 'color.surface': '#fff7ed' } });
+    expect(res.isError).toBe(false);
+    expect(res.data).toMatchObject({ theme: 'ember', set: [{ name: 'color.accent', value: '#c2410c' }, { name: 'color.surface', value: '#fff7ed' }] });
+    const bad = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: { 'color.brand': '#111' } });
+    expect(bad.text).toContain(`"color.brand" isn't a token`);
+
+    const listed = (await call('list_tokens', { doc: 'themes', group: 'color' })).data;
+    expect(listed.themes.ember).toMatchObject({ 'color.accent': '#c2410c' });
+    expect(listed.themes.dark['color.surface']).toBe('var(--color-neutral-950)');
+
+    expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'nope' }] })).text).toContain('Unknown theme "nope"');
+    await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'ember' }] });
+    expect((await call('get_canvas', { doc: 'themes', detail: 'outline' })).text).toContain('"theme":"ember"');
+    const html = (await call('export_html', { doc: 'themes', id: page!.id })).text;
+    expect(html).toContain('data-theme="ember"');
+    expect(html).toContain('[data-theme="ember"] {');
+
+    const removed = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: null });
+    expect(removed.data).toEqual({ removedTheme: 'ember', themes: ['dark'] });
+    expect(room.doc.getNode(page!.id)?.theme).toBeUndefined();
+    await call('undo_agent_change', { doc: 'themes' });
+    expect(room.doc.getNode(page!.id)?.theme).toBe('ember');
+  });
+
   it('warns when a new background color is hidden under a backgroundImage', async () => {
     const room = server.rooms.get('backgrounds');
     const [page] = room.doc.getTree();

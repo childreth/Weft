@@ -54,6 +54,7 @@ Model:
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them. When the palette lacks what the design needs (a brand's warm browns), add tokens with set_tokens and use those instead of raw hex.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
+- Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors set with tokens (var(--color-surface), var(--color-text), var(--color-accent)…), so use them. Create or change a theme with set_tokens and "theme".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
@@ -97,6 +98,7 @@ function nullAsMissing<S extends z.ZodRawShape>(shape: S): S {
   ) as S;
 }
 
+const THEME_PARAM = 'Theme for this frame and everything in it (list_tokens lists themes; "dark" is built in): its token values replace the defaults inside it. Frames only';
 const BREAKPOINT_STYLES = `Style overrides per breakpoint (${BREAKPOINT_IDS.join(', ')}), layered over styles`;
 const breakpointKey = z.enum(BREAKPOINT_IDS as [string, ...string[]]);
 
@@ -121,6 +123,7 @@ interface NodeSpec {
   breakpoints?: Partial<Record<string, Record<string, string>>>;
   attributes?: Record<string, string>;
   frame?: Partial<ArtboardFrame>;
+  theme?: string;
   children?: NodeSpec[];
 }
 
@@ -146,6 +149,7 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     breakpoints: z.partialRecord(breakpointKey, z.record(z.string(), z.string())).optional().describe(BREAKPOINT_STYLES),
     attributes: z.record(z.string(), z.string()).optional().describe('HTML attributes such as aria-label, href, type, alt'),
     frame: frameSchema.optional().describe('Canvas placement; only for new artboards (parentId null)'),
+    theme: z.string().optional().describe(THEME_PARAM),
     children: z.array(nodeSpec).optional().describe('Child nodes (frames only)'),
   }),
 );
@@ -164,6 +168,7 @@ export function outline(tree: SceneTree, depth: number): Record<string, unknown>
   if (tree.text === undefined || !tree.text.startsWith(tree.name)) out.name = tree.name;
   if (tree.text !== undefined) out.text = tree.text.length > OUTLINE_TEXT ? `${tree.text.slice(0, OUTLINE_TEXT)}…` : tree.text;
   if (tree.frame) out.frame = { x: tree.frame.x, y: tree.frame.y, width: tree.frame.width, heightMode: tree.frame.heightMode ?? 'fixed' };
+  if (tree.theme) out.theme = tree.theme;
   if (tree.hidden) out.hidden = true;
   if (tree.children.length) {
     if (depth > 0) out.children = tree.children.map((c) => outline(c, depth - 1));
@@ -177,6 +182,7 @@ export function compact(tree: SceneTree, depth: number): Record<string, unknown>
   const out: Record<string, unknown> = { id: tree.id, type: tree.type, tag: tree.tag, name: tree.name };
   if (tree.text !== undefined) out.text = tree.text;
   if (tree.frame) out.frame = tree.frame;
+  if (tree.theme) out.theme = tree.theme;
   if (Object.keys(tree.styles).length) out.styles = tree.styles;
   if (tree.breakpoints) out.breakpoints = tree.breakpoints;
   if (Object.keys(tree.attributes).length) out.attributes = tree.attributes;
@@ -321,6 +327,7 @@ function createTree(
       breakpoints: spec.breakpoints as BreakpointStyles | undefined,
       attributes: spec.attributes,
       frame,
+      theme: spec.theme,
       parentId,
       beforeId,
     },
@@ -524,6 +531,7 @@ export function createMcpServer(
               hidden: z.boolean().optional(),
               locked: z.boolean().optional(),
               frame: frameSchema.optional(),
+              theme: z.string().nullable().optional().describe(`${THEME_PARAM}; null removes it`),
               styles: z.record(z.string(), z.string().nullable()).optional().describe(AUTHORED_STYLES),
               breakpoints: z
                 .partialRecord(breakpointKey, z.record(z.string(), z.string().nullable()).nullable())
@@ -727,10 +735,18 @@ export function createMcpServer(
       // The document's own tokens and its Google Fonts (as font-family tokens) are included.
       const { doc: document } = rooms.get(doc);
       const own = document.getTokens();
-      const tokens = flattenTokens(document.tokenSet().tokens)
+      const set = document.tokenSet();
+      const tokens = flattenTokens(set.tokens)
         .filter((t) => !group || t.path[0] === group)
         .map((t) => ({ name: t.name, use: `var(${t.cssVar})`, type: t.type, value: t.value, ...(t.name in own && { document: true }) }));
-      return ok({ modes: ['light', ...Object.keys(defaultTokens.modes ?? {})], tokens });
+      // Each theme's overrides; a frame with that theme uses them in place of the values above.
+      const themes = Object.fromEntries(
+        Object.entries(set.modes ?? {}).map(([name, overrides]) => [
+          name,
+          Object.fromEntries(flattenTokens(overrides).filter((t) => !group || t.path[0] === group).map((t) => [t.name, t.value])),
+        ]),
+      );
+      return ok({ tokens, themes });
     },
   );
 
@@ -738,21 +754,34 @@ export function createMcpServer(
     'set_tokens',
     {
       title: 'Set design tokens',
-      description: `Adds or changes this document's design tokens, e.g. a brand palette the defaults lack: {"color.ember-500": "#c2410c", "color.ember-100": "#fdeee3", "color.accent": "{color.ember-500}"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')} (fonts come from add_fonts). A new name adds a token; an existing one (color.accent, color.surface, color.text…) overrides it everywhere it's used. "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. Use them in styles as var(--color-ember-500). One atomic, undoable step.`,
+      description: `Adds or changes this document's design tokens, e.g. a brand palette the defaults lack: {"color.ember-500": "#c2410c", "color.ember-100": "#fdeee3", "color.accent": "{color.ember-500}"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')} (fonts come from add_fonts). A new name adds a token; an existing one (color.accent, color.surface, color.text…) overrides it everywhere it's used. "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. Use them in styles as var(--color-ember-500). With "theme", the values instead override existing tokens only inside frames with that theme (creating the theme if new, e.g. "ember", or changing the built-in "dark"); add new tokens without a theme first. "theme" with tokens null removes that theme. One atomic, undoable step.`,
       inputSchema: {
         doc: docParam,
-        tokens: z.record(z.string(), z.string().nullable()).describe('Token path → value, or null to remove'),
+        tokens: z
+          .record(z.string(), z.string().nullable())
+          .nullable()
+          .describe('Token path → value, or null to remove one; null for all of them removes the theme'),
+        theme: z.string().optional().describe('Kebab-case theme name (dark, ember, high-contrast); apply it with update_nodes {"theme"}'),
         model: modelParam,
       },
     },
-    async ({ doc, tokens, model }) => {
+    async ({ doc, tokens, theme, model }) => {
       const { room, agent } = open(doc, model);
       return mutate(room, agent, 'set_tokens', (_touched, report) => {
-        room.doc.setTokens(tokens, agent.identity.origin);
+        if (tokens === null) {
+          if (theme === undefined) throw new GridError('Pass the tokens to set, or a theme with tokens null to remove it');
+          report.action = `Removing the ${theme} theme`;
+          room.doc.removeTheme(theme, agent.identity.origin);
+          return { removedTheme: theme, themes: room.doc.getThemeNames() };
+        }
+        if (theme === undefined) room.doc.setTokens(tokens, agent.identity.origin);
+        else room.doc.setTheme(theme, tokens, agent.identity.origin);
         const paths = Object.keys(tokens);
-        report.action = `Setting ${plural(paths.length, 'token')}`;
-        const flat = new Map(flattenTokens(room.doc.tokenSet().tokens).map((t) => [t.name, t]));
+        report.action = theme === undefined ? `Setting ${plural(paths.length, 'token')}` : `Theming ${plural(paths.length, 'token')} (${theme})`;
+        const set = room.doc.tokenSet();
+        const flat = new Map(flattenTokens(theme === undefined ? set.tokens : set.modes![theme]!).map((t) => [t.name, t]));
         return {
+          ...(theme !== undefined && { theme }),
           set: paths.filter((p) => tokens[p] !== null).map((p) => ({ name: p, use: `var(${flat.get(p)!.cssVar})`, value: flat.get(p)!.value })),
           ...(paths.some((p) => tokens[p] === null) && { removed: paths.filter((p) => tokens[p] === null) }),
         };

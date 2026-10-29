@@ -11,10 +11,10 @@ ${ARTBOARD_RESET_CSS}
 [contenteditable] { user-select: text; cursor: text; outline: none; min-height: 1lh; min-width: 1ch; }
 `;
 
-/** Tokens (including the document's font tokens), compiled for a shadow root. */
+/** Tokens (including the document's font tokens), compiled for a shadow root; any frame can take a theme. */
 function ArtboardStyles() {
   const tokens = useDocTokens();
-  const css = useMemo(() => `${compileTokensCSS(tokens, ':host', (mode) => `:host([data-theme="${mode}"])`)}\n${ARTBOARD_BASE_CSS}`, [tokens]);
+  const css = useMemo(() => `${compileTokensCSS(tokens, ':host', (mode) => `[data-theme="${mode}"]`)}\n${ARTBOARD_BASE_CSS}`, [tokens]);
   return <style>{css}</style>;
 }
 
