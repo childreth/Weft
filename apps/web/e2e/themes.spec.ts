@@ -57,3 +57,38 @@ test('a theme restyles a copy of an artboard from the Inspector, a section can t
   for (let i = 0; i < 3; i++) await page.keyboard.press('Meta+z');
   await expect.poll(() => color(copy)).toBe(white);
 });
+
+test('the font roles are set in the Fonts panel, and a theme can swap one', async ({ page }) => {
+  await page.route('**/fonts.css?*', (route) => route.fulfill({ contentType: 'text/css', body: '/* fonts */' }));
+  await page.goto('/?ephemeral');
+  await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
+  const [board, heading] = await page.evaluate(() => {
+    const { doc } = window.weft;
+    doc.addFonts([{ family: 'Fraunces' }, { family: 'Inter' }]);
+    const board = doc.getChildren(null)[0]!.id;
+    const h1 = doc.getNodes().find((n) => n.tag === 'h1')!.id;
+    doc.updateNode(h1, { styles: { fontFamily: 'var(--font-family-heading)' } });
+    return [board, h1];
+  });
+  const family = () => page.locator(`[data-gf-id="${heading}"]`).first().evaluate((el) => getComputedStyle(el).fontFamily);
+  expect(await family()).toContain('system-ui');
+
+  // With nothing selected, the Inspector shows the document's fonts and the roles.
+  await page.evaluate(() => window.weft.editor.getState().select([]));
+  await page.getByLabel('Headings font').selectOption({ label: 'Fraunces' });
+  await expect.poll(family).toMatch(/^"?Fraunces"?, Georgia/);
+  expect(await page.evaluate(() => window.weft.doc.getTokens()['font-family.heading'])).toBe('{font-family.fraunces}');
+
+  // A theme points the role at another font, only inside frames that use it.
+  await page.evaluate((id) => {
+    window.weft.doc.setTheme('plain', { 'font-family.heading': '{font-family.inter}' });
+    window.weft.doc.updateNode(id, { theme: 'plain' });
+  }, board);
+  await expect.poll(family).toMatch(/^"?Inter"?,/);
+  await page.screenshot({ path: 'test-results/m4-font-roles.png' });
+
+  // Back to the default: the document token is removed, not set to the default value.
+  await page.evaluate((id) => window.weft.doc.updateNode(id, { theme: null }), board);
+  await page.getByLabel('Headings font').selectOption({ label: 'System sans' });
+  expect(await page.evaluate(() => 'font-family.heading' in window.weft.doc.getTokens())).toBe(false);
+});

@@ -13,7 +13,7 @@ Removing generic devices isn't enough: a page with every tell taken out and noth
 - Colors, spacing, radii, font sizes and shadows come from tokens: `var(--color-…)`, `var(--space-…)`, `var(--radius-…)`, `var(--font-size-…)`, `var(--shadow-…)`. Call `list_tokens` for the real names.
 - If the document already has a design system (its own tokens, or existing artboards with a clear look), use it before inventing anything.
 - When the tokens can't express the palette (a brand, a reference), add it with `set_tokens` instead of typing raw values. Set the roles first ({{COLOR_ROLES}}), so everything that already uses them follows; add named shades only for what the roles don't cover (`color.ember-100`). Then use exactly those tokens. Every new hex is a second palette starting.
-- Themes: another version of a design (dark, a seasonal palette, a second brand) is a theme, not a restyle. `set_tokens` with `theme` overrides the roles for that theme (the built-in `dark` already does), and `update_nodes` with `"theme"` applies it to an artboard or a section. For a light and dark pair, duplicate the artboard and give the copy the theme. This is why colors go through the roles: a raw hex stays the same in every theme.
+- Themes: another version of a design (dark, a seasonal palette, a second brand) is a theme, not a restyle. `set_tokens` with `theme` overrides the roles for that theme, colors and the font roles (the built-in `dark` already does colors), and `update_nodes` with `"theme"` applies it to an artboard or a section. For a light and dark pair, duplicate the artboard and give the copy the theme. This is why colors and fonts go through the roles: a raw hex or a font named directly stays the same in every theme.
 
 ## Color
 
@@ -28,7 +28,7 @@ Removing generic devices isn't enough: a page with every tell taken out and noth
 
 - At most two families: one for headings and one for everything else (often the same family). Pick them with `search_fonts`, add them with `add_fonts` with only the weights you'll use, and never swap their jobs or add a third for labels or numbers.
 - Match a reference's typeface by its category and feel when the exact font isn't a Google Font: a geometric sans for a geometric sans, a high-contrast serif for a high-contrast serif. Say which font you substituted.
-- Set `fontFamily` once on the artboard root for body text, and override it only on headings.
+- Use the font roles, not the fonts: `fontFamily: var(--font-family-body)` once on the artboard root, `var(--font-family-heading)` on headings, and point the roles at your fonts with `set_tokens`. Then a theme can change the type along with the colors.
 - **Few sizes, far apart.** Three to five sizes carry a page: display, heading, body, small, and maybe a lead. If two sizes look almost the same, make them the same. On a marketing page the display size is at least three to four times the body size.
 - **Display type** (over about 40px): `lineHeight` 0.95–1.1 and negative `letterSpacing` (about -0.02em to -0.04em, tighter as it gets bigger). All capitals want slightly open tracking instead.
 - **Headlines fit in two lines** at every width you check: about five words, 32 characters or fewer. Move the rest into a supporting sentence; don't fix a long headline by shrinking it. Section headings: two to five words.

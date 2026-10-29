@@ -25,6 +25,7 @@ import {
   throwIssues,
   treeIssues,
   flattenTokens,
+  modeChangedVars,
   readWeftFile,
   type ArtboardFrame,
   type BreakpointStyles,
@@ -50,11 +51,11 @@ Model:
 - Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
-- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required ("" if decorative); remote URLs aren't loaded, and agents can't add image files yet. Fonts: any Google Font via search_fonts → add_fonts, then fontFamily var(--font-family-<slug>). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
+- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required ("" if decorative); remote URLs aren't loaded, and agents can't add image files yet. Fonts: any Google Font via search_fonts → add_fonts, then point a role at it with set_tokens {"font-family.heading": "{font-family.<slug>}"} (and font-family.body) and set fontFamily var(--font-family-heading) / var(--font-family-body). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them. When the palette lacks what the design needs (a brand's warm browns), add tokens with set_tokens and use those instead of raw hex.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
-- Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors set with tokens (var(--color-surface), var(--color-text), var(--color-accent)…), so use them. Create or change a theme with set_tokens and "theme".
+- Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with tokens (var(--color-surface), var(--color-text), var(--color-accent)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create or change a theme with set_tokens and "theme".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
@@ -258,6 +259,29 @@ function backgroundWarnings(room: Room, updates: Array<{ id: string; styles?: Re
     if (!node || !image || !styles?.backgroundColor || 'backgroundImage' in styles) return [];
     return [
       `${node.name} (${id}): its backgroundImage (${image.length > 60 ? `${image.slice(0, 60)}…` : image}) paints over backgroundColor, so the new color won't show. Set backgroundImage to null, or to a gradient in the new colors`,
+    ];
+  });
+}
+
+/**
+ * Themed frames where nothing inside uses a token the theme changes (raw hex
+ * colors): the theme can't show, and models report it as applied.
+ */
+function themeWarnings(room: Room, ids: Iterable<string>): string[] {
+  const set = room.doc.tokenSet();
+  return [...ids].flatMap((id) => {
+    const node = room.doc.getNode(id);
+    if (!node?.theme) return [];
+    const changed = modeChangedVars(set, node.theme);
+    const values = [id, ...room.doc.getDescendantIds(id)].flatMap((d) => {
+      const n = room.doc.getNode(d)!;
+      return [n.styles, ...Object.values(n.breakpoints ?? {})].flatMap((styles) => Object.values(styles ?? {}));
+    });
+    const uses = values.some((v) => [...v.matchAll(/var\((--[\w-]+)\)/g)].some((m) => changed.has(m[1]!)));
+    if (uses) return [];
+    const raw = values.find((v) => /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(v));
+    return [
+      `${node.name} (${id}): nothing in it uses a token the "${node.theme}" theme changes${raw ? ` (its colors are raw values like ${raw.length > 40 ? `${raw.slice(0, 40)}…` : raw})` : ''}, so it looks the same. Replace its colors with the tokens (var(--color-surface), var(--color-text), var(--color-accent)…), and fonts with var(--font-family-heading) / var(--font-family-body), for the theme to show`,
     ];
   });
 }
@@ -503,7 +527,7 @@ export function createMcpServer(
             ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, parentId)}`
             : `Creating ${created.map((c) => c.name).join(', ')}`,
         });
-        const warnings = iconWarnings(room, touched);
+        const warnings = [...themeWarnings(room, touched), ...iconWarnings(room, touched)];
         return {
           created,
           ...(warnings.length && { warnings }),
@@ -568,7 +592,11 @@ export function createMcpServer(
           room.doc.updateNode(id, patch as NodePatch, agent.identity.origin);
           touched.add(id);
         }
-        const warnings = [...backgroundWarnings(room, updates), ...iconWarnings(room, touched)];
+        const warnings = [
+          ...backgroundWarnings(room, updates),
+          ...themeWarnings(room, updates.filter((u) => u.theme).map((u) => u.id)),
+          ...iconWarnings(room, touched),
+        ];
         const restyled = updates.some((u) => u.styles || u.breakpoints);
         return {
           updated: updates.map((u) => u.id),
@@ -754,7 +782,7 @@ export function createMcpServer(
     'set_tokens',
     {
       title: 'Set design tokens',
-      description: `Adds or changes this document's design tokens, e.g. a brand palette the defaults lack: {"color.ember-500": "#c2410c", "color.ember-100": "#fdeee3", "color.accent": "{color.ember-500}"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')} (fonts come from add_fonts). A new name adds a token; an existing one (color.accent, color.surface, color.text…) overrides it everywhere it's used. "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. Use them in styles as var(--color-ember-500). With "theme", the values instead override existing tokens only inside frames with that theme (creating the theme if new, e.g. "ember", or changing the built-in "dark"); add new tokens without a theme first. "theme" with tokens null removes that theme. One atomic, undoable step.`,
+      description: `Adds or changes this document's design tokens, e.g. a brand palette the defaults lack: {"color.ember-500": "#c2410c", "color.ember-100": "#fdeee3", "color.accent": "{color.ember-500}"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')}; font-family only for the roles font-family.heading and font-family.body, pointed at a font add_fonts added ({"font-family.heading": "{font-family.fraunces}"}). A new name adds a token; an existing one (color.accent, color.surface, color.text…) overrides it everywhere it's used. "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. Use them in styles as var(--color-ember-500). With "theme", the values instead override existing tokens only inside frames with that theme (creating the theme if new, e.g. "ember", or changing the built-in "dark"); add new tokens without a theme first. "theme" with tokens null removes that theme. One atomic, undoable step.`,
       inputSchema: {
         doc: docParam,
         tokens: z
@@ -882,7 +910,7 @@ export function createMcpServer(
     {
       title: 'Add Google Fonts',
       description:
-        'Adds Google Fonts to the document (or more weights to one it has). Each becomes a token: set fontFamily to var(--font-family-<slug>), e.g. "Playfair Display" → var(--font-family-playfair-display). Weights default to the usual 400–700 the family has. Fonts are cached locally after first use, so they keep working offline.',
+        'Adds Google Fonts to the document (or more weights to one it has). Each becomes a token, e.g. "Playfair Display" → {font-family.playfair-display}: point a role at it with set_tokens {"font-family.heading": "{font-family.playfair-display}"} and style with var(--font-family-heading) (or font-family.body / var(--font-family-body)), so themes can swap it. Weights default to the usual 400–700 the family has. Fonts are cached locally after first use, so they keep working offline.',
       inputSchema: {
         doc: docParam,
         fonts: z.array(z.object({ family: z.string(), weights: z.array(z.coerce.number().int()).optional() })).min(1).max(10),

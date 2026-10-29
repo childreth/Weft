@@ -3,7 +3,7 @@ import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
 import { defaultTokens } from './default-tokens';
 import { MAX_DOCUMENT_TOKENS, MAX_THEMES, documentTokenIssues, themeIssues, themeNameIssue, withDocumentTokens } from './document-tokens';
-import { defaultWeights, findFont, withFontTokens, type DocumentFont } from './fonts';
+import { defaultWeights, findFont, fontSlug, withFontTokens, type DocumentFont } from './fonts';
 import { flattenTokens, mergeTokenGroups, type TokenGroup, type TokenSet } from './tokens';
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
 import {
@@ -711,11 +711,23 @@ export class GridDocument {
     );
   }
 
-  /** Removes fonts by family. Styles that use them fall back to the token's fallback stack. */
+  /**
+   * Removes fonts by family. Styles that use them fall back to the token's
+   * fallback stack; a font role (or a theme's) that points at one must move first.
+   */
   removeFonts(families: readonly string[], origin: Origin = ORIGIN_LOCAL): void {
     const names = families.map((f) => findFont(f)?.family ?? f);
     const missing = names.filter((f) => !this.fonts.has(f));
     if (missing.length) throw new GridError(`Not in this document: ${missing.join(', ')}`);
+    const refs = new Set(names.map((f) => `{font-family.${fontSlug(f)}}`));
+    const sets: Array<[string, Record<string, string>]> = [['', this.getTokens()], ...Object.entries(this.getThemes())];
+    throwIssues(
+      sets.flatMap(([theme, tokens]) =>
+        Object.entries(tokens)
+          .filter(([, value]) => refs.has(value))
+          .map(([path, value]) => `${path}${theme && ` in the ${theme} theme`} uses ${value}: point it at another font first`),
+      ),
+    );
     this.transact(() => names.forEach((f) => this.fonts.delete(f)), origin);
   }
 

@@ -7,7 +7,7 @@ export const DEFAULT_ARTBOARD_STYLES: StyleMap = {
   padding: 'var(--space-8)',
   backgroundColor: 'var(--color-surface)',
   color: 'var(--color-text)',
-  fontFamily: 'var(--font-family-sans)',
+  fontFamily: 'var(--font-family-body)',
   fontSize: 'var(--font-size-md)',
   lineHeight: 'var(--line-height-normal)',
 };

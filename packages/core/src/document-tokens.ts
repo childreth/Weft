@@ -29,10 +29,21 @@ const GROUPS: Record<string, { type: string; valid: (v: string) => boolean; expe
   'font-size': { type: 'dimension', valid: (v) => LENGTH.test(v) || MATH_FN.test(v), expect: 'a length (18px, 1.125rem) or clamp()' },
   'font-weight': { type: 'fontWeight', valid: (v) => /^[1-9]00$/.test(v), expect: 'a weight from 100 to 900' },
   'line-height': { type: 'number', valid: (v) => /^(?:\d+|\d*\.\d+)$/.test(v), expect: 'a unitless number (1.4)' },
+  // Only the roles (FONT_ROLES), pointed at a font: the fonts themselves come from the document's fonts.
+  'font-family': {
+    type: 'fontFamily',
+    valid: () => false,
+    expect: 'a reference to a font, e.g. {font-family.fraunces} (add_fonts adds one)',
+  },
   shadow: { type: 'shadow', valid: (v) => v === 'none' || /^[a-z0-9#.,%() -]+$/i.test(v), expect: 'a box-shadow (0 4px 12px rgb(0 0 0 / 0.12))' },
 };
 
 export const DOCUMENT_TOKEN_GROUPS: readonly string[] = Object.keys(GROUPS);
+
+/** The semantic font tokens designs use (`var(--font-family-heading)`); documents and themes point them at fonts. */
+export const FONT_ROLES = ['heading', 'body'] as const;
+const isFontRole = (path: string) => FONT_ROLES.some((role) => path === `font-family.${role}`);
+const FONT_ROLE_HINT = `set the roles ${FONT_ROLES.map((r) => `font-family.${r}`).join(' and ')} to one, e.g. {font-family.fraunces}`;
 export const MAX_DOCUMENT_TOKENS = 200;
 const MAX_VALUE_LENGTH = 200;
 
@@ -69,11 +80,11 @@ export function documentTokenIssues(
     }
     const rule = GROUPS[group];
     if (!rule) {
-      issues.push(
-        group === 'font-family'
-          ? `${at}: font-family tokens come from the document's fonts (add_fonts)`
-          : `${at}: unknown group "${group}" (allowed: ${DOCUMENT_TOKEN_GROUPS.join(', ')})`,
-      );
+      issues.push(`${at}: unknown group "${group}" (allowed: ${DOCUMENT_TOKEN_GROUPS.join(', ')})`);
+      continue;
+    }
+    if (group === 'font-family' && !isFontRole(path)) {
+      issues.push(`${at}: fonts come from the document's fonts (add_fonts); ${FONT_ROLE_HINT}`);
       continue;
     }
     if (groupNames.has(path)) {
@@ -113,7 +124,7 @@ export function themeNameIssue(name: string): string | null {
 /**
  * Problems with setting `entries` on theme `name`, whose current overrides are
  * `current` (null removes one), over `base` (the full token set without themes).
- * A theme only overrides tokens that exist; fonts aren't themed.
+ * A theme only overrides tokens that exist; fonts only through their roles.
  */
 export function themeIssues(
   name: string,
@@ -143,7 +154,11 @@ export function themeIssues(
       continue;
     }
     if (!rule) {
-      issues.push(`${at}: ${group === 'font-family' ? 'fonts' : `${group} tokens`} can't be themed`);
+      issues.push(`${at}: ${group} tokens can't be themed`);
+      continue;
+    }
+    if (group === 'font-family' && !isFontRole(path)) {
+      issues.push(`${at}: a theme changes fonts through their roles; ${FONT_ROLE_HINT}`);
       continue;
     }
     const value = raw.trim();

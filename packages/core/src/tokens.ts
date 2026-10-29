@@ -111,3 +111,22 @@ export function compileTokensCSS(
   }
   return blocks.join('\n\n');
 }
+
+/**
+ * The custom properties (`--color-accent`) whose value a mode changes: the ones
+ * it overrides, and the aliases that lead to them.
+ */
+export function modeChangedVars(set: TokenSet, mode: string): Set<string> {
+  const overrides = set.modes?.[mode];
+  if (!overrides) return new Set();
+  const resolver = (tokens: FlatToken[]) => {
+    const values = new Map(tokens.map((t) => [t.cssVar, t.value]));
+    const resolve = (value: string, depth = 0): string =>
+      depth > 20 ? value : value.replace(/var\((--[\w-]+)\)/g, (ref, name: string) => (values.has(name) ? resolve(values.get(name)!, depth + 1) : ref));
+    return (name: string) => resolve(values.get(name) ?? '');
+  };
+  const base = flattenTokens(set.tokens);
+  const before = resolver(base);
+  const after = resolver(flattenTokens(mergeTokenGroups(set.tokens, overrides)));
+  return new Set(base.map((t) => t.cssVar).filter((name) => before(name) !== after(name)));
+}

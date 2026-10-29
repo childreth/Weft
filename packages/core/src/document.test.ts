@@ -4,7 +4,8 @@ import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipbo
 import { exportArtboardHTML } from './export';
 import { History } from './history';
 import { seedLandingPage } from './seed';
-import { compileTokensCSS, flattenTokens } from './tokens';
+import { compileTokensCSS, flattenTokens, modeChangedVars } from './tokens';
+import { DEFAULT_ARTBOARD_STYLES } from './defaults';
 import { defaultTokens } from './default-tokens';
 
 function artboard(doc: GridDocument) {
@@ -298,11 +299,36 @@ describe('themes', () => {
     expect(issues('ember', { 'color.surface': '#000', 'color.brand': '#111' })).toContain(`"color.brand" isn't a token`);
     expect(doc.getThemes()).toEqual({});
     expect(issues('ember', { 'space.4': 'red' })).toContain('expected a length');
-    expect(issues('ember', { 'font-family.sans': 'Inter' })).toContain("fonts can't be themed");
+    expect(issues('ember', { 'font-family.sans': 'Inter' })).toContain('through their roles');
+    expect(issues('ember', { 'font-family.heading': 'Inter' })).toContain('a reference to a font');
+    expect(issues('ember', { 'font-family.heading': '{color.accent}' })).toContain('another font-family token');
     expect(issues('ember', { 'color.surface': '{color.nope}' })).toContain("isn't a token");
     expect(issues('ember', { 'color.blue.600': '{color.accent}' })).toContain('in a circle');
     expect(issues('ember', { 'color.surface': null })).toContain('nothing to remove');
     expect(issues('ember', { 'color.surface': '{color.neutral.900}', 'space.4': '20px' })).toBe('');
+  });
+
+  it('points the font roles at document fonts, per document and per theme', () => {
+    const doc = new GridDocument();
+    const board = artboard(doc);
+    doc.addFonts([{ family: 'Fraunces' }, { family: 'Inter' }]);
+    doc.setTokens({ 'font-family.heading': '{font-family.fraunces}', 'font-family.body': '{font-family.inter}' });
+    expect(() => doc.setTokens({ 'font-family.inter': '{font-family.fraunces}' })).toThrow('font-family.heading and font-family.body');
+    doc.setTheme('plain', { 'font-family.heading': '{font-family.inter}' });
+    doc.updateNode(board, { theme: 'plain' });
+
+    const css = compileTokensCSS(doc.tokenSet());
+    expect(css).toContain('--font-family-heading: var(--font-family-fraunces);');
+    expect(css).toMatch(/\[data-theme="plain"\] \{[^}]*--font-family-heading: var\(--font-family-inter\);/);
+    expect([...modeChangedVars(doc.tokenSet(), 'plain')]).toEqual(['--font-family-heading']);
+    expect(DEFAULT_ARTBOARD_STYLES.fontFamily).toBe('var(--font-family-body)');
+
+    // A font a role points at can't be removed out from under it.
+    expect(() => doc.removeFonts(['Fraunces'])).toThrow('font-family.heading uses {font-family.fraunces}');
+    expect(() => doc.removeFonts(['Inter'])).toThrow('in the plain theme');
+    doc.setTokens({ 'font-family.heading': null });
+    doc.removeFonts(['Fraunces']);
+    expect(doc.getFonts().map((f) => f.family)).toEqual(['Inter']);
   });
 
   it('round-trips themes through snapshots and files, and drops themes a document lacks from pasted layers', () => {
