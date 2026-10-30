@@ -601,7 +601,7 @@ describe('sync relay', () => {
 
     const listed = (await call('list_tokens', { doc: 'themes', group: 'color' })).data;
     expect(listed.themes.ember).toMatchObject({ 'color.accent': '#c2410c' });
-    expect(listed.themes.dark['color.surface']).toBe('var(--color-neutral-950)');
+    expect(listed.themes.dark['color.surface']).toMatch(/^#[0-9a-f]{6}$/);
 
     expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'nope' }] })).text).toContain('Unknown theme "nope"');
     // The seed page colors with the tokens, so the theme shows: no warning.
@@ -627,8 +627,8 @@ describe('sync relay', () => {
     expect(res.data.warnings[0]).toContain('Raw card');
     expect(res.data.warnings[0]).toContain('raw values like #faf5ee');
 
-    // A theme that overrides a shade reaches frames through the aliases that point at it.
-    expect((await call('set_tokens', { doc: 'theme-warnings', theme: 'deep', tokens: { 'color.blue.600': '#1e3a8a' } })).isError).toBe(false);
+    // A theme that overrides a role reaches frames through the legacy names that point at it.
+    expect((await call('set_tokens', { doc: 'theme-warnings', theme: 'deep', tokens: { 'color.primary': '#1e3a8a' } })).isError).toBe(false);
     const accent = room.doc.createNode({ type: 'frame', parentId: page!.id, name: 'Accent card', styles: { backgroundColor: 'var(--color-accent)' } });
     const aliased = await call('update_nodes', { doc: 'theme-warnings', updates: [{ id: accent, theme: 'deep' }] });
     expect(aliased.isError).toBe(false);
@@ -639,6 +639,25 @@ describe('sync relay', () => {
       nodes: [{ type: 'frame', name: 'New raw', theme: 'deep', styles: { color: 'rgb(0, 0, 0)' } }],
     });
     expect(created.data.warnings[0]).toContain('New raw');
+  });
+
+  it('generates every color role from a seed, for the document or a theme pair', async () => {
+    const room = server.rooms.get('seeds');
+    const res = await call('set_tokens', { doc: 'seeds', seed: '#b85c38' });
+    expect(res.isError).toBe(false);
+    expect(res.data).toMatchObject({ seed: '#b85c38', colors: 'document', themes: ['dark'], roles: { 'color.primary': '#8f4c33', 'color.surface': '#fff8f6' } });
+    expect(room.doc.getThemes().dark!['color.primary']).toBe('#ffb59a');
+
+    const pair = await call('set_tokens', { doc: 'seeds', seed: '#3f7d4e', variant: 'fidelity', theme: 'forest' });
+    expect(pair.data).toMatchObject({ themes: ['forest', 'forest-dark'], roles: { 'color.primary-container': '#3f7d4e' } });
+    expect(room.doc.getThemeNames()).toEqual(['dark', 'forest', 'forest-dark']);
+
+    expect((await call('set_tokens', { doc: 'seeds', seed: 'green' })).text).toContain('expected a hex color');
+    expect((await call('set_tokens', { doc: 'seeds', seed: '#3f7d4e', tokens: { 'color.primary': '#000' } })).text).toContain('not both');
+    expect((await call('set_tokens', { doc: 'seeds' })).text).toContain('Pass "tokens"');
+    // One step each: undo takes the theme pair back off.
+    await call('undo_agent_change', { doc: 'seeds' });
+    expect(room.doc.getThemeNames()).toEqual(['dark']);
   });
 
   it('warns when a new background color is hidden under a backgroundImage', async () => {

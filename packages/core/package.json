@@ -11,6 +11,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@material/material-color-utilities": "^0.3.0",
     "fractional-indexing": "^4.0.0",
     "yjs": "^13.6.33"
   },

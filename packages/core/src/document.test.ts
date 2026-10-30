@@ -7,6 +7,7 @@ import { seedLandingPage } from './seed';
 import { compileTokensCSS, flattenTokens, modeChangedVars } from './tokens';
 import { DEFAULT_ARTBOARD_STYLES } from './defaults';
 import { defaultTokens } from './default-tokens';
+import { COLOR_ROLES, DEFAULT_SEED, LEGACY_COLOR_ROLES, materialScheme } from './material';
 
 function artboard(doc: GridDocument) {
   return doc.createNode({ type: 'frame', name: 'A', frame: { x: 0, y: 0, width: 100, height: 100 } });
@@ -153,7 +154,7 @@ describe('tokens', () => {
     const flat = flattenTokens(defaultTokens.tokens);
     expect(flat.find((t) => t.name === 'color.accent')).toMatchObject({
       cssVar: '--color-accent',
-      value: 'var(--color-blue-600)',
+      value: 'var(--color-primary)',
       type: 'color',
     });
     expect(flat.find((t) => t.name === 'font-family.sans')?.value).toContain('system-ui, -apple-system');
@@ -174,11 +175,11 @@ describe('tokens', () => {
     expect(flat.find((t) => t.name === 'color.accent')?.value).toBe('var(--color-ember-500)');
     expect(flat.find((t) => t.name === 'space.18')?.type).toBe('dimension');
     // Defaults aren't changed, and export ships the document's tokens.
-    expect(flattenTokens(defaultTokens.tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-blue-600)');
+    expect(flattenTokens(defaultTokens.tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-primary)');
     expect(exportArtboardHTML(doc, board)).toContain('--color-ember-500: #c2410c;');
 
     doc.setTokens({ 'color.accent': null });
-    expect(flattenTokens(doc.tokenSet().tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-blue-600)');
+    expect(flattenTokens(doc.tokenSet().tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-primary)');
     history.undo();
     expect(doc.getTokens()['color.accent']).toBe('{color.ember-500}');
 
@@ -230,10 +231,10 @@ describe('tokens', () => {
 
 describe('themes', () => {
   it('declares every token in a theme block, so aliases follow an overridden primitive', () => {
-    const css = compileTokensCSS({ tokens: defaultTokens.tokens, modes: { ember: { color: { blue: { 600: { $value: '#c2410c' } } } } } }, ':host', (m) => `[data-theme="${m}"]`);
+    const css = compileTokensCSS({ tokens: defaultTokens.tokens, modes: { ember: { color: { primary: { $value: '#c2410c' } } } } }, ':host', (m) => `[data-theme="${m}"]`);
     const block = css.slice(css.indexOf('[data-theme="ember"]'));
-    expect(block).toContain('--color-blue-600: #c2410c;');
-    expect(block).toContain('--color-accent: var(--color-blue-600);');
+    expect(block).toContain('--color-primary: #c2410c;');
+    expect(block).toContain('--color-accent: var(--color-primary);');
     expect(block).toContain('--space-4: 16px;');
   });
 
@@ -255,7 +256,7 @@ describe('themes', () => {
     doc.setTheme('dark', { 'color.accent': '#f97316' });
     const dark = flattenTokens(doc.tokenSet().modes!.dark!);
     expect(dark.find((t) => t.name === 'color.accent')?.value).toBe('#f97316');
-    expect(dark.find((t) => t.name === 'color.surface')?.value).toBe('var(--color-neutral-950)');
+    expect(dark.find((t) => t.name === 'color.surface')?.value).toBe(materialScheme(DEFAULT_SEED, { variant: 'fidelity', dark: true }).surface);
 
     doc.updateNode(board, { theme: 'ember' });
     doc.updateNode(section, { theme: 'dark' });
@@ -303,7 +304,7 @@ describe('themes', () => {
     expect(issues('ember', { 'font-family.heading': 'Inter' })).toContain('a reference to a font');
     expect(issues('ember', { 'font-family.heading': '{color.accent}' })).toContain('another font-family token');
     expect(issues('ember', { 'color.surface': '{color.nope}' })).toContain("isn't a token");
-    expect(issues('ember', { 'color.blue.600': '{color.accent}' })).toContain('in a circle');
+    expect(issues('ember', { 'color.primary': '{color.accent}' })).toContain('in a circle');
     expect(issues('ember', { 'color.surface': null })).toContain('nothing to remove');
     expect(issues('ember', { 'color.surface': '{color.neutral.900}', 'space.4': '20px' })).toBe('');
   });
@@ -817,5 +818,84 @@ describe('images', () => {
     expect(html).toContain('src="data:image/png;base64,aaaa"');
     expect(html).not.toContain('x.example');
     expect(html).toContain('<img data-gf-id');
+  });
+});
+
+describe('material color roles', () => {
+  it('gives every document all the Material 3 roles, light by default and dark as the built-in theme', () => {
+    const flat = new Map(flattenTokens(defaultTokens.tokens).map((t) => [t.name, t.value]));
+    const dark = new Map(flattenTokens(defaultTokens.modes!.dark!).map((t) => [t.name, t.value]));
+    expect(COLOR_ROLES).toHaveLength(49);
+    for (const role of COLOR_ROLES) {
+      expect(flat.get(`color.${role}`)).toMatch(/^#[0-9a-f]{6}$/);
+      expect(dark.get(`color.${role}`)).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    // The old names are aliases, so older designs follow the roles and every theme.
+    for (const [name, role] of Object.entries(LEGACY_COLOR_ROLES)) expect(flat.get(`color.${name}`)).toBe(`var(--color-${role})`);
+    expect(flat.get('color.surface-container-lowest')).toBe('#ffffff');
+    expect(flat.get('color.on-surface')).not.toBe(dark.get('color.on-surface'));
+  });
+
+  it('derives schemes from a seed color', () => {
+    const light = materialScheme('#b85c38');
+    expect(light).toMatchObject({ primary: '#8f4c33', 'on-primary': '#ffffff', surface: '#fff8f6' });
+    expect(materialScheme('#b85c38', { dark: true }).primary).toBe('#ffb59a');
+    // Fidelity keeps the seed itself as the container color.
+    expect(materialScheme('#b85c38', { variant: 'fidelity' })['primary-container']).toBe('#b85c38');
+    expect(() => materialScheme('orange')).toThrow('expected a hex color');
+  });
+
+  it("sets the document's roles and its dark theme from a seed, or a theme pair, in one undo step", () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    doc.setTokens({ 'color.accent': '#ff0000' });
+    expect(doc.setSeedColor('#b85c38')).toEqual(['dark']);
+    expect(doc.getTokens()['color.primary']).toBe('#8f4c33');
+    // A legacy override would stop the old name following the new primary.
+    expect('color.accent' in doc.getTokens()).toBe(false);
+    expect(doc.getThemes().dark!['color.primary']).toBe('#ffb59a');
+    history.undo();
+    expect(doc.getTokens()).toEqual({ 'color.accent': '#ff0000' });
+    expect(doc.getThemes()).toEqual({});
+
+    expect(doc.setSeedColor('#3f7d4e', { theme: 'forest', variant: 'fidelity' })).toEqual(['forest', 'forest-dark']);
+    expect(doc.getThemeNames()).toEqual(['dark', 'forest', 'forest-dark']);
+    expect(doc.getThemes().forest!['color.primary-container']).toBe('#3f7d4e');
+    expect(() => doc.setSeedColor('#3f7d4e', { theme: 'dark' })).toThrow('leave it out');
+    expect(() => doc.setSeedColor('green')).toThrow('expected a hex color');
+    expect(() => doc.setSeedColor('#3f7d4e', { variant: 'loud' as never })).toThrow('isn\'t one of');
+  });
+});
+
+describe('removing tokens themes use', () => {
+  it("won't remove a token something still refers to", () => {
+    const doc = new GridDocument();
+    doc.setTokens({ 'color.ember-500': '#c2410c', 'color.ember-glow': '{color.ember-500}' });
+    doc.setTheme('ember', { 'color.primary': '{color.ember-500}' });
+    expect(() => doc.setTokens({ 'color.ember-500': null })).toThrow(/color.ember-glow refers to it[\s\S]*color.primary in the ember theme refers to it/);
+    // Removing an override of a default is fine: the token still exists.
+    doc.setTokens({ 'color.primary': '#111111' });
+    doc.setTheme('ember', { 'color.surface': '{color.primary}' });
+    doc.setTokens({ 'color.primary': null });
+  });
+
+  it("drops themes' overrides of a removed token, so saved files stay loadable", () => {
+    const doc = new GridDocument();
+    doc.setTokens({ 'color.ember-500': '#c2410c' });
+    doc.setTheme('ember', { 'color.ember-500': '#ff0000', 'color.surface': '#fff7ed' });
+    doc.setTokens({ 'color.ember-500': null });
+    expect(doc.getThemes()).toEqual({ ember: { 'color.surface': '#fff7ed' } });
+    const copy = new GridDocument();
+    copy.loadSnapshot(doc.toSnapshot());
+    expect(copy.getThemes()).toEqual({ ember: { 'color.surface': '#fff7ed' } });
+  });
+
+  it('leaves stale overrides from older documents out of snapshots and loads them anyway', () => {
+    const doc = new GridDocument();
+    doc.themes.set('ember', { 'color.gone': '#ff0000', 'color.surface': '#fff7ed' });
+    expect(doc.toSnapshot().themes).toEqual({ ember: { 'color.surface': '#fff7ed' } });
+    const copy = new GridDocument();
+    copy.loadSnapshot({ ...doc.toSnapshot(), themes: { ember: { 'color.gone': '#ff0000', 'color.surface': '#fff7ed' } } });
+    expect(copy.getThemes()).toEqual({ ember: { 'color.surface': '#fff7ed' } });
   });
 });

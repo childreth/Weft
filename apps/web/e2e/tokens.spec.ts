@@ -14,7 +14,7 @@ test("a document token restyles the canvas live, shows in the Inspector, and und
   const blue = await background();
 
   // Overriding a role restyles everything that uses it; a new token joins the Inspector's suggestions.
-  await page.evaluate(() => window.weft.doc.setTokens({ 'color.ember-500': '#c2410c', 'color.accent': '{color.ember-500}' }));
+  await page.evaluate(() => window.weft.doc.setTokens({ 'color.ember-500': '#c2410c', 'color.primary': '{color.ember-500}' }));
   await expect.poll(background).toBe('rgb(194, 65, 12)');
   // A step that changes only tokens still enables Undo.
   await expect(page.getByTitle('Undo (⌘Z)')).toBeEnabled();

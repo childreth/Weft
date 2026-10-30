@@ -27,7 +27,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
     text(header, 'p', 'Weft', { fontWeight: 'var(--font-weight-bold)', fontSize: 'var(--font-size-xl)' });
     const nav = frame(header, 'nav', 'Nav', { display: 'flex', gap: 'var(--space-6)' });
     for (const label of ['Product', 'Docs', 'Pricing']) {
-      text(nav, 'a', label, { color: 'var(--color-text-muted)' });
+      text(nav, 'a', label, { color: 'var(--color-on-surface-variant)' });
     }
 
     const hero = frame(page, 'section', 'Hero', {
@@ -44,12 +44,12 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
     });
     text(copy, 'p', 'Every artboard is real DOM and CSS Grid, bound to design tokens and editable by people and agents alike.', {
       fontSize: 'var(--font-size-lg)',
-      color: 'var(--color-text-muted)',
+      color: 'var(--color-on-surface-variant)',
     });
     const actions = frame(copy, 'div', 'Actions', { display: 'flex', gap: 'var(--space-3)' });
     text(actions, 'button', 'Get started', {
-      backgroundColor: 'var(--color-accent)',
-      color: 'var(--color-on-accent)',
+      backgroundColor: 'var(--color-primary)',
+      color: 'var(--color-on-primary)',
       padding: 'var(--space-3) var(--space-5)',
       borderRadius: 'var(--radius-md)',
       borderWidth: '0',
@@ -61,12 +61,12 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
       borderRadius: 'var(--radius-md)',
       borderWidth: '1px',
       borderStyle: 'solid',
-      borderColor: 'var(--color-border)',
+      borderColor: 'var(--color-outline-variant)',
       fontWeight: 'var(--font-weight-semibold)',
     });
     frame(hero, 'figure', 'Hero visual', {
       minHeight: '320px',
-      backgroundColor: 'var(--color-surface-subtle)',
+      backgroundColor: 'var(--color-surface-container)',
       borderRadius: 'var(--radius-xl)',
     });
 
@@ -86,11 +86,11 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
         flexDirection: 'column',
         gap: 'var(--space-2)',
         padding: 'var(--space-6)',
-        backgroundColor: 'var(--color-surface-subtle)',
+        backgroundColor: 'var(--color-surface-container)',
         borderRadius: 'var(--radius-lg)',
       });
       text(card, 'h3', title, { fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)' });
-      text(card, 'p', body, { color: 'var(--color-text-muted)' });
+      text(card, 'p', body, { color: 'var(--color-on-surface-variant)' });
     }
     return page;
   }, origin);

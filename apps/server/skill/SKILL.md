@@ -39,7 +39,7 @@ Weft artboards are real web pages rendered by the browser. You build a tree of s
 - **Icons:** Material Symbols. `search_icons` finds names ("heart" finds `favorite`), `add_fonts` adds `Material Symbols Outlined` (or Rounded, Sharp) once, and an icon is a text `span` whose text is the name. Recipe in `layout.md`. Don't use emoji or Unicode symbols as icons.
 - **Fonts:** any Google Font. `search_fonts` to find one, `add_fonts` to add it to the document, then point a font role at it with `set_tokens` (`{"font-family.heading": "{font-family.playfair-display}"}`, and `font-family.body`). Styles use the roles, `fontFamily: var(--font-family-heading)` or `var(--font-family-body)`, so a theme can swap the typefaces. Use a font's own token (`var(--font-family-playfair-display)`) only for a one-off. Fonts are cached locally, so they keep working offline.
 - Responsive overrides go in `breakpoints`: {{BREAKPOINTS}}. They are desktop-first and narrower wins.
-- Values should come from design tokens (`var(--space-4)`, `var(--color-accent)`). Call `list_tokens` once to see them.
+- Values should come from design tokens (`var(--space-4)`, `var(--color-primary)`). Colors are the Material 3 color roles; a brand palette comes from `set_tokens` with `seed`. Call `list_tokens` once to see them.
 
 ## Workflow
 

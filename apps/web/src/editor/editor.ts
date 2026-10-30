@@ -11,6 +11,7 @@ import {
   type Axis,
   type CreateNodeInput,
   type NodePatch,
+  type SchemeVariant,
 } from '@weft/core';
 import { SceneStore, makeSceneHooks } from './scene';
 import { agentTiming } from '../canvas/agentCursors';
@@ -120,6 +121,7 @@ export const agentApi = {
   setTokens: (tokens: Record<string, string | null>) => doc.setTokens(tokens, ORIGIN_AGENT),
   setTheme: (name: string, tokens: Record<string, string | null>) => doc.setTheme(name, tokens, ORIGIN_AGENT),
   removeTheme: (name: string) => doc.removeTheme(name, ORIGIN_AGENT),
+  setSeedColor: (seed: string, options?: { theme?: string; variant?: SchemeVariant }) => doc.setSeedColor(seed, options, ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),
 };
 
