@@ -1,6 +1,12 @@
+import { COLOR_ROLES, DEFAULT_SEED, LEGACY_COLOR_ROLES, materialScheme, type ColorRole } from './material';
 import type { TokenSet } from './tokens';
 
 const px = (n: number) => ({ $value: `${n}px` });
+
+// The default light scheme and the built-in dark theme come from one seed, like any Material theme.
+const LIGHT = materialScheme(DEFAULT_SEED, { variant: 'fidelity' });
+const DARK = materialScheme(DEFAULT_SEED, { variant: 'fidelity', dark: true });
+const roles = (scheme: Record<ColorRole, string>) => Object.fromEntries(COLOR_ROLES.map((role) => [role, { $value: scheme[role] }]));
 
 export const defaultTokens: TokenSet = {
   tokens: {
@@ -22,13 +28,10 @@ export const defaultTokens: TokenSet = {
         600: { $value: '#2563eb' },
         700: { $value: '#1d4ed8' },
       },
-      surface: { $value: '{color.white}' },
-      'surface-subtle': { $value: '{color.neutral.100}' },
-      text: { $value: '{color.neutral.900}' },
-      'text-muted': { $value: '{color.neutral.600}' },
-      border: { $value: '{color.neutral.200}' },
-      accent: { $value: '{color.blue.600}' },
-      'on-accent': { $value: '{color.white}' },
+      // Material 3 roles: what designs use. Themes override them.
+      ...roles(LIGHT),
+      // Weft's first role names, now aliases of the Material roles.
+      ...Object.fromEntries(Object.entries(LEGACY_COLOR_ROLES).map(([name, role]) => [name, { $value: `{color.${role}}` }])),
     },
     space: {
       $type: 'dimension',
@@ -67,15 +70,6 @@ export const defaultTokens: TokenSet = {
     },
   },
   modes: {
-    dark: {
-      color: {
-        surface: { $value: '{color.neutral.950}' },
-        'surface-subtle': { $value: '{color.neutral.800}' },
-        text: { $value: '{color.neutral.50}' },
-        'text-muted': { $value: '{color.neutral.400}' },
-        border: { $value: '{color.neutral.800}' },
-        accent: { $value: '{color.blue.500}' },
-      },
-    },
+    dark: { color: roles(DARK) },
   },
 };

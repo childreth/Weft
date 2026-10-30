@@ -19,13 +19,13 @@ test('renders the seeded artboard as real DOM inside a shadow root', async ({ pa
     inShadow: el.getRootNode() instanceof ShadowRoot,
     columns: getComputedStyle(el.closest('section')!).gridTemplateColumns,
     accent: getComputedStyle(el.getRootNode() instanceof ShadowRoot ? (el.getRootNode() as ShadowRoot).host : el)
-      .getPropertyValue('--color-accent')
+      .getPropertyValue('--color-primary')
       .trim(),
   }));
   expect(info.inShadow).toBe(true);
   expect(info.columns.split(' ')).toHaveLength(2);
-  expect(info.accent).toBe('#2563eb');
-  await expect(page.locator('button', { hasText: 'Get started' })).toHaveCSS('background-color', 'rgb(37, 99, 235)');
+  expect(info.accent).toBe('#004ac6');
+  await expect(page.locator('button', { hasText: 'Get started' })).toHaveCSS('background-color', 'rgb(0, 74, 198)');
 });
 
 test('frame tool drag creates an artboard; undo and redo', async ({ page }) => {
@@ -106,7 +106,7 @@ test('inspector edits styles and rejects unknown values', async ({ page }) => {
   const bg = inspector.getByLabel('backgroundColor', { exact: true });
   await bg.fill('var(--color-accent)');
   await bg.press('Enter');
-  await expect(page.locator('figure')).toHaveCSS('background-color', 'rgb(37, 99, 235)');
+  await expect(page.locator('figure')).toHaveCSS('background-color', 'rgb(0, 74, 198)');
   await expect(inspector.locator('[data-style-prop="backgroundColor"] .gf-badge')).toHaveText('token');
 
   await bg.fill('#ff0000');

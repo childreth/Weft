@@ -47,7 +47,7 @@ test('agent edits stream onto the canvas with a highlight', async ({ page }, inf
     nodes: [{ type: 'text', tag: 'a', text: 'Changelog', styles: { color: 'var(--color-accent)' }, attributes: { href: '/changelog' } }],
   });
   const link = page.locator('nav a', { hasText: 'Changelog' });
-  await expect(link).toHaveCSS('color', 'rgb(37, 99, 235)');
+  await expect(link).toHaveCSS('color', 'rgb(0, 74, 198)');
   await expect(page.getByTestId('agent-highlight')).toHaveCount(1);
   await expect(page.getByTestId('agent-activity')).toContainText('Adding 1 node to Nav');
   await expect(page.locator('.gf-avatar[data-kind="agent"]')).toBeVisible();

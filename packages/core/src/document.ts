@@ -3,6 +3,7 @@ import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
 import { defaultTokens } from './default-tokens';
 import { MAX_DOCUMENT_TOKENS, MAX_THEMES, documentTokenIssues, themeIssues, themeNameIssue, withDocumentTokens } from './document-tokens';
+import { LEGACY_COLOR_ROLES, SCHEME_VARIANT_NAMES, materialScheme, schemeTokens, seedIssue, type SchemeVariant } from './material';
 import { defaultWeights, findFont, fontSlug, withFontTokens, type DocumentFont } from './fonts';
 import { flattenTokens, mergeTokenGroups, type TokenGroup, type TokenSet } from './tokens';
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
@@ -667,12 +668,69 @@ export class GridDocument {
    */
   setTokens(entries: Readonly<Record<string, string | null>>, origin: Origin = ORIGIN_LOCAL): void {
     const base = withFontTokens(defaultTokens, this.getFonts());
-    throwIssues(documentTokenIssues(entries, this.getTokens(), base));
+    const current = this.getTokens();
+    const issues = documentTokenIssues(entries, current, base);
+    // A token that stops existing can't still be referred to; themes' overrides of it go with it.
+    const next: Record<string, string> = { ...current };
+    for (const [path, value] of Object.entries(entries)) {
+      if (value === null) delete next[path];
+      else next[path] = value.trim();
+    }
+    const remaining = new Set(flattenTokens(withDocumentTokens(base, next).tokens).map((t) => t.name));
+    const gone = new Set(Object.keys(entries).filter((path) => entries[path] === null && !remaining.has(path)));
+    const themes = this.getThemes();
+    if (gone.size) {
+      const sets: Array<[string, Record<string, string>]> = [['', next], ...Object.entries(themes)];
+      for (const [theme, tokens] of sets) {
+        for (const [path, value] of Object.entries(tokens)) {
+          const ref = /^\{(.+)\}$/.exec(value)?.[1];
+          if (ref && gone.has(ref)) issues.push(`"${ref}": ${path}${theme && ` in the ${theme} theme`} refers to it; point it at another token first`);
+        }
+      }
+    }
+    throwIssues(issues);
     this.transact(() => {
       for (const [path, value] of Object.entries(entries)) {
         if (value === null) this.tokens.delete(path);
         else this.tokens.set(path, value.trim());
       }
+      for (const [name, overrides] of Object.entries(themes)) {
+        if (!Object.keys(overrides).some((path) => gone.has(path))) continue;
+        this.themes.set(name, Object.fromEntries(Object.entries(overrides).filter(([path]) => !gone.has(path))));
+      }
+    }, origin);
+  }
+
+  /**
+   * Material color roles from one seed color (`materialScheme`). Without
+   * `theme`, the document's own roles (light) and the built-in dark theme; with
+   * one, that theme (light) and `<theme>-dark`. Overrides of the legacy role
+   * names (`color.accent`) are removed so they follow the new roles. One undo
+   * step; returns the themes it set.
+   */
+  setSeedColor(
+    seed: string,
+    { theme, variant = 'tonal-spot' }: { theme?: string; variant?: SchemeVariant } = {},
+    origin: Origin = ORIGIN_LOCAL,
+  ): string[] {
+    throwIssues(
+      [
+        seedIssue(seed),
+        SCHEME_VARIANT_NAMES.includes(variant) ? null : `variant: "${variant}" isn't one of ${SCHEME_VARIANT_NAMES.join(', ')}`,
+        theme === 'dark' ? 'theme: leave it out to set the document\'s colors and its dark theme' : null,
+        theme !== undefined && theme !== 'dark' ? (themeNameIssue(theme) ?? themeNameIssue(`${theme}-dark`)) : null,
+      ].filter((issue): issue is string => issue !== null),
+    );
+    const legacy = (tokens: Record<string, string>) =>
+      Object.fromEntries(Object.keys(LEGACY_COLOR_ROLES).flatMap((name) => (`color.${name}` in tokens ? [[`color.${name}`, null]] : [])));
+    const scheme = (dark: boolean) => schemeTokens(materialScheme(seed, { variant, dark }));
+    const names = theme === undefined ? [null, 'dark'] : [theme, `${theme}-dark`];
+    return this.transact(() => {
+      names.forEach((name, i) => {
+        if (name === null) this.setTokens({ ...legacy(this.getTokens()), ...scheme(false) }, origin);
+        else this.setTheme(name, { ...legacy(this.themes.get(name) ?? {}), ...scheme(i === 1) }, origin);
+      });
+      return names.filter((name): name is string => name !== null);
     }, origin);
   }
 
@@ -1189,7 +1247,11 @@ export class GridDocument {
   toSnapshot(): Snapshot {
     const fonts = this.getFonts();
     const tokens = this.getTokens();
-    const themes = this.getThemes();
+    // Overrides of tokens removed in older versions are left out (tokenSet skips them too).
+    const known = new Set(flattenTokens(this.tokenSet().tokens).map((t) => t.name));
+    const themes = Object.fromEntries(
+      Object.entries(this.getThemes()).map(([name, overrides]) => [name, Object.fromEntries(Object.entries(overrides).filter(([path]) => known.has(path)))]),
+    );
     return {
       format: 'weft',
       version: 1,
@@ -1210,7 +1272,8 @@ export class GridDocument {
       this.themes.clear();
       if (snapshot.fonts?.length) this.addFonts(snapshot.fonts, origin);
       if (snapshot.tokens) this.setTokens(snapshot.tokens, origin);
-      for (const [name, overrides] of Object.entries(snapshot.themes ?? {})) this.setTheme(name, overrides, origin);
+      // Like a file's: overrides that aren't valid any more (a token removed since) are dropped.
+      this.importThemes(snapshot.themes ?? {}, origin);
       const byParent = new Map<string | null, SceneNode[]>();
       for (const n of snapshot.nodes) {
         const list = byParent.get(n.parentId) ?? [];

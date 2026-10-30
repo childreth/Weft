@@ -5,9 +5,11 @@ import {
   AXES,
   BREAKPOINTS,
   BREAKPOINT_IDS,
+  COLOR_ROLES,
   DEFAULT_ARTBOARD_STYLES,
   DOCUMENT_TOKEN_GROUPS,
   GridError,
+  SCHEME_VARIANT_NAMES,
   UNSUPPORTED_STYLES,
   attributeIssues,
   breakpointIssues,
@@ -27,6 +29,7 @@ import {
   flattenTokens,
   modeChangedVars,
   readWeftFile,
+  type SchemeVariant,
   type ArtboardFrame,
   type BreakpointStyles,
   type NodePatch,
@@ -53,9 +56,10 @@ Model:
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
 - styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required ("" if decorative); remote URLs aren't loaded, and agents can't add image files yet. Fonts: any Google Font via search_fonts → add_fonts, then point a role at it with set_tokens {"font-family.heading": "{font-family.<slug>}"} (and font-family.body) and set fontFamily var(--font-family-heading) / var(--font-family-body). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
-- Prefer design tokens over raw values: var(--space-4), var(--color-accent), var(--font-size-lg), var(--radius-md). Call list_tokens to see them. When the palette lacks what the design needs (a brand's warm browns), add tokens with set_tokens and use those instead of raw hex.
+- Prefer design tokens over raw values: var(--space-4), var(--color-primary), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
+- Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). For a brand palette, set_tokens with "seed" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
-- Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with tokens (var(--color-surface), var(--color-text), var(--color-accent)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create or change a theme with set_tokens and "theme".
+- Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), or change roles in one with "tokens" and "theme".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
@@ -281,7 +285,7 @@ function themeWarnings(room: Room, ids: Iterable<string>): string[] {
     if (uses) return [];
     const raw = values.find((v) => /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(v));
     return [
-      `${node.name} (${id}): nothing in it uses a token the "${node.theme}" theme changes${raw ? ` (its colors are raw values like ${raw.length > 40 ? `${raw.slice(0, 40)}…` : raw})` : ''}, so it looks the same. Replace its colors with the tokens (var(--color-surface), var(--color-text), var(--color-accent)…), and fonts with var(--font-family-heading) / var(--font-family-body), for the theme to show`,
+      `${node.name} (${id}): nothing in it uses a token the "${node.theme}" theme changes${raw ? ` (its colors are raw values like ${raw.length > 40 ? `${raw.slice(0, 40)}…` : raw})` : ''}, so it looks the same. Replace its colors with the color roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…), and fonts with var(--font-family-heading) / var(--font-family-body), for the theme to show`,
     ];
   });
 }
@@ -782,20 +786,38 @@ export function createMcpServer(
     'set_tokens',
     {
       title: 'Set design tokens',
-      description: `Adds or changes this document's design tokens, e.g. a brand palette the defaults lack: {"color.ember-500": "#c2410c", "color.ember-100": "#fdeee3", "color.accent": "{color.ember-500}"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')}; font-family only for the roles font-family.heading and font-family.body, pointed at a font add_fonts added ({"font-family.heading": "{font-family.fraunces}"}). A new name adds a token; an existing one (color.accent, color.surface, color.text…) overrides it everywhere it's used. "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. Use them in styles as var(--color-ember-500). With "theme", the values instead override existing tokens only inside frames with that theme (creating the theme if new, e.g. "ember", or changing the built-in "dark"); add new tokens without a theme first. "theme" with tokens null removes that theme. One atomic, undoable step.`,
+      description: `Sets this document's design tokens. Colors are the Material 3 color roles (${COLOR_ROLES.length}: color.primary, color.on-surface, color.surface-container-high…; Material's md.sys.color.<role>), which every document has. For a brand palette, pass "seed" (one hex color): it generates every role from it, light (the document's colors) and dark (the built-in "dark" theme), with contrast built in, like Material Theme Builder; "variant" picks how (${SCHEME_VARIANT_NAMES.join(', ')}; "fidelity" keeps the seed's own color for primary-container). With "seed" and "theme" ("ember"), it makes the theme pair "ember" and "ember-dark" instead. "tokens" changes single tokens: {"color.primary": "#c2410c"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')}; font-family only for the roles font-family.heading and font-family.body, pointed at a font add_fonts added ({"font-family.heading": "{font-family.fraunces}"}). An existing name overrides it everywhere it's used; a new name adds a token (style layers with roles, not new color tokens). "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. With "theme", "tokens" override existing tokens only inside frames with that theme (creating it if new, or changing the built-in "dark"). "theme" with tokens null removes that theme. One atomic, undoable step.`,
       inputSchema: {
         doc: docParam,
         tokens: z
           .record(z.string(), z.string().nullable())
           .nullable()
+          .optional()
           .describe('Token path → value, or null to remove one; null for all of them removes the theme'),
+        seed: z.string().optional().describe('A hex color (#b85c38) to generate every color role from, light and dark'),
+        variant: z.enum(SCHEME_VARIANT_NAMES as [SchemeVariant, ...SchemeVariant[]]).optional().describe('How the seed becomes roles (default tonal-spot, Material\'s default)'),
         theme: z.string().optional().describe('Kebab-case theme name (dark, ember, high-contrast); apply it with update_nodes {"theme"}'),
         model: modelParam,
       },
     },
-    async ({ doc, tokens, theme, model }) => {
+    async ({ doc, tokens, seed, variant, theme, model }) => {
       const { room, agent } = open(doc, model);
       return mutate(room, agent, 'set_tokens', (_touched, report) => {
+        if (seed !== undefined) {
+          if (tokens) throw new GridError('Pass "seed" or "tokens", not both: set single tokens in a second call');
+          report.action = theme === undefined ? `Coloring from ${seed}` : `Theming from ${seed} (${theme})`;
+          const themes = room.doc.setSeedColor(seed, { theme, variant }, agent.identity.origin);
+          const set = room.doc.tokenSet();
+          // The light values of the roles most designs use; list_tokens has them all.
+          const light = new Map(flattenTokens(theme === undefined ? set.tokens : set.modes![theme]!).map((t) => [t.name, t.value]));
+          const KEY_ROLES = ['primary', 'on-primary', 'primary-container', 'surface', 'on-surface', 'on-surface-variant', 'surface-container', 'outline-variant'];
+          return {
+            seed,
+            ...(theme === undefined ? { colors: 'document', themes } : { themes }),
+            roles: Object.fromEntries(KEY_ROLES.map((role) => [`color.${role}`, light.get(`color.${role}`)])),
+          };
+        }
+        if (tokens === undefined) throw new GridError('Pass "tokens" to set, or a "seed" color');
         if (tokens === null) {
           if (theme === undefined) throw new GridError('Pass the tokens to set, or a theme with tokens null to remove it');
           report.action = `Removing the ${theme} theme`;

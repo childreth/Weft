@@ -2,13 +2,13 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BREAKPOINTS,
+  COLOR_ROLES,
   CONTAINER_TAGS,
   STYLE_GROUP_LABELS,
+  SCHEME_VARIANT_NAMES,
   STYLE_PROPS,
   TEXT_TAGS,
   UNSUPPORTED_STYLES,
-  defaultTokens,
-  flattenTokens,
   getStyleMeta,
   type StyleGroup,
 } from '@weft/core';
@@ -33,11 +33,9 @@ const FILLS: Record<string, string> = {
   CONTAINER_TAGS: CONTAINER_TAGS.join(', '),
   TEXT_TAGS: TEXT_TAGS.join(', '),
   BREAKPOINTS: BREAKPOINTS.map((b) => `\`${b.id}\` (≤ ${b.maxWidth}px)`).join(', '),
-  // Color roles are the default color tokens that point at another token (color.accent → color.blue.600).
-  COLOR_ROLES: flattenTokens(defaultTokens.tokens)
-    .filter((t) => t.path[0] === 'color' && t.path.length === 2 && t.value.startsWith('var('))
-    .map((t) => `\`${t.name}\``)
-    .join(', '),
+  // Material 3's color roles, as Weft names them (md.sys.color.primary → color.primary).
+  COLOR_ROLES: COLOR_ROLES.map((role) => `\`color.${role}\``).join(', '),
+  SCHEME_VARIANTS: SCHEME_VARIANT_NAMES.map((v) => `\`${v}\``).join(', '),
 };
 
 let files: Map<string, string> | null = null;

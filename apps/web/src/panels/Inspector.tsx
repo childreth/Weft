@@ -19,6 +19,7 @@ import { displaySrc, imageAttributes, imageFiles } from '../editor/assets';
 import { doc, history, recordHugHeight, run, scene, updateArtboardFrame, useNode } from '../editor/editor';
 import { useDocFonts, useDocTokens, useFlatTokens } from '../editor/fonts';
 import { exportArtboard } from '../editor/files';
+import { DocumentColors } from './DocumentColors';
 import { useEditor } from '../editor/store';
 import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
@@ -73,6 +74,7 @@ export function Inspector() {
         <>
           <p className="gf-empty">Select a layer to inspect it.</p>
           <DocumentFonts />
+          <DocumentColors />
         </>
       )}
       {selection.length > 0 && <AlignSection ids={selection} />}

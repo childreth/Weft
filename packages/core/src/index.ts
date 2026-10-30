@@ -3,6 +3,7 @@ export * from './document';
 export * from './history';
 export * from './tokens';
 export * from './document-tokens';
+export * from './material';
 export * from './defaults';
 export { defaultTokens } from './default-tokens';
 export { seedLandingPage } from './seed';
