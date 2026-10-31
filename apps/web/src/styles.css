@@ -594,7 +594,9 @@ button.gf-badge.is-active { box-shadow: inset 0 0 0 1px currentColor; }
 .gf-token-search { display: grid; grid-template-columns: minmax(0, 1fr) 32px; gap: 4px; }
 .gf-token-search:not(:has(.gf-seed-input)) { grid-template-columns: minmax(0, 1fr); }
 .gf-token-option { justify-content: flex-start; align-items: center; }
-.gf-token-option .gf-font-name { flex: 1; }
+.gf-token-picker { min-width: 0; }
+.gf-token-option .gf-font-name { flex: 1 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.gf-token-option .gf-font-meta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .gf-token-option.is-current .gf-font-name { color: var(--ui-accent); font-weight: 600; }
 .gf-token-more { width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--ui-text-muted); font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
 .gf-token-more:hover { background: var(--ui-panel-2); color: var(--ui-text); }

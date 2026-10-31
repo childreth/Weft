@@ -13,12 +13,15 @@ interface Option {
 const ROLE_ORDER = new Map<string, number>(COLOR_ROLES.map((r, i) => [r, i]));
 const hasOn = new Set<string>(COLOR_ROLES.filter((r) => r.startsWith('on-')).map((r) => r.slice(3)));
 
-/** A token's value with `{alias}` references followed, for display. */
-function resolve(value: string, byName: ReadonlyMap<string, string>, depth = 0): string {
-  const ref = /^\{([^}]+)\}$/.exec(value);
-  const next = ref && byName.get(ref[1]!);
-  return next !== undefined && next !== null && depth < 8 ? resolve(next, byName, depth + 1) : value;
+/** A token's value with references (`{alias}` or `var(--alias)`) followed, for display. */
+function resolve(value: string, byRef: ReadonlyMap<string, string>, depth = 0): string {
+  const ref = /^\{([^}]+)\}$|^var\((--[\w-]+)\)$/.exec(value.trim());
+  const next = ref ? byRef.get(ref[1] ?? ref[2]!) : undefined;
+  return next !== undefined && depth < 8 ? resolve(next, byRef, depth + 1) : value;
 }
+
+/** A font stack's first family, unquoted: `"Anton", system-ui` → `Anton`. */
+const firstFamily = (stack: string) => stack.split(',')[0]!.trim().replace(/^["']|["']$/g, '');
 
 /** The text role to pair with a background role (`primary` → `on-primary`), if Material has one. */
 function onRole(role: string): string | undefined {
@@ -49,14 +52,15 @@ export function TokenPicker({ prop, value, onPick, onClose }: { prop: StyleProp;
   const listRef = useRef<HTMLUListElement>(null);
 
   const all = useMemo<Option[]>(() => {
-    const byName = new Map(tokens.map((t) => [t.name, t.value]));
+    const byRef = new Map(tokens.flatMap((t) => [[t.name, t.value], [t.cssVar, t.value]] as const));
+    const isFont = prop === 'fontFamily';
     const options = tokenOptions(tokens, prop)
       .filter((t) => !(t.path[0] === 'color' && t.path.length === 2 && t.path[1]! in LEGACY_COLOR_ROLES))
       .map((t): Option => {
         const label = t.path.slice(1).join('.');
         const role = isColor && ROLE_ORDER.has(label);
         const pair = role && prop === 'backgroundColor' ? onRole(label) : undefined;
-        return { token: t, label, group: role ? 'roles' : 'other', meta: pair ? `text: ${pair}` : isColor ? '' : resolve(t.value, byName) };
+        return { token: t, label, group: role ? 'roles' : 'other', meta: pair ? `text: ${pair}` : isColor ? '' : isFont ? firstFamily(resolve(t.value, byRef)) : resolve(t.value, byRef) };
       });
     if (!isColor) return options;
     const roles = options.filter((o) => o.group === 'roles').sort((a, b) => ROLE_ORDER.get(a.label)! - ROLE_ORDER.get(b.label)!);
@@ -130,8 +134,14 @@ export function TokenPicker({ prop, value, onPick, onClose }: { prop: StyleProp;
               }}
             >
               {isColor && <span className="gf-swatch" style={{ background: `var(${o.token.cssVar})` }} />}
-              <span className="gf-font-name">{o.label}</span>
-              {o.meta && <span className="gf-font-meta">{o.meta}</span>}
+              <span className="gf-font-name" style={prop === 'fontFamily' ? { fontFamily: `var(${o.token.cssVar})` } : undefined}>
+                {o.label}
+              </span>
+              {o.meta && (
+                <span className="gf-font-meta" title={o.meta}>
+                  {o.meta}
+                </span>
+              )}
             </li>
           );
         })}

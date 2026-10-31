@@ -98,3 +98,25 @@ test('the token picker binds a style to a role, a spacing token or a raw value, 
   await undo({ backgroundColor: 'var(--color-tertiary-container)' }); // the theme
   await undo({ backgroundColor: before! });
 });
+
+test('font tokens in the picker show their font, resolve aliases, and fit the panel', async ({ page }) => {
+  await page.route('**/fonts.css?*', (route) => route.fulfill({ contentType: 'text/css', body: '/* fonts */' }));
+  await page.goto('/?ephemeral');
+  await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
+  const h1 = await page.evaluate(() => {
+    const { doc } = window.weft;
+    doc.addFonts([{ family: 'Barlow Condensed' }, { family: 'Cormorant Garamond' }]);
+    const id = doc.getNodes().find((n) => n.tag === 'h1')!.id;
+    doc.updateNode(id, { styles: { fontFamily: 'var(--font-family-heading)' } });
+    window.weft.editor.getState().select([id]);
+    return id;
+  });
+  expect(h1).toBeTruthy();
+  await page.locator('[data-style-prop="fontFamily"]').getByRole('button', { name: /choose a token/ }).click();
+  const picker = page.getByTestId('token-picker');
+  await expect(picker.getByRole('option', { name: /^heading/ })).toContainText('system-ui');
+  await expect(picker.getByRole('option', { name: /^barlow-condensed/ })).toContainText('Barlow Condensed');
+  const inspector = page.getByTestId('inspector');
+  expect(await inspector.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  await page.screenshot({ path: 'test-results/m4-token-picker-fonts.png' });
+});
