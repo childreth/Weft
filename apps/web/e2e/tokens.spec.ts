@@ -120,3 +120,49 @@ test('font tokens in the picker show their font, resolve aliases, and fit the pa
   expect(await inspector.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
   await page.screenshot({ path: 'test-results/m4-token-picker-fonts.png' });
 });
+
+test('the token picker never scrolls the Inspector or its list sideways', async ({ page }) => {
+  await page.goto('/?ephemeral');
+  await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
+  await page.evaluate(() => {
+    const { doc, editor } = window.weft;
+    const id = doc.getNodes().find((n) => n.tag === 'h1')!.id;
+    doc.setTokens({ 'color.a-very-long-brand-token-name-that-keeps-going-and-going-and-going': '#123456' });
+    doc.updateNode(id, {
+      styles: { flex: '1', height: '90%', backgroundColor: 'var(--color-secondary)', borderRadius: '2px' },
+      breakpoints: { tablet: { backgroundColor: 'var(--color-primary)' } },
+    });
+    editor.getState().select([id]);
+  });
+  const inspector = page.getByTestId('inspector');
+  const list = page.getByTestId('token-picker').getByRole('listbox');
+  const expectFits = async () => {
+    await expect(list.getByRole('option').first()).toBeVisible();
+    expect(await inspector.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    expect(await list.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    // Nothing sticks out of the panel, even where something clips it.
+    const overhang = await inspector.evaluate((el) => {
+      const edge = el.getBoundingClientRect().left + el.clientWidth;
+      return Math.max(...[...el.querySelectorAll('[data-testid="token-picker"] *')].map((c) => c.getBoundingClientRect().right - edge));
+    });
+    expect(overhang).toBeLessThanOrEqual(0);
+  };
+
+  // The widest rows pair a long role with its long text role.
+  const background = page.locator('[data-style-prop="backgroundColor"]').first();
+  await background.getByRole('button', { name: /choose a token/ }).click();
+  await expectFits();
+  const widest = list.getByRole('option', { name: /^primary-container/ });
+  await expect(widest).toContainText('text: on-primary-container');
+  await page.screenshot({ path: 'test-results/m4-token-picker-colors.png' });
+
+  // A very long token name truncates.
+  await page.getByTestId('token-picker').getByRole('button', { name: /other colors/i }).click();
+  await page.getByLabel('Search tokens').fill('a-very-long');
+  await expectFits();
+
+  // So does a very long raw value.
+  await page.getByLabel('Search tokens').fill(`color-mix(in srgb, ${'var(--color-primary) 50%, '.repeat(6)}white)`);
+  await expectFits();
+  await page.keyboard.press('Escape');
+});
