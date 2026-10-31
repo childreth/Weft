@@ -44,7 +44,8 @@ export const DOCUMENT_TOKEN_GROUPS: readonly string[] = Object.keys(GROUPS);
 export const FONT_ROLES = ['heading', 'body'] as const;
 const isFontRole = (path: string) => FONT_ROLES.some((role) => path === `font-family.${role}`);
 const FONT_ROLE_HINT = `set the roles ${FONT_ROLES.map((r) => `font-family.${r}`).join(' and ')} to one, e.g. {font-family.fraunces}`;
-export const MAX_DOCUMENT_TOKENS = 200;
+/** Room for a palette of 200 tokens plus Material's 49 color roles from a seed. */
+export const MAX_DOCUMENT_TOKENS = 250;
 const MAX_VALUE_LENGTH = 200;
 
 /**
@@ -66,11 +67,14 @@ export function documentTokenIssues(
   const before = [...flattenTokens(withDocumentTokens(base, current).tokens).map((t) => t.name), ...Object.keys(entries)];
   const tokenNames = new Set(before);
   const groupNames = new Set(before.flatMap(groupsOf));
+  const aliases = { ...aliasesOf(base.tokens), ...next };
   const issues: string[] = [];
   for (const [path, raw] of Object.entries(entries)) {
     const at = `"${path}"`;
     if (raw === null) {
       if (!(path in current)) issues.push(`${at} isn't one of this document's tokens, so there's nothing to remove`);
+      // Removing an override brings back the default, which may be an alias.
+      else if (cycles(path, aliases)) issues.push(`${at}: its references go in a circle`);
       continue;
     }
     const group = PATH.exec(path)?.[1];
@@ -103,11 +107,34 @@ export function documentTokenIssues(
       if (alias === path) issues.push(`${at} can't refer to itself`);
       else if (!known.has(alias)) issues.push(`${at} refers to {${alias}}, which isn't a token`);
       else if (!alias.startsWith(`${group}.`)) issues.push(`${at} must refer to another ${group} token`);
-      else if (cycles(path, next)) issues.push(`${at}: its references go in a circle`);
+      else if (cycles(path, aliases)) issues.push(`${at}: its references go in a circle`);
     } else if (FORBIDDEN.test(value) || !rule.valid(value)) issues.push(`${at}: expected ${rule.expect}, got "${value}"`);
   }
   if (Object.keys(next).length > MAX_DOCUMENT_TOKENS) issues.push(`A document can have at most ${MAX_DOCUMENT_TOKENS} tokens of its own`);
   return issues;
+}
+
+/**
+ * Circles that setting `entries` on the document would close inside a theme, where
+ * the theme's overrides replace some of the links (`color.surface` → `{color.primary}`).
+ */
+export function themeCycleIssues(
+  entries: Readonly<Record<string, string | null>>,
+  current: Readonly<Record<string, string>>,
+  base: TokenSet,
+  themes: Readonly<Record<string, Readonly<Record<string, string>>>>,
+): string[] {
+  const next: Record<string, string> = { ...current };
+  for (const [path, value] of Object.entries(entries)) {
+    if (value === null) delete next[path];
+    else next[path] = value.trim();
+  }
+  const aliases = aliasesOf(withDocumentTokens(base, next).tokens);
+  return Object.entries(themes).flatMap(([theme, overrides]) =>
+    Object.keys(entries)
+      .filter((path) => !(path in overrides) && cycles(path, { ...aliases, ...overrides }))
+      .map((path) => `"${path}": its references go in a circle in the ${theme} theme`),
+  );
 }
 
 /** A theme name: kebab-case, like a token name (`dark`, `ember`, `high-contrast`). */
@@ -145,6 +172,7 @@ export function themeIssues(
     const at = `${name}: "${path}"`;
     if (raw === null) {
       if (!(path in current)) issues.push(`${at} isn't set in this theme, so there's nothing to remove`);
+      else if (cycles(path, { ...aliasesOf(base.tokens), ...next })) issues.push(`${at}: its references go in a circle`);
       continue;
     }
     const group = path.split('.')[0]!;
@@ -195,10 +223,12 @@ function groupsOf(name: string): string[] {
   return parts.slice(1).map((_, i) => parts.slice(0, i + 1).join('.'));
 }
 
-/** Whether following `path`'s aliases through the document's tokens comes back to it. */
+/** Whether following `path`'s aliases through `tokens` comes back to it. */
 function cycles(path: string, tokens: Readonly<Record<string, string>>): boolean {
+  const seen = new Set<string>();
   let at: string | undefined = path;
-  for (let i = 0; at && i <= MAX_DOCUMENT_TOKENS; i++) {
+  while (at && !seen.has(at)) {
+    seen.add(at);
     at = ALIAS.exec(tokens[at] ?? '')?.[1];
     if (at === path) return true;
   }

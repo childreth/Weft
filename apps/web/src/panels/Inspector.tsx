@@ -10,7 +10,6 @@ import {
   tagsFor,
   type ArtboardFrame,
   type BreakpointId,
-  type FlatToken,
   type SemanticTag,
   type StyleProp,
 } from '@weft/core';
@@ -26,6 +25,7 @@ import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
 import { DocumentFonts, FontPicker, fontForValue, fontVar } from './FontPicker';
 import { StylePicker, styleLabel } from './StylePicker';
+import { TokenPicker, tokenOptions } from './TokenPicker';
 
 const PRESET_SUFFIX = new RegExp(` — (${ARTBOARD_PRESETS.map((p) => p.label).join('|')})$`);
 
@@ -44,11 +44,6 @@ function cloneAtPreset(id: string, name: string, preset: (typeof ARTBOARD_PRESET
   zoomToFit([id, copy]);
 }
 
-
-function tokenOptions(tokens: readonly FlatToken[], prop: StyleProp) {
-  const groups = getStyleMeta(prop).tokenGroups ?? [];
-  return tokens.filter((t) => groups.includes(t.path[0]!));
-}
 
 /** The theme a node renders with: its own, or its nearest themed ancestor's. */
 function useEffectiveTheme(id: string | undefined): string | undefined {
@@ -69,7 +64,6 @@ export function Inspector() {
   return (
     <aside className="gf-panel gf-inspector gf-token-scope" data-testid="inspector" data-theme={theme}>
       <style>{scopeCSS}</style>
-      <TokenDatalists />
       {selection.length === 0 && (
         <>
           <p className="gf-empty">Select a layer to inspect it.</p>
@@ -81,22 +75,6 @@ export function Inspector() {
       {selection.length > 1 && <p className="gf-empty">{selection.length} layers selected</p>}
       {selection.length === 1 && <NodeInspector key={selection[0]} id={selection[0]!} />}
     </aside>
-  );
-}
-
-function TokenDatalists() {
-  const tokens = useFlatTokens();
-  const props = useMemo(() => STYLE_PROPS.filter((p) => getStyleMeta(p).tokenGroups), []);
-  return (
-    <>
-      {props.map((prop) => (
-        <datalist key={prop} id={`tokens-${prop}`}>
-          {tokenOptions(tokens, prop).map((t) => (
-            <option key={t.cssVar} value={`var(${t.cssVar})`} label={t.value} />
-          ))}
-        </datalist>
-      ))}
-    </>
   );
 }
 
@@ -351,13 +329,26 @@ function StyleSection({
 function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (v: string | null) => void }) {
   const meta = getStyleMeta(prop);
   const bound = value.includes('var(--');
-  const [picking, setPicking] = useState(false);
+  const [picking, setPicking] = useState<'font' | 'token' | null>(null);
+  const toggle = (which: 'font' | 'token') => setPicking((p) => (p === which ? null : which));
   const fonts = useDocFonts();
+  const tokenTitle = bound ? 'Bound to a design token. Choose another' : 'Raw value, not bound to a token. Choose a token';
   const row = (
     <div className="gf-style-row" data-style-prop={prop}>
       <span className="gf-row-label" title={prop}>{styleLabel(prop)}</span>
       {meta.group === 'fill' || meta.tokenGroups?.includes('color') ? (
-        <span className="gf-swatch" style={{ background: value }} />
+        meta.tokenGroups ? (
+          <button
+            type="button"
+            className="gf-swatch gf-swatch-btn"
+            style={{ background: value }}
+            aria-label={`Choose a ${styleLabel(prop).toLowerCase()} token`}
+            title={tokenTitle}
+            onClick={() => toggle('token')}
+          />
+        ) : (
+          <span className="gf-swatch" style={{ background: value }} />
+        )
       ) : null}
       {meta.options ? (
         <select className="gf-input" aria-label={prop} value={value} onChange={(e) => set(e.target.value)}>
@@ -366,23 +357,27 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
           ))}
         </select>
       ) : (
-        <CommitInput label={prop} value={value} list={meta.tokenGroups ? `tokens-${prop}` : undefined} onCommit={set} />
+        <CommitInput label={prop} value={value} onCommit={set} />
       )}
       {meta.tokenGroups && (
-        <span
-          className={`gf-badge ${bound ? 'gf-badge-token' : 'gf-badge-raw'}`}
-          title={bound ? 'Bound to a design token' : 'Raw value — not bound to a token'}
+        <button
+          type="button"
+          className={`gf-badge ${bound ? 'gf-badge-token' : 'gf-badge-raw'}${picking === 'token' ? ' is-active' : ''}`}
+          aria-label={`${bound ? 'Token' : 'Raw'}: choose a token for ${prop}`}
+          aria-expanded={picking === 'token'}
+          title={tokenTitle}
+          onClick={() => toggle('token')}
         >
           {bound ? 'token' : 'raw'}
-        </span>
+        </button>
       )}
       {prop === 'fontFamily' && (
         <button
-          className={`gf-icon-btn${picking ? ' is-active' : ''}`}
+          className={`gf-icon-btn${picking === 'font' ? ' is-active' : ''}`}
           aria-label="Choose a font"
-          aria-expanded={picking}
+          aria-expanded={picking === 'font'}
           title={fontForValue(value, fonts)?.family ?? 'Choose a Google Font'}
-          onClick={() => setPicking((p) => !p)}
+          onClick={() => toggle('font')}
         >
           Aa
         </button>
@@ -392,7 +387,15 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
       </button>
     </div>
   );
-  if (prop !== 'fontFamily' || !picking) return row;
+  if (picking === 'token') {
+    return (
+      <>
+        {row}
+        <TokenPicker prop={prop} value={value} onPick={set} onClose={() => setPicking(null)} />
+      </>
+    );
+  }
+  if (picking !== 'font') return row;
   return (
     <>
       {row}
@@ -401,7 +404,7 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
         autoFocus
         onPick={(family) => {
           set(fontVar(family));
-          setPicking(false);
+          setPicking(null);
         }}
       />
     </>

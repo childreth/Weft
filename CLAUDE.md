@@ -13,7 +13,7 @@ AI-native design canvas where the canvas *is* the browser's DOM/CSS engine. Figm
 - MCP: `.mcp.json` registers `http://127.0.0.1:4510/mcp`; the server must be running
 - In this repo, "the selection", "this section", "the canvas" etc. mean the Weft editor: use the `weft` MCP tools (`get_selection`, `get_canvas`). Use Figma tools only when the user names Figma. If the `weft` tools are missing, say so (start `pnpm dev`, then `/mcp` to connect) instead of falling back to another design tool.
 - `pnpm test` — core unit tests (vitest)
-- `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`, `m3-reorder.png`, `m3-assist.png`, `m3-assist-cloud.png`, `m3-assist-speech.png`, `m3-style-picker.png`, `m3-remote.png`, `m3-clipboard.png`, `m3-authoring.png`, `m3-files.png`, `m3-export.png`, `m4-images.png`, `m4-icons.png`, `m4-icon-font.png`, `m4-tokens.png`, `m4-themes.png`, `m4-font-roles.png`)
+- `pnpm test:e2e` — Playwright against the editor; writes screenshots to `apps/web/test-results/` (`m1-editor.png`, `m2-cursors.png`, `m2-agent.png`, `m3-reorder.png`, `m3-assist.png`, `m3-assist-cloud.png`, `m3-assist-speech.png`, `m3-style-picker.png`, `m3-remote.png`, `m3-clipboard.png`, `m3-authoring.png`, `m3-files.png`, `m3-export.png`, `m4-images.png`, `m4-icons.png`, `m4-icon-font.png`, `m4-tokens.png`, `m4-themes.png`, `m4-theme-export.png`, `m4-font-roles.png`, `m4-material-colors.png`, `m4-token-picker.png`, `m4-token-picker-fonts.png`)
 - `pnpm typecheck`
 
 ## Rules
