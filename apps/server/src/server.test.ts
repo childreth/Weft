@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -658,6 +658,79 @@ describe('sync relay', () => {
     // One step each: undo takes the theme pair back off.
     await call('undo_agent_change', { doc: 'seeds' });
     expect(room.doc.getThemeNames()).toEqual(['dark']);
+  });
+
+  it('reports a seed theme pair that would pass the limit, and changes nothing', async () => {
+    const room = server.rooms.get('seed-limit');
+    for (let i = 0; i < 19; i++) room.doc.setTheme(`t-${String.fromCharCode(97 + i)}`, {});
+    const res = await call('set_tokens', { doc: 'seed-limit', seed: '#3f7d4e', theme: 'forest' });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('at most 20 themes');
+    expect(room.doc.getThemeNames()).not.toContain('forest');
+  });
+
+  it("rejects a token that closes a circle through a document's theme", async () => {
+    const room = server.rooms.get('theme-circle');
+    expect((await call('set_tokens', { doc: 'theme-circle', theme: 'ember', tokens: { 'color.surface': '{color.primary}' } })).isError).toBe(false);
+    const res = await call('set_tokens', { doc: 'theme-circle', tokens: { 'color.primary': '{color.surface}' } });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('in a circle in the ember theme');
+    expect(room.doc.getTokens()).toEqual({});
+  });
+
+  it("keeps working when an agent undoes a theme someone else has applied", async () => {
+    const room = server.rooms.get('theme-undo');
+    const [page] = room.doc.getTree();
+    await call('set_tokens', { doc: 'theme-undo', theme: 'ember', tokens: { 'color.surface': '#fff7ed' } });
+    room.doc.updateNode(page!.id, { theme: 'ember' });
+    await call('undo_agent_change', { doc: 'theme-undo' });
+    expect(room.doc.getThemeNames()).toEqual(['dark']);
+
+    const html = (await call('export_html', { doc: 'theme-undo', id: page!.id })).text;
+    expect(html).not.toContain('[data-theme="ember"]');
+    expect((await call('get_canvas', { doc: 'theme-undo', detail: 'outline' })).isError).toBe(false);
+    // The frame can move on to a real theme, or none.
+    expect((await call('update_nodes', { doc: 'theme-undo', updates: [{ id: page!.id, theme: 'dark' }] })).isError).toBe(false);
+    expect((await call('update_nodes', { doc: 'theme-undo', updates: [{ id: page!.id, theme: null }] })).isError).toBe(false);
+  });
+
+  it('syncs themes to connected editors', async () => {
+    const ydoc = new Y.Doc();
+    const provider = new WebsocketProvider(server.wsUrl, 'theme-sync', ydoc);
+    const replica = new GridDocument(ydoc);
+    await until(() => provider.synced && replica.nodes.size > 0);
+    const page = replica.getChildren(null)[0]!;
+
+    await call('set_tokens', { doc: 'theme-sync', theme: 'ember', tokens: { 'color.surface': '#fff7ed' } });
+    await call('update_nodes', { doc: 'theme-sync', updates: [{ id: page.id, theme: 'ember' }] });
+    await until(() => replica.getNode(page.id)?.theme === 'ember');
+    expect(replica.getThemes().ember).toEqual({ 'color.surface': '#fff7ed' });
+
+    // And back: what an editor does reaches the agent.
+    replica.setTheme('ember', { 'color.primary': '#c2410c' });
+    await until(() => server.rooms.get('theme-sync').doc.getThemes().ember?.['color.primary'] === '#c2410c');
+    const listed = (await call('list_tokens', { doc: 'theme-sync', group: 'color' })).data;
+    expect(listed.themes.ember).toMatchObject({ 'color.primary': '#c2410c', 'color.surface': '#fff7ed' });
+    provider.destroy();
+  });
+
+  it('keeps themes and the frames using them across a server restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'weft-theme-restart-'));
+    const first = await startGridServer({ port: 0, dataDir: dir });
+    const room = first.rooms.get('saved');
+    const [page] = room.doc.getTree();
+    room.doc.setTheme('ember', { 'color.surface': '#fff7ed' });
+    room.doc.updateNode(page!.id, { theme: 'ember' });
+    room.flush();
+    expect(JSON.parse(readFileSync(join(dir, 'saved.weft.json'), 'utf8')).themes.ember).toEqual({ 'color.surface': '#fff7ed' });
+    await first.close();
+
+    const second = await startGridServer({ port: 0, dataDir: dir });
+    const again = second.rooms.get('saved');
+    expect(again.doc.getThemes().ember).toEqual({ 'color.surface': '#fff7ed' });
+    expect(again.doc.getNode(page!.id)?.theme).toBe('ember');
+    await second.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('warns when a new background color is hidden under a backgroundImage', async () => {

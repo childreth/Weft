@@ -5,8 +5,9 @@ import { scene, useNode } from '../editor/editor';
 import { useDocTokens } from '../editor/fonts';
 import { NodeView } from './NodeView';
 
+// color-scheme: the editor's own (dark) would inherit into artboards and restyle default controls, unlike an exported page.
 const ARTBOARD_BASE_CSS = `
-:host { display: block; width: 100%; height: 100%; overflow: hidden; user-select: none; container: artboard / inline-size; }
+:host { display: block; width: 100%; height: 100%; overflow: hidden; user-select: none; container: artboard / inline-size; color-scheme: normal; }
 ${ARTBOARD_RESET_CSS}
 [contenteditable] { user-select: text; cursor: text; outline: none; min-height: 1lh; min-width: 1ch; }
 `;

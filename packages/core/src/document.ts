@@ -2,7 +2,7 @@ import * as Y from 'yjs';
 import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
 import { defaultTokens } from './default-tokens';
-import { MAX_DOCUMENT_TOKENS, MAX_THEMES, documentTokenIssues, themeIssues, themeNameIssue, withDocumentTokens } from './document-tokens';
+import { MAX_DOCUMENT_TOKENS, MAX_THEMES, documentTokenIssues, themeCycleIssues, themeIssues, themeNameIssue, withDocumentTokens } from './document-tokens';
 import { LEGACY_COLOR_ROLES, SCHEME_VARIANT_NAMES, materialScheme, schemeTokens, seedIssue, type SchemeVariant } from './material';
 import { defaultWeights, findFont, fontSlug, withFontTokens, type DocumentFont } from './fonts';
 import { flattenTokens, mergeTokenGroups, type TokenGroup, type TokenSet } from './tokens';
@@ -669,7 +669,8 @@ export class GridDocument {
   setTokens(entries: Readonly<Record<string, string | null>>, origin: Origin = ORIGIN_LOCAL): void {
     const base = withFontTokens(defaultTokens, this.getFonts());
     const current = this.getTokens();
-    const issues = documentTokenIssues(entries, current, base);
+    const themes = this.getThemes();
+    const issues = [...documentTokenIssues(entries, current, base), ...themeCycleIssues(entries, current, base, themes)];
     // A token that stops existing can't still be referred to; themes' overrides of it go with it.
     const next: Record<string, string> = { ...current };
     for (const [path, value] of Object.entries(entries)) {
@@ -678,7 +679,6 @@ export class GridDocument {
     }
     const remaining = new Set(flattenTokens(withDocumentTokens(base, next).tokens).map((t) => t.name));
     const gone = new Set(Object.keys(entries).filter((path) => entries[path] === null && !remaining.has(path)));
-    const themes = this.getThemes();
     if (gone.size) {
       const sets: Array<[string, Record<string, string>]> = [['', next], ...Object.entries(themes)];
       for (const [theme, tokens] of sets) {
@@ -725,6 +725,9 @@ export class GridDocument {
       Object.fromEntries(Object.keys(LEGACY_COLOR_ROLES).flatMap((name) => (`color.${name}` in tokens ? [[`color.${name}`, null]] : [])));
     const scheme = (dark: boolean) => schemeTokens(materialScheme(seed, { variant, dark }));
     const names = theme === undefined ? [null, 'dark'] : [theme, `${theme}-dark`];
+    // A failed step inside the transaction wouldn't undo the one before it, so check both first.
+    const added = names.filter((name) => name !== null && !this.getThemeNames().includes(name)).length;
+    if (this.themes.size + added > MAX_THEMES) throw new GridError(`A document can have at most ${MAX_THEMES} themes`);
     return this.transact(() => {
       names.forEach((name, i) => {
         if (name === null) this.setTokens({ ...legacy(this.getTokens()), ...scheme(false) }, origin);
@@ -1223,7 +1226,8 @@ export class GridDocument {
     const base = withFontTokens(defaultTokens, this.getFonts());
     // Dropping one can break another's alias, so repeat until the rest are valid.
     while (entries.length) {
-      const issues = documentTokenIssues(Object.fromEntries(entries), this.getTokens(), base);
+      const asked = Object.fromEntries(entries);
+      const issues = [...documentTokenIssues(asked, this.getTokens(), base), ...themeCycleIssues(asked, this.getTokens(), base, this.getThemes())];
       if (issues.length === 0) return this.setTokens(Object.fromEntries(entries), origin);
       const kept = entries.filter(([path]) => !issues.some((i) => i.startsWith(`"${path}"`)));
       // An issue with no token named (too many tokens): import none.
@@ -1239,8 +1243,15 @@ export class GridDocument {
     for (const [name, overrides] of Object.entries(themes)) {
       if (this.themes.has(name) || themeNameIssue(name) || this.themes.size >= MAX_THEMES) continue;
       const set = this.tokenSet();
-      const valid = Object.fromEntries(Object.entries(overrides).filter(([path, value]) => themeIssues(name, { [path]: value }, {}, set).length === 0));
-      this.setTheme(name, valid, origin);
+      // Overrides can be wrong only together (a circle), so check them together, repeating until the rest are valid.
+      let entries = Object.entries(overrides);
+      for (;;) {
+        const issues = themeIssues(name, Object.fromEntries(entries), {}, set);
+        if (issues.length === 0) break;
+        const kept = entries.filter(([path]) => !issues.some((i) => i.startsWith(`${name}: "${path}"`)));
+        entries = kept.length < entries.length ? kept : [];
+      }
+      this.setTheme(name, Object.fromEntries(entries), origin);
     }
   }
 
@@ -1271,7 +1282,7 @@ export class GridDocument {
       this.tokens.clear();
       this.themes.clear();
       if (snapshot.fonts?.length) this.addFonts(snapshot.fonts, origin);
-      if (snapshot.tokens) this.setTokens(snapshot.tokens, origin);
+      if (snapshot.tokens) this.importTokens(snapshot.tokens, origin);
       // Like a file's: overrides that aren't valid any more (a token removed since) are dropped.
       this.importThemes(snapshot.themes ?? {}, origin);
       const byParent = new Map<string | null, SceneNode[]>();
@@ -1280,9 +1291,12 @@ export class GridDocument {
         list.push(n);
         byParent.set(n.parentId, list);
       }
+      const themeNames = this.getThemeNames();
       const insert = (parentId: string | null) => {
         for (const n of sortSiblings(byParent.get(parentId) ?? [])) {
-          this.createNode({ ...n, parentId }, origin);
+          // Merged edits can leave a frame naming a theme that was removed.
+          const { theme, ...node } = n;
+          this.createNode({ ...node, parentId, ...(theme && themeNames.includes(theme) && { theme }) }, origin);
           if (n.hidden || n.locked) this.updateNode(n.id, { hidden: n.hidden, locked: n.locked }, origin);
           insert(n.id);
         }

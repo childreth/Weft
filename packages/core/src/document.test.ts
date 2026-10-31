@@ -899,3 +899,183 @@ describe('removing tokens themes use', () => {
     expect(copy.getThemes()).toEqual({ ember: { 'color.surface': '#fff7ed' } });
   });
 });
+
+describe('theme edge cases', () => {
+  const issue = (fn: () => void) => {
+    try {
+      fn();
+      return '';
+    } catch (err) {
+      return (err as Error).message;
+    }
+  };
+  const syncedPair = () => {
+    const a = new GridDocument();
+    const b = new GridDocument();
+    const sync = () => {
+      Y.applyUpdate(b.ydoc, Y.encodeStateAsUpdate(a.ydoc));
+      Y.applyUpdate(a.ydoc, Y.encodeStateAsUpdate(b.ydoc));
+    };
+    return { a, b, sync };
+  };
+
+  it("won't let a document token close a circle through a default alias", () => {
+    const doc = new GridDocument();
+    // color.accent is a default alias of color.primary.
+    expect(issue(() => doc.setTokens({ 'color.primary': '{color.accent}' }))).toContain('in a circle');
+    expect(doc.getTokens()).toEqual({});
+    // Overriding the alias in the same call breaks the circle.
+    expect(issue(() => doc.setTokens({ 'color.accent': '#ff0000', 'color.primary': '{color.accent}' }))).toBe('');
+  });
+
+  it("won't let removing a token's override bring back a default alias that closes a circle", () => {
+    const doc = new GridDocument();
+    doc.setTokens({ 'color.accent': '#ff0000', 'color.primary': '{color.accent}' });
+    expect(issue(() => doc.setTokens({ 'color.accent': null }))).toContain('in a circle');
+    expect(doc.getTokens()['color.accent']).toBe('#ff0000');
+  });
+
+  it("won't let a document token close a circle through a theme", () => {
+    const doc = new GridDocument();
+    doc.setTheme('ember', { 'color.surface': '{color.primary}' });
+    expect(issue(() => doc.setTokens({ 'color.primary': '{color.surface}' }))).toMatch(/ember[\s\S]*in a circle|in a circle[\s\S]*ember/);
+    expect(doc.getTokens()).toEqual({});
+  });
+
+  it('creates a seed theme pair completely or not at all at the theme limit', () => {
+    const doc = new GridDocument();
+    for (let i = 0; i < 19; i++) doc.setTheme(`t-${String.fromCharCode(97 + i)}`, {});
+    expect(issue(() => doc.setSeedColor('#3f7d4e', { theme: 'forest' }))).toContain('at most 20 themes');
+    expect(doc.getThemeNames()).not.toContain('forest');
+    // The built-in dark doesn't take a new slot; a twentieth theme still fits.
+    expect(issue(() => doc.setTheme('dark', { 'color.surface': '#000000' }))).toBe('');
+    expect(doc.themes.size).toBe(20);
+    expect(issue(() => doc.setTheme('one-more', {}))).toContain('at most 20 themes');
+  });
+
+  it('loads a snapshot whose frame names a theme that no longer exists', () => {
+    // One client removes a theme while another applies it; both changes survive the merge.
+    const { a, b, sync } = syncedPair();
+    const board = artboard(a);
+    a.setTheme('ember', { 'color.surface': '#fff7ed' });
+    sync();
+    a.removeTheme('ember');
+    b.updateNode(board, { theme: 'ember' });
+    sync();
+    expect(a.getNode(board)?.theme).toBe('ember');
+    expect(a.getThemeNames()).toEqual(['dark']);
+    expect(exportArtboardHTML(a, board)).not.toContain('[data-theme="ember"]');
+
+    const copy = new GridDocument();
+    copy.loadSnapshot(a.toSnapshot());
+    expect(copy.getNode(board)).toBeDefined();
+    expect(copy.getNode(board)?.theme).toBeUndefined();
+  });
+
+  it('opens a file whose theme overrides only form a circle together, dropping them', () => {
+    const doc = new GridDocument();
+    const source = new GridDocument();
+    artboard(source);
+    const file = { ...source.toSnapshot(), themes: { loop: { 'color.surface': '{color.primary}', 'color.primary': '{color.surface}', 'color.outline': '#111111' } } };
+    expect(issue(() => doc.importFile(readWeftFile(JSON.stringify(file))))).toBe('');
+    expect(doc.getThemes().loop?.['color.outline']).toBe('#111111');
+    const loop = doc.getThemes().loop!;
+    expect('color.surface' in loop && 'color.primary' in loop).toBe(false);
+  });
+
+  it('opens a file whose tokens would close a circle through a theme here, dropping those tokens', () => {
+    const doc = new GridDocument();
+    doc.setTheme('ember', { 'color.surface': '{color.primary}' });
+    const source = new GridDocument();
+    artboard(source);
+    source.setTokens({ 'color.primary': '{color.surface}', 'color.brand': '#123456' });
+    expect(issue(() => doc.importFile(readWeftFile(JSON.stringify(source.toSnapshot()))))).toBe('');
+    expect(doc.getTokens()).toEqual({ 'color.brand': '#123456' });
+  });
+
+  it('keeps nested themes through duplicate, paste and export, and only exports the ones in use', () => {
+    const doc = new GridDocument();
+    const board = artboard(doc);
+    const section = doc.createNode({ type: 'frame', parentId: board, tag: 'section' });
+    const inner = doc.createNode({ type: 'frame', parentId: section });
+    doc.setTheme('ember', { 'color.surface': '#fff7ed' });
+    doc.setTheme('unused', { 'color.surface': '#000000' });
+    doc.updateNode(board, { theme: 'dark' });
+    doc.updateNode(inner, { theme: 'ember' });
+
+    const copy = doc.duplicateNode(board);
+    const [copied] = doc.getTree(copy);
+    expect(copied!.theme).toBe('dark');
+    expect(copied!.children[0]!.children[0]!.theme).toBe('ember');
+
+    const html = exportArtboardHTML(doc, board);
+    expect(html).toContain('[data-theme="dark"] {');
+    expect(html).toContain('[data-theme="ember"] {');
+    expect(html).not.toContain('[data-theme="unused"]');
+
+    // Pasted elsewhere, a nested theme the document lacks goes; one it has stays.
+    const other = new GridDocument();
+    other.setTheme('sea', { 'color.surface': '#e0f2fe' });
+    const [pasted] = other.insertTrees(doc.getTree(board), { parentId: null });
+    const [tree] = other.getTree(pasted!);
+    expect(tree!.theme).toBe('dark');
+    expect(tree!.children[0]!.children[0]!.theme).toBeUndefined();
+  });
+
+  it('overrides nested token paths, and a theme alias follows the token it points to', () => {
+    const doc = new GridDocument();
+    doc.setTokens({ 'color.ember.500': '#c2410c' });
+    doc.setTheme('ember', { 'color.ember.500': '#ea580c', 'color.primary': '{color.ember.500}' });
+    const flat = new Map(flattenTokens(doc.tokenSet().modes!.ember!).map((t) => [t.name, t.value]));
+    expect(flat.get('color.ember.500')).toBe('#ea580c');
+    expect(flat.get('color.primary')).toBe('var(--color-ember-500)');
+    expect(flattenTokens(doc.tokenSet().tokens).find((t) => t.name === 'color.ember.500')?.value).toBe('#c2410c');
+    expect([...modeChangedVars(doc.tokenSet(), 'ember')]).toEqual(expect.arrayContaining(['--color-primary', '--color-accent', '--color-ember-500']));
+  });
+
+  it('syncs themes and their removal between replicas, and each undo stays with its author', () => {
+    const { a, b, sync } = syncedPair();
+    const board = artboard(a);
+    sync();
+    const historyA = new History(a);
+    a.setTheme('ember', { 'color.surface': '#fff7ed' });
+    a.updateNode(board, { theme: 'ember' });
+    sync();
+    expect(b.getThemes()).toEqual(a.getThemes());
+    expect(b.getNode(board)?.theme).toBe('ember');
+    historyA.undo();
+    historyA.undo();
+    sync();
+    expect(b.getThemes()).toEqual({});
+    expect(b.getNode(board)?.theme).toBeUndefined();
+  });
+
+  it('converges when two replicas set the same theme at once', () => {
+    const { a, b, sync } = syncedPair();
+    a.setTheme('ember', { 'color.surface': '#fff7ed' });
+    sync();
+    a.setTheme('ember', { 'color.primary': '#c2410c' });
+    b.setTheme('ember', { 'color.outline': '#111111' });
+    sync();
+    expect(a.getThemes()).toEqual(b.getThemes());
+  });
+
+  // A theme is stored as one value in a Y.Map, so the last write replaces the whole theme.
+  it.fails('keeps both edits when two replicas change different tokens of a theme at once', () => {
+    const { a, b, sync } = syncedPair();
+    a.setTheme('ember', { 'color.surface': '#fff7ed' });
+    sync();
+    a.setTheme('ember', { 'color.primary': '#c2410c' });
+    b.setTheme('ember', { 'color.outline': '#111111' });
+    sync();
+    expect(a.getThemes().ember).toMatchObject({ 'color.primary': '#c2410c', 'color.outline': '#111111' });
+  });
+
+  it('can apply a seed to a document that already has many tokens of its own', () => {
+    const doc = new GridDocument();
+    const palette = Object.fromEntries(Array.from({ length: 160 }, (_, i) => [`color.brand-${i}`, '#123456']));
+    doc.setTokens(palette);
+    expect(issue(() => doc.setSeedColor('#b85c38'))).toBe('');
+    expect(doc.getTokens()['color.primary']).toBe('#8f4c33');
+  });
+});
