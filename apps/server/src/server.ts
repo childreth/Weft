@@ -206,8 +206,8 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
       try {
         const models = await assistant.models(AbortSignal.timeout(3000));
         // Speaking replies is optional: no speech model (or an older Ollama) just leaves it off.
-        const voice = await speech.info(AbortSignal.timeout(3000)).catch(() => null);
-        return json(res, 200, { ollama: assistant.ollamaUrl, models, speech: voice });
+        const voices = await speech.models(AbortSignal.timeout(3000)).catch(() => []);
+        return json(res, 200, { ollama: assistant.ollamaUrl, models, speech: voices });
       } catch {
         return json(res, 503, { ollama: assistant.ollamaUrl, error: `Ollama isn't reachable at ${assistant.ollamaUrl}` });
       }
@@ -251,16 +251,17 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
 
   /** WAV of a reply, piped from Ollama as it's generated; closing the request (Stop) aborts it. */
   async function handleSpeak(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const body = (await readJson(req)) as { text?: unknown; voice?: unknown };
+    const body = (await readJson(req)) as { text?: unknown; voice?: unknown; model?: unknown };
     if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > MAX_SPOKEN_CHARS) {
       return json(res, 400, { error: `text is required (at most ${MAX_SPOKEN_CHARS} characters)` });
     }
     const voice = typeof body.voice === 'string' ? body.voice.slice(0, 60) : undefined;
+    const model = typeof body.model === 'string' ? body.model.slice(0, 200) : undefined;
     const controller = new AbortController();
     res.on('close', () => controller.abort());
     let audio: Response;
     try {
-      audio = await speech.speak(body.text, voice, controller.signal);
+      audio = await speech.speak(body.text, voice, model, controller.signal);
     } catch (err) {
       if (controller.signal.aborted) return void res.end();
       return json(res, 503, { error: (err as Error).message });

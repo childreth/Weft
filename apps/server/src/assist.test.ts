@@ -27,6 +27,7 @@ beforeAll(async () => {
             { name: 'vision-only', size: 5, capabilities: ['completion', 'vision'] },
             { name: 'kimi:cloud', size: 100, capabilities: ['completion', 'tools', 'thinking'] },
             { name: 'qwen3-vl:235b-cloud', size: 200, remote_host: 'https://ollama.com:443', capabilities: ['completion', 'tools', 'vision'] },
+            { name: 'lfm3-audio:latest', size: 2, capabilities: ['completion', 'audio', 'speech'] },
             { name: 'phonon:latest', size: 112, capabilities: ['speech'] },
           ],
         }),
@@ -35,8 +36,16 @@ beforeAll(async () => {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     if (req.url === '/v1/audio/speech') {
-      const body = JSON.parse(Buffer.concat(chunks).toString()) as { voice?: string };
-      if (body.voice !== undefined && !['Miles', 'Zoey'].includes(body.voice)) {
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as { model?: string; voice?: string };
+      if (body.model?.startsWith('lfm3') && body.voice !== undefined && !body.voice.startsWith('female')) {
+        res.statusCode = 400;
+        return res.end(
+          JSON.stringify({
+            error: { message: `voice "${body.voice}" is not supported; use female or male, optionally followed by a language such as female-british-english or male-french (languages: british-english, french)` },
+          }),
+        );
+      }
+      if (!body.model?.startsWith('lfm3') && body.voice !== undefined && !['Miles', 'Zoey'].includes(body.voice)) {
         res.statusCode = 400;
         return res.end(JSON.stringify({ error: { message: `voice "${body.voice}" not found; available voices: Miles, Zoey, default` } }));
       }
@@ -206,9 +215,16 @@ describe('assist', () => {
     expect(preflight.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
   });
 
-  it('reports the speech model and speaks text through it', async () => {
-    const { speech } = (await (await fetch(`${server.httpUrl}/assist/models`)).json()) as { speech: { model: string; voices: string[] } };
-    expect(speech).toEqual({ model: 'phonon:latest', voices: ['default', 'Miles', 'Zoey'] });
+  it('reports every speech model with its voices, and speaks through the one asked for', async () => {
+    const { speech } = (await (await fetch(`${server.httpUrl}/assist/models`)).json()) as { speech: Array<{ model: string; voices: string[] }> };
+    // Phonon first, whatever order Ollama lists them in.
+    expect(speech).toEqual([
+      { model: 'phonon:latest', voices: ['default', 'Miles', 'Zoey'] },
+      {
+        model: 'lfm3-audio:latest',
+        voices: ['default', 'female', 'male', 'female-british-english', 'male-british-english', 'female-french', 'male-french'],
+      },
+    ]);
 
     const say = (body: Record<string, unknown>) =>
       fetch(`${server.httpUrl}/assist/speak`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -220,6 +236,16 @@ describe('assist', () => {
     await say({ text: 'Hi.', voice: 'Nobody' });
     expect(spoken.at(-1)).not.toHaveProperty('voice');
     expect((await say({ text: '' })).status).toBe(400);
+
+    await say({ text: 'Hi.', model: 'lfm3-audio:latest', voice: 'female-french' });
+    expect(spoken.at(-1)).toMatchObject({ model: 'lfm3-audio:latest', voice: 'female-french' });
+    // A voice belongs to its model: another model's voice falls back to the default.
+    await say({ text: 'Hi.', model: 'lfm3-audio:latest', voice: 'Miles' });
+    expect(spoken.at(-1)).toMatchObject({ model: 'lfm3-audio:latest' });
+    expect(spoken.at(-1)).not.toHaveProperty('voice');
+    // A model that isn't installed can't be asked for by name.
+    await say({ text: 'Hi.', model: 'big:27b' });
+    expect(spoken.at(-1)).toMatchObject({ model: 'phonon:latest' });
   });
 
   it('normalizes OLLAMA_HOST', () => {
