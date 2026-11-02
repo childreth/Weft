@@ -4,8 +4,9 @@ import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipbo
 import { exportArtboardHTML } from './export';
 import { History } from './history';
 import { seedLandingPage } from './seed';
-import { compileTokensCSS, flattenTokens, modeChangedVars } from './tokens';
-import { DEFAULT_ARTBOARD_STYLES } from './defaults';
+import { compileTokensCSS, flattenTokens, modeChangedVars, resolvedTokenValues } from './tokens';
+import { ARTBOARD_RESET_CSS, DEFAULT_ARTBOARD_STYLES } from './defaults';
+import { TEXT_ROLES, TEXT_ROLE_GROUPS, textRoleForTagChange, textRoleOf, textRoleStyles, withTagTextRole } from './typography';
 import { defaultTokens } from './default-tokens';
 import { COLOR_ROLES, DEFAULT_SEED, LEGACY_COLOR_ROLES, materialScheme } from './material';
 
@@ -1077,5 +1078,112 @@ describe('theme edge cases', () => {
     doc.setTokens(palette);
     expect(issue(() => doc.setSeedColor('#b85c38'))).toBe('');
     expect(doc.getTokens()['color.primary']).toBe('#8f4c33');
+  });
+});
+
+describe('text roles', () => {
+  const value = (doc: GridDocument, name: string, mode?: string) => resolvedTokenValues(doc.tokenSet(), mode).get(name);
+
+  it('gives every document H1 to H6, three body sizes, label and caption, each with all its tokens', () => {
+    const doc = new GridDocument();
+    expect(TEXT_ROLES).toEqual(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'body-lg', 'body-md', 'body-sm', 'label', 'caption']);
+    for (const role of TEXT_ROLES) {
+      for (const group of Object.values(TEXT_ROLE_GROUPS)) expect(value(doc, `${group}.${role}`), `${group}.${role}`).toBeTruthy();
+    }
+    expect(['font-size', 'font-weight', 'line-height', 'letter-spacing'].map((g) => value(doc, `${g}.h1`))).toEqual(['56px', '700', '1.15', '-0.03em']);
+    expect((['body-lg', 'body-md', 'body-sm', 'label', 'caption'] as const).map((r) => value(doc, `font-size.${r}`))).toEqual(['18px', '16px', '14px', '14px', '12px']);
+    // A label is the same size as secondary text, and stands out by weight.
+    expect(value(doc, 'font-weight.label')).toBe('500');
+    expect(value(doc, 'font-weight.body-sm')).toBe('400');
+    // Sizes step down from H1 to H6.
+    const sizes = (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const).map((r) => parseFloat(value(doc, `font-size.${r}`)!));
+    expect(sizes).toEqual([...sizes].sort((a, b) => b - a));
+    expect(new Set(sizes).size).toBe(6);
+  });
+
+  it('points headings at the heading font and the rest at the body font', () => {
+    expect(textRoleStyles('h3').fontFamily).toBe('var(--font-family-heading)');
+    expect(textRoleStyles('body-md').fontFamily).toBe('var(--font-family-body)');
+    for (const role of ['body-lg', 'body-sm', 'label', 'caption'] as const) expect(textRoleStyles(role).fontFamily).toBe('var(--font-family-body)');
+    expect(textRoleOf(DEFAULT_ARTBOARD_STYLES)).toBe('body-md');
+  });
+
+  it('lets a document and each theme change any part of a role, as one undo step each', () => {
+    const doc = new GridDocument();
+    const history = new History(doc);
+    doc.setTokens({ 'font-size.h1': '72px', 'letter-spacing.h1': '-0.04em' });
+    doc.setTheme('poster', { 'font-size.h1': '{font-size.5xl}', 'font-weight.h1': '{font-weight.regular}', 'line-height.h1': '1', 'letter-spacing.h2': '1px' });
+    expect(value(doc, 'font-size.h1')).toBe('72px');
+    expect(value(doc, 'font-size.h1', 'poster')).toBe('56px');
+    expect(value(doc, 'font-weight.h1', 'poster')).toBe('400');
+    // What the theme leaves alone comes from the document.
+    expect(value(doc, 'letter-spacing.h1', 'poster')).toBe('-0.04em');
+    expect(value(doc, 'font-weight.h1')).toBe('700');
+    expect([...modeChangedVars(doc.tokenSet(), 'poster')]).toEqual(expect.arrayContaining(['--font-size-h1', '--font-weight-h1', '--line-height-h1', '--letter-spacing-h2']));
+    history.undo();
+    expect(doc.getThemes()).toEqual({});
+    history.undo();
+    expect(value(doc, 'font-size.h1')).toBe('56px');
+  });
+
+  it('checks role values by their kind', () => {
+    const doc = new GridDocument();
+    expect(() => doc.setTokens({ 'letter-spacing.h1': 'wide' })).toThrow('expected a length');
+    expect(() => doc.setTokens({ 'font-weight.h1': 'heavy' })).toThrow('a weight from 100 to 900');
+    expect(() => doc.setTheme('x', { 'font-size.h1': 'big' })).toThrow('expected a length');
+    expect(() => doc.setTokens({ 'font-size.h1': '{color.primary}' })).toThrow('another font-size token');
+    expect(() => doc.setTokens({ 'font-size.5xl': '{font-size.h1}' })).toThrow('in a circle');
+  });
+
+  it('knows the role a layer uses, and calls any change to it custom', () => {
+    expect(textRoleOf(textRoleStyles('h2'))).toBe('h2');
+    expect(textRoleOf({ ...textRoleStyles('h2'), color: 'red' })).toBe('h2');
+    expect(textRoleOf({ ...textRoleStyles('h2'), fontSize: '99px' })).toBeNull();
+    expect(textRoleOf({})).toBeNull();
+  });
+
+  it('starts new layers with their tag\'s role, keeping what was asked for', () => {
+    expect(withTagTextRole('h2', undefined)).toEqual(textRoleStyles('h2'));
+    expect(withTagTextRole('h2', { fontSize: '99px', color: 'red' })).toEqual({ ...textRoleStyles('h2'), fontSize: '99px', color: 'red' });
+    expect(withTagTextRole('figcaption', {})).toEqual(textRoleStyles('caption'));
+    expect(withTagTextRole('button', {})).toEqual(textRoleStyles('label'));
+    expect(withTagTextRole('label', {})).toEqual(textRoleStyles('label'));
+    expect(withTagTextRole('p', { color: 'red' })).toEqual({ color: 'red' });
+    expect(withTagTextRole(undefined, undefined)).toBeUndefined();
+  });
+
+  it('follows a tag change only if the layer follows a role or has no type of its own', () => {
+    expect(textRoleForTagChange('h2', {})).toEqual(textRoleStyles('h2'));
+    expect(textRoleForTagChange('h2', { color: 'red' })).toEqual(textRoleStyles('h2'));
+    expect(textRoleForTagChange('h2', textRoleStyles('h1'))).toEqual(textRoleStyles('h2'));
+    expect(textRoleForTagChange('h2', { fontSize: '99px' })).toBeUndefined();
+    expect(textRoleForTagChange('p', textRoleStyles('h1'))).toBeUndefined();
+  });
+
+  it('leaves designs made before the roles as they were', () => {
+    const doc = new GridDocument();
+    const board = artboard(doc);
+    const old = doc.createNode({ type: 'text', tag: 'h1', parentId: board, text: 'Old', styles: { fontSize: '40px' } });
+    expect(doc.getNode(old)!.styles).toEqual({ fontSize: '40px' });
+    expect(ARTBOARD_RESET_CSS).not.toMatch(/\bh[1-6]\b/);
+    const html = exportArtboardHTML(doc, board);
+    expect(html).toContain('style="font-size: 40px"');
+    // Older snapshots that have these names as their own tokens still load, and win.
+    const copy = new GridDocument();
+    copy.loadSnapshot({ ...doc.toSnapshot(), tokens: { 'font-size.h1': '33px' } });
+    expect(value(copy, 'font-size.h1')).toBe('33px');
+  });
+
+  it('exports the tokens a role uses, with a theme\'s values in its block', () => {
+    const doc = new GridDocument();
+    const board = artboard(doc);
+    doc.createNode({ type: 'text', tag: 'h1', parentId: board, text: 'Hi', styles: textRoleStyles('h1') });
+    doc.setTheme('poster', { 'font-size.h1': '80px' });
+    doc.updateNode(board, { theme: 'poster' });
+    const html = exportArtboardHTML(doc, board);
+    expect(html).toContain('font-size: var(--font-size-h1)');
+    expect(html).toContain('--font-size-h1: var(--font-size-5xl);');
+    expect(html).toMatch(/\[data-theme="poster"\] \{[^}]*--font-size-h1: 80px;/);
+    expect(html).toContain('--letter-spacing-h1: var(--letter-spacing-tighter);');
   });
 });

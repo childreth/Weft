@@ -131,7 +131,8 @@ body {
 .gf-layer:hover .gf-layer-toggle, .gf-layer-toggle.is-on { visibility: visible; }
 .gf-layer-toggle:hover { background: var(--ui-panel-2); color: var(--ui-text); }
 
-.gf-section { padding: 12px; border-bottom: 1px solid var(--ui-border); display: grid; gap: 8px; }
+/* minmax(0, 1fr): an implicit column grows to its widest content, which would scroll the panel sideways. */
+.gf-section { padding: 12px; border-bottom: 1px solid var(--ui-border); display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .gf-section-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .gf-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 8px; }
 .gf-row-label { color: var(--ui-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -357,11 +358,13 @@ body {
 /* Fonts */
 .gf-icon-btn.is-active { background: var(--ui-accent-soft); color: var(--ui-text); }
 .gf-font-picker { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 8px; }
-.gf-font-options { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
+.gf-font-options { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: hidden auto; }
 .gf-font-option { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
 .gf-font-option.is-active { background: var(--ui-panel-2); }
 .gf-font-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gf-font-meta { color: var(--ui-text-muted); font-size: 11px; white-space: nowrap; margin: 0; }
+/* Sentences wrap; only short values beside a name stay on one line. */
+p.gf-font-meta, .gf-font-none { white-space: normal; }
 .gf-font-none { padding: 5px 8px; }
 .gf-font-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gf-font-sample { flex: 1; min-width: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -595,8 +598,15 @@ button.gf-badge.is-active { box-shadow: inset 0 0 0 1px currentColor; }
 .gf-token-search:not(:has(.gf-seed-input)) { grid-template-columns: minmax(0, 1fr); }
 .gf-token-option { justify-content: flex-start; align-items: center; }
 .gf-token-picker { min-width: 0; }
-.gf-token-option .gf-font-name { flex: 1 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.gf-token-option .gf-font-meta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* When a row is too narrow, the meta gives way first, then the name. */
+.gf-token-option .gf-swatch { flex: none; }
+.gf-token-option .gf-font-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.gf-token-option .gf-font-meta { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .gf-token-option.is-current .gf-font-name { color: var(--ui-accent); font-weight: 600; }
+.gf-type-grid { display: grid; grid-template-columns: 52px minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1.3fr); gap: 4px; align-items: center; }
+.gf-type-row { display: contents; }
+.gf-type-heading { color: var(--ui-text-muted); font-size: 10px; padding-left: 2px; }
+.gf-type-cell .gf-input { width: 100%; min-width: 0; padding-inline: 4px; font-size: 11px; }
+.gf-type-cell.is-set .gf-input { color: var(--ui-accent); }
 .gf-token-more { width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--ui-text-muted); font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
 .gf-token-more:hover { background: var(--ui-panel-2); color: var(--ui-text); }

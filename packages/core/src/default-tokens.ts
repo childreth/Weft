@@ -1,11 +1,15 @@
 import { COLOR_ROLES, DEFAULT_SEED, LEGACY_COLOR_ROLES, materialScheme, type ColorRole } from './material';
 import type { TokenSet } from './tokens';
+import { TEXT_ROLES, TEXT_ROLE_DEFAULTS } from './typography';
 
 const px = (n: number) => ({ $value: `${n}px` });
 
 // The default light scheme and the built-in dark theme come from one seed, like any Material theme.
 const LIGHT = materialScheme(DEFAULT_SEED, { variant: 'fidelity' });
 const DARK = materialScheme(DEFAULT_SEED, { variant: 'fidelity', dark: true });
+// Each text role's token in a group, an alias of the scale, so the pickers list the roles first.
+const textRoles = (group: string, part: 'size' | 'weight' | 'lineHeight' | 'letterSpacing') =>
+  Object.fromEntries(TEXT_ROLES.map((role) => [role, { $value: `{${group}.${TEXT_ROLE_DEFAULTS[role][part]}}` }]));
 const roles = (scheme: Record<ColorRole, string>) => Object.fromEntries(COLOR_ROLES.map((role) => [role, { $value: scheme[role] }]));
 
 export const defaultTokens: TokenSet = {
@@ -52,16 +56,24 @@ export const defaultTokens: TokenSet = {
     },
     'font-size': {
       $type: 'dimension',
+      ...textRoles('font-size', 'size'),
       xs: px(12), sm: px(14), md: px(16), lg: px(18), xl: px(20),
       '2xl': px(24), '3xl': px(30), '4xl': px(40), '5xl': px(56),
     },
     'font-weight': {
       $type: 'fontWeight',
+      ...textRoles('font-weight', 'weight'),
       regular: { $value: 400 }, medium: { $value: 500 }, semibold: { $value: 600 }, bold: { $value: 700 },
     },
     'line-height': {
       $type: 'number',
+      ...textRoles('line-height', 'lineHeight'),
       tight: { $value: 1.15 }, snug: { $value: 1.3 }, normal: { $value: 1.5 },
+    },
+    'letter-spacing': {
+      $type: 'dimension',
+      ...textRoles('letter-spacing', 'letterSpacing'),
+      tighter: { $value: '-0.03em' }, tight: { $value: '-0.02em' }, normal: { $value: '0' }, wide: { $value: '0.02em' },
     },
     shadow: {
       $type: 'shadow',

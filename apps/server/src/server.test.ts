@@ -8,7 +8,7 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { GridDocument } from '@weft/core';
+import { GridDocument, textRoleStyles } from '@weft/core';
 import { startGridServer, type GridServer } from './server';
 
 let server: GridServer;
@@ -731,6 +731,40 @@ describe('sync relay', () => {
     expect(again.doc.getNode(page!.id)?.theme).toBe('ember');
     await second.close();
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('starts heading layers with their text role, and changes roles with set_tokens', async () => {
+    const room = server.rooms.get('text-roles');
+    const [page] = room.doc.getTree();
+    const { data } = await call('create_nodes', {
+      doc: 'text-roles',
+      parentId: page!.id,
+      nodes: [
+        { type: 'text', tag: 'h2', text: 'Role' },
+        { type: 'text', tag: 'h2', text: 'Asked', styles: { fontSize: '99px' } },
+        { type: 'text', tag: 'p', text: 'Plain' },
+      ],
+    });
+    const styles = (i: number) => room.doc.getNode(data.created[i].id)!.styles;
+    expect(styles(0)).toEqual(textRoleStyles('h2'));
+    expect(styles(1)).toEqual({ ...textRoleStyles('h2'), fontSize: '99px' });
+    expect(styles(2)).toEqual({});
+
+    expect((await call('set_tokens', { doc: 'text-roles', tokens: { 'font-size.h2': '48px', 'letter-spacing.h2': '-0.04em' } })).isError).toBe(false);
+    expect((await call('set_tokens', { doc: 'text-roles', theme: 'poster', tokens: { 'font-size.h2': '64px' } })).isError).toBe(false);
+    expect((await call('set_tokens', { doc: 'text-roles', tokens: { 'letter-spacing.h2': 'wide' } })).text).toContain('expected a length');
+    const listed = (await call('list_tokens', { doc: 'text-roles', group: 'letter-spacing' })).data;
+    expect(listed.tokens.find((t: { name: string }) => t.name === 'letter-spacing.h2')).toMatchObject({ use: 'var(--letter-spacing-h2)', value: '-0.04em', document: true });
+    const html = (await call('export_html', { doc: 'text-roles', id: page!.id })).text;
+    expect(html).toContain('--font-size-h2: 48px;');
+    expect(html).toContain('font-size: var(--font-size-h2)');
+  });
+
+  it('teaches agents the text roles', async () => {
+    const skill = (await call('read_skill', { topic: 'style' })).text;
+    expect(skill).toContain('`h1`, `h2`');
+    expect(skill).toContain('`body-lg`, `body-md`, `body-sm`, `label`, `caption`');
+    expect(skill).not.toContain('{{');
   });
 
   it('warns when a new background color is hidden under a backgroundImage', async () => {

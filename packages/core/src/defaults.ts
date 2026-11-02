@@ -1,4 +1,5 @@
 import type { StyleMap } from './schema';
+import { textRoleStyles } from './typography';
 
 export const DEFAULT_ARTBOARD_STYLES: StyleMap = {
   display: 'flex',
@@ -7,9 +8,7 @@ export const DEFAULT_ARTBOARD_STYLES: StyleMap = {
   padding: 'var(--space-8)',
   backgroundColor: 'var(--color-surface)',
   color: 'var(--color-on-surface)',
-  fontFamily: 'var(--font-family-body)',
-  fontSize: 'var(--font-size-md)',
-  lineHeight: 'var(--line-height-normal)',
+  ...textRoleStyles('body-md'),
 };
 
 export const DEFAULT_FRAME_STYLES: StyleMap = {

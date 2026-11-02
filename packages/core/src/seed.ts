@@ -1,6 +1,7 @@
 import { ORIGIN_SEED, type GridDocument, type Origin } from './document';
 import { DEFAULT_ARTBOARD_STYLES } from './defaults';
 import type { SemanticTag, StyleMap } from './schema';
+import { textRoleStyles } from './typography';
 
 /** A starter landing page that exercises flex, grid and tokens. */
 export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED): string {
@@ -38,9 +39,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
     });
     const copy = frame(hero, 'div', 'Hero copy', { display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' });
     text(copy, 'h1', "Design in the browser's own layout engine.", {
-      fontSize: 'var(--font-size-5xl)',
-      lineHeight: 'var(--line-height-tight)',
-      fontWeight: 'var(--font-weight-bold)',
+      ...textRoleStyles('h1'),
     });
     text(copy, 'p', 'Every artboard is real DOM and CSS Grid, bound to design tokens and editable by people and agents alike.', {
       fontSize: 'var(--font-size-lg)',
@@ -53,7 +52,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
       padding: 'var(--space-3) var(--space-5)',
       borderRadius: 'var(--radius-md)',
       borderWidth: '0',
-      fontWeight: 'var(--font-weight-semibold)',
+      ...textRoleStyles('label'),
     });
     text(actions, 'button', 'Read the docs', {
       backgroundColor: 'var(--color-surface)',
@@ -62,7 +61,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
       borderWidth: '1px',
       borderStyle: 'solid',
       borderColor: 'var(--color-outline-variant)',
-      fontWeight: 'var(--font-weight-semibold)',
+      ...textRoleStyles('label'),
     });
     frame(hero, 'figure', 'Hero visual', {
       minHeight: '320px',
