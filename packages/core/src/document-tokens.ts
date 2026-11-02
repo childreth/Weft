@@ -35,6 +35,7 @@ const GROUPS: Record<string, { type: string; valid: (v: string) => boolean; expe
     valid: () => false,
     expect: 'a reference to a font, e.g. {font-family.fraunces} (add_fonts adds one)',
   },
+  'letter-spacing': { type: 'dimension', valid: (v) => LENGTH.test(v) || MATH_FN.test(v), expect: 'a length (-0.02em, 1px)' },
   shadow: { type: 'shadow', valid: (v) => v === 'none' || /^[a-z0-9#.,%() -]+$/i.test(v), expect: 'a box-shadow (0 4px 12px rgb(0 0 0 / 0.12))' },
 };
 

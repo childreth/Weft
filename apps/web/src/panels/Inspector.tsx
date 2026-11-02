@@ -5,13 +5,21 @@ import {
   GridError,
   IMAGE_TYPES,
   STYLE_PROPS,
+  TEXT_ROLES,
   compileTokensCSS,
   getStyleMeta,
+  resolvedTokenValues,
   tagsFor,
+  textRoleForTag,
+  textRoleForTagChange,
+  textRoleOf,
+  textRoleStyles,
   type ArtboardFrame,
   type BreakpointId,
   type SemanticTag,
+  type StyleMap,
   type StyleProp,
+  type TextRole,
 } from '@weft/core';
 import { artboardHeight } from '../canvas/elements';
 import { displaySrc, imageAttributes, imageFiles } from '../editor/assets';
@@ -23,6 +31,7 @@ import { useEditor } from '../editor/store';
 import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
+import { DocumentType, textRoleLabel } from './DocumentType';
 import { DocumentFonts, FontPicker, fontForValue, fontVar } from './FontPicker';
 import { StylePicker, styleLabel } from './StylePicker';
 import { TokenPicker, tokenOptions } from './TokenPicker';
@@ -69,6 +78,7 @@ export function Inspector() {
           <p className="gf-empty">Select a layer to inspect it.</p>
           <DocumentFonts />
           <DocumentColors />
+          <DocumentType />
         </>
       )}
       {selection.length > 0 && <AlignSection ids={selection} />}
@@ -105,6 +115,32 @@ function ThemeRow({ id, theme, isArtboard }: { id: string; theme: string | undef
   );
 }
 
+/** The text role a layer uses. Changing one of its styles by hand makes it Custom. */
+function TextStyleRow({ id, styles }: { id: string; styles: StyleMap }) {
+  const tokens = useDocTokens();
+  const values = resolvedTokenValues(tokens, useEffectiveTheme(id));
+  const role = textRoleOf(styles);
+  return (
+    <Row label="Text style">
+      <select
+        className="gf-input"
+        aria-label="Text style"
+        value={role ?? ''}
+        onChange={(e) => run(() => doc.updateNode(id, { styles: textRoleStyles(e.target.value as TextRole) }))}
+      >
+        <option value="" disabled>
+          Custom
+        </option>
+        {TEXT_ROLES.map((r) => (
+          <option key={r} value={r}>
+            {textRoleLabel(r)} · {values.get(`font-size.${r}`)}
+          </option>
+        ))}
+      </select>
+    </Row>
+  );
+}
+
 function NodeInspector({ id }: { id: string }) {
   const node = useNode(id);
   if (!node) return null;
@@ -125,13 +161,18 @@ function NodeInspector({ id }: { id: string }) {
             className="gf-input"
             aria-label="Tag"
             value={node.tag}
-            onChange={(e) => run(() => doc.updateNode(id, { tag: e.target.value as SemanticTag }))}
+            onChange={(e) => {
+              const tag = e.target.value as SemanticTag;
+              const styles = textRoleForTagChange(tag, node.styles);
+              run(() => doc.updateNode(id, { tag, ...(styles && { styles }) }));
+            }}
           >
             {(tagsFor(node.type).includes(node.tag) ? tagsFor(node.type) : [node.tag, ...tagsFor(node.type)]).map((t) => (
               <option key={t} value={t}>{`<${t}>`}</option>
             ))}
           </select>
         </Row>
+        {(node.type === 'text' || node.frame || textRoleForTag(node.tag)) && <TextStyleRow id={id} styles={node.styles} />}
         {node.type === 'frame' && <ThemeRow id={id} theme={node.theme} isArtboard={!!node.frame} />}
         <p className="gf-meta">{node.id}</p>
       </Section>

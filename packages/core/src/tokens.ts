@@ -112,6 +112,16 @@ export function compileTokensCSS(
   return blocks.join('\n\n');
 }
 
+/** Each token's value with its aliases followed (`font-size.h1` → `56px`), by token name, in a mode if given. */
+export function resolvedTokenValues(set: TokenSet, mode?: string): Map<string, string> {
+  const overrides = mode ? set.modes?.[mode] : undefined;
+  const tokens = flattenTokens(overrides ? mergeTokenGroups(set.tokens, overrides) : set.tokens);
+  const values = new Map(tokens.map((t) => [t.cssVar, t.value]));
+  const resolve = (value: string, depth = 0): string =>
+    depth > 20 ? value : value.replace(/var\((--[\w-]+)\)/g, (ref, name: string) => (values.has(name) ? resolve(values.get(name)!, depth + 1) : ref));
+  return new Map(tokens.map((t) => [t.name, resolve(t.value)]));
+}
+
 /**
  * The custom properties (`--color-accent`) whose value a mode changes: the ones
  * it overrides, and the aliases that lead to them.

@@ -180,7 +180,7 @@ export const STYLE_PROP_META = {
   fontSize: { group: 'type', tokenGroups: ['font-size'] },
   fontWeight: { group: 'type', tokenGroups: ['font-weight'] },
   lineHeight: { group: 'type', tokenGroups: ['line-height'] },
-  letterSpacing: { group: 'type' },
+  letterSpacing: { group: 'type', tokenGroups: ['letter-spacing'] },
   textAlign: { group: 'type', options: ['start', 'center', 'end', 'justify'] },
   textTransform: { group: 'type', options: ['none', 'uppercase', 'lowercase', 'capitalize'] },
   textDecoration: { group: 'type', options: ['none', 'underline', 'line-through'] },
