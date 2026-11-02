@@ -108,6 +108,19 @@ test('the Type panel changes a role for the document or one theme, and clearing 
   expect(await computed(page, lightH1!)).toMatchObject({ size: '64px', weight: '700' });
   expect(await page.evaluate(() => window.weft.doc.getThemes().poster)).toEqual({ 'font-size.h1': '80px', 'font-weight.h1': '400' });
 
+  // Role names and values show in full, so similar roles can be told apart.
+  const cutOff = await panel.evaluate((el) => {
+    const names = [...el.querySelectorAll<HTMLElement>('.gf-type-row .gf-row-label')].filter((n) => n.scrollWidth > n.clientWidth).map((n) => n.textContent);
+    const measure = document.createElement('canvas').getContext('2d')!;
+    const values = [...el.querySelectorAll<HTMLInputElement>('.gf-type-cell input')].filter((input) => {
+      const style = getComputedStyle(input);
+      measure.font = `${style.fontSize} ${style.fontFamily}`;
+      return measure.measureText(input.value).width > input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    }).map((input) => input.getAttribute('aria-label'));
+    return [...names, ...values];
+  });
+  expect(cutOff).toEqual([]);
+
   // The table fits the panel.
   const inspector = page.getByTestId('inspector');
   expect(await inspector.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
