@@ -121,7 +121,7 @@ function silentWav(ms = 200): Buffer {
 }
 
 test('replies can be spoken with a local speech model: toggle, voice, plain text', async ({ page }) => {
-  const spoken: Array<{ text: string; voice: string }> = [];
+  const spoken: Array<{ text: string; voice: string; model: string }> = [];
   await page.route('**/assist/speak', (route) => {
     spoken.push(route.request().postDataJSON());
     return route.fulfill({ contentType: 'audio/wav', body: silentWav() });
@@ -133,7 +133,7 @@ test('replies can be spoken with a local speech model: toggle, voice, plain text
     ];
     return route.fulfill({ contentType: 'application/x-ndjson', body: events.map((e) => JSON.stringify(e)).join('\n') + '\n' });
   });
-  await open(page, { json: { ...MODELS.json, speech: { model: 'phonon:latest', voices: ['default', 'Miles', 'Zoey'] } } });
+  await open(page, { json: { ...MODELS.json, speech: [{ model: 'phonon:latest', voices: ['default', 'Miles', 'Zoey'] }] } });
 
   const toggle = page.getByRole('button', { name: 'Speak replies' });
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
@@ -141,6 +141,8 @@ test('replies can be spoken with a local speech model: toggle, voice, plain text
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await page.getByLabel('Voice').selectOption('Miles');
+  // With one speech model there's nothing to choose.
+  await expect(page.getByLabel('Speech model')).toHaveCount(0);
 
   const input = page.getByLabel('Ask the model');
   await input.fill('stack these');
@@ -148,7 +150,7 @@ test('replies can be spoken with a local speech model: toggle, voice, plain text
   await expect(page.getByTestId('assist-log')).toContainText('Stacked the cards');
   // Spoken as plain sentences: no Markdown symbols, tokens by name.
   await expect.poll(() => spoken.length).toBe(1);
-  expect(spoken[0]).toEqual({ text: 'Stacked the cards: Grid: one column, gap space 4.', voice: 'Miles' });
+  expect(spoken[0]).toEqual({ text: 'Stacked the cards: Grid: one column, gap space 4.', voice: 'Miles', model: 'phonon:latest' });
   await page.screenshot({ path: 'test-results/m3-assist-speech.png' });
   await expect(page.getByTestId('assist-log')).not.toContainText('Speech:');
 
@@ -160,6 +162,72 @@ test('replies can be spoken with a local speech model: toggle, voice, plain text
   await page.reload();
   await expect(page.getByRole('button', { name: 'Speak replies' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('Voice')).toHaveValue('Miles');
+});
+
+test('replies can be spoken by any installed speech model, each with its own voices, and the choice is remembered', async ({ page }) => {
+  const spoken: Array<{ text: string; voice: string; model: string }> = [];
+  await page.route('**/assist/speak', (route) => {
+    spoken.push(route.request().postDataJSON());
+    return route.fulfill({ contentType: 'audio/wav', body: silentWav() });
+  });
+  await page.route('**/assist/chat', (route) =>
+    route.fulfill({
+      contentType: 'application/x-ndjson',
+      body: [{ type: 'message', text: 'Done.' }, { type: 'done', edits: 0 }].map((e) => JSON.stringify(e)).join('\n') + '\n',
+    }),
+  );
+  // Saved before there was a choice of model: it still applies to Phonon.
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('seeded')) {
+      localStorage.setItem('weft:assist-voice', 'Miles');
+      sessionStorage.setItem('seeded', '1');
+    }
+  });
+  await open(page, {
+    json: {
+      ...MODELS.json,
+      speech: [
+        { model: 'phonon:latest', voices: ['default', 'Miles', 'Zoey'] },
+        { model: 'lfm3-audio:latest', voices: ['default', 'female', 'male', 'female-british-english', 'male-french'] },
+      ],
+    },
+  });
+  await page.getByRole('button', { name: 'Speak replies' }).click();
+
+  const models = page.getByLabel('Speech model');
+  const voice = page.getByLabel('Voice');
+  await expect(models).toHaveValue('phonon:latest');
+  await expect(models.locator('option')).toHaveText(['phonon', 'lfm3-audio']);
+  await expect(voice).toHaveValue('Miles');
+
+  // Each model has its own voices, and built names read as words.
+  await models.selectOption('lfm3-audio:latest');
+  await expect(voice).toHaveValue('default');
+  await expect(voice.locator('option')).toHaveText(['Default voice', 'Female', 'Male', 'Female, British English', 'Male, French']);
+  await voice.selectOption('female-british-english');
+
+  const input = page.getByLabel('Ask the model');
+  await input.fill('do it');
+  await input.press('Enter');
+  await expect.poll(() => spoken.length).toBe(1);
+  expect(spoken[0]).toEqual({ text: 'Done.', voice: 'female-british-english', model: 'lfm3-audio:latest' });
+  await expect(page.getByLabel('Assist model')).toBeVisible();
+  await page.screenshot({ path: 'test-results/m3-assist-speech-models.png' });
+
+  // A message read again uses the choice as it is now; each model keeps its voice.
+  await models.selectOption('phonon:latest');
+  await expect(voice).toHaveValue('Miles');
+  const reply = page.locator('.gf-assist-message.is-reply').first();
+  await reply.hover();
+  await reply.getByRole('button', { name: 'Speak message' }).click();
+  await expect.poll(() => spoken.length).toBe(2);
+  expect(spoken[1]).toMatchObject({ voice: 'Miles', model: 'phonon:latest' });
+
+  await models.selectOption('lfm3-audio:latest');
+  await expect(voice).toHaveValue('female-british-english');
+  await page.reload();
+  await expect(page.getByLabel('Speech model')).toHaveValue('lfm3-audio:latest');
+  await expect(page.getByLabel('Voice')).toHaveValue('female-british-english');
 });
 
 test('shows why assist is unavailable, with a retry', async ({ page }) => {

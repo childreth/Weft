@@ -2,8 +2,8 @@ import { useSyncExternalStore } from 'react';
 import { SERVER_URL } from './connection';
 
 /**
- * Speaks Assist replies through the server's local speech model (Ollama's
- * Phonon). A reply is cut into sentences: the first plays while the next is
+ * Speaks Assist replies through a local speech model on the server (Ollama's
+ * Phonon, LFM3-Audio…). A reply is cut into sentences: the first plays while the next is
  * generated, so speech starts at once even for long replies.
  */
 
@@ -42,15 +42,30 @@ export function chunks(text: string, max = CHUNK_CHARS): string[] {
   return out;
 }
 
+/** Which model reads replies, and in which voice. */
+export interface SpeechChoice {
+  model: string;
+  voice: string;
+}
+
+const titleCase = (s: string) => s.replace(/(^|-)([a-z])/g, (_, gap: string, c: string) => `${gap && ' '}${c.toUpperCase()}`);
+
+/** A voice's menu label: named ones as they are, built ones readable (female-british-english → "Female, British English"). */
+export function voiceLabel(voice: string): string {
+  if (voice === 'default') return 'Default voice';
+  const built = /^(female|male)(?:-(.+))?$/.exec(voice);
+  return built ? [built[1]!, built[2]].filter((p): p is string => !!p).map(titleCase).join(', ') : voice;
+}
+
 let current: { id: string; controller: AbortController } | null = null;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
 
-async function audio(text: string, voice: string, signal: AbortSignal): Promise<Blob> {
+async function audio(text: string, { model, voice }: SpeechChoice, signal: AbortSignal): Promise<Blob> {
   const res = await fetch(`${HTTP_URL}/assist/speak`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text, voice }),
+    body: JSON.stringify({ text, voice, model }),
     signal,
   });
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Speech failed (${res.status})`);
@@ -81,7 +96,7 @@ function play(blob: Blob, signal: AbortSignal): Promise<void> {
 }
 
 /** Speaks `markdown`, stopping anything already speaking. `id` names what's speaking (a message), for its button. */
-export async function speak(id: string, markdown: string, voice: string): Promise<void> {
+export async function speak(id: string, markdown: string, choice: SpeechChoice): Promise<void> {
   stopSpeaking();
   const controller = new AbortController();
   current = { id, controller };
@@ -89,11 +104,11 @@ export async function speak(id: string, markdown: string, voice: string): Promis
   const { signal } = controller;
   try {
     const parts = chunks(speakable(markdown));
-    let next = parts.length ? audio(parts[0]!, voice, signal) : null;
+    let next = parts.length ? audio(parts[0]!, choice, signal) : null;
     for (let i = 0; next && !signal.aborted; i++) {
       const blob = await next;
       // Generate the next piece while this one plays.
-      next = i + 1 < parts.length ? audio(parts[i + 1]!, voice, signal) : null;
+      next = i + 1 < parts.length ? audio(parts[i + 1]!, choice, signal) : null;
       next?.catch(() => {});
       await play(blob, signal);
     }

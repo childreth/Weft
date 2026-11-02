@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { docName, mode, scene } from '../editor/editor';
-import { listModels, resetAssist, sendPrompt, undoAssistTurn, type AssistEvent, type AssistModel, type SpeechInfo } from '../editor/assist';
-import { speak, stopSpeaking, useSpeaking } from '../editor/speech';
+import { listModels, resetAssist, sendPrompt, undoAssistTurn, type AssistEvent, type AssistModel, type SpeechModel } from '../editor/assist';
+import { speak, stopSpeaking, useSpeaking, voiceLabel, type SpeechChoice } from '../editor/speech';
 import { useEditor } from '../editor/store';
 import { Markdown } from './Markdown';
 
@@ -31,6 +31,8 @@ const TOOL_LABELS: Record<string, string> = {
 
 const MODEL_KEY = 'weft:assist-model';
 const SPEAK_KEY = 'weft:assist-speak';
+const SPEECH_MODEL_KEY = 'weft:assist-speech-model';
+/** The voice chosen for each speech model is kept under `<key>:<model>`; the bare key is from when there was one model. */
 const VOICE_KEY = 'weft:assist-voice';
 /** Remembered choices are a convenience only: storage may be unavailable. */
 const saved = (key: string): string | null => {
@@ -69,14 +71,14 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /** Reads one reply aloud, or stops it. */
-function SpeakButton({ id, text, voice, onError }: { id: string; text: string; voice: string; onError(message: string): void }) {
+function SpeakButton({ id, text, choice, onError }: { id: string; text: string; choice: SpeechChoice; onError(message: string): void }) {
   const speaking = useSpeaking() === id;
   return (
     <button
       type="button"
       className="gf-assist-copy"
       aria-label={speaking ? 'Stop speaking' : 'Speak message'}
-      onClick={() => (speaking ? stopSpeaking() : speak(id, text, voice).catch((err: Error) => onError(err.message)))}
+      onClick={() => (speaking ? stopSpeaking() : speak(id, text, choice).catch((err: Error) => onError(err.message)))}
     >
       {speaking ? 'Stop' : 'Speak'}
     </button>
@@ -116,14 +118,18 @@ function AssistPrompt() {
   const [open, setOpen] = useState(true);
   const [running, setRunning] = useState<AbortController | null>(null);
   const [canUndo, setCanUndo] = useState(false);
-  const [speech, setSpeech] = useState<SpeechInfo | null>(null);
+  const [speech, setSpeech] = useState<SpeechModel[]>([]);
+  const [speechModel, setSpeechModel] = useState(() => saved(SPEECH_MODEL_KEY));
   const [speakOn, setSpeakOn] = useState(() => saved(SPEAK_KEY) === 'on');
-  const [voice, setVoice] = useState(() => saved(VOICE_KEY) ?? 'default');
+  const [voices, setVoices] = useState<Record<string, string>>({});
   const logRef = useRef<HTMLDivElement>(null);
   const replyIds = useRef(0);
   // A reply arrives mid-turn: read the speech choices as they are then, not when the prompt was sent.
-  const speakRef = useRef({ on: false, voice });
-  speakRef.current = { on: speakOn && !!speech, voice: speech?.voices.includes(voice) ? voice : 'default' };
+  const activeSpeech = speech.find((m) => m.model === speechModel) ?? speech[0];
+  const wanted = activeSpeech && (voices[activeSpeech.model] ?? saved(`${VOICE_KEY}:${activeSpeech.model}`) ?? saved(VOICE_KEY));
+  const choice: SpeechChoice = { model: activeSpeech?.model ?? '', voice: wanted && activeSpeech?.voices.includes(wanted) ? wanted : 'default' };
+  const speakRef = useRef({ on: false, choice });
+  speakRef.current = { on: speakOn && !!activeSpeech, choice };
 
   const loadModels = async () => {
     const { models: found, speech: info, error } = await listModels();
@@ -144,16 +150,21 @@ function AssistPrompt() {
   }, []);
 
   const speechError = (message: string) => setEntries((list) => [...list, { kind: 'error', text: `Speech: ${message}` }]);
-  const speakReply = (id: string, text: string) => void speak(id, text, speakRef.current.voice).catch((err: Error) => speechError(err.message));
+  const speakReply = (id: string, text: string) => void speak(id, text, speakRef.current.choice).catch((err: Error) => speechError(err.message));
   const toggleSpeak = () => {
     const on = !speakOn;
     setSpeakOn(on);
     remember(SPEAK_KEY, on ? 'on' : 'off');
     if (!on) stopSpeaking();
   };
+  const chooseSpeechModel = (name: string) => {
+    stopSpeaking();
+    setSpeechModel(name);
+    remember(SPEECH_MODEL_KEY, name);
+  };
   const chooseVoice = (name: string) => {
-    setVoice(name);
-    remember(VOICE_KEY, name);
+    setVoices((current) => ({ ...current, [choice.model]: name }));
+    remember(`${VOICE_KEY}:${choice.model}`, name);
   };
 
   useLayoutEffect(() => {
@@ -242,7 +253,7 @@ function AssistPrompt() {
                 <div className={`gf-assist-entry is-${entry.kind}`}>{entry.kind === 'reply' ? <Markdown text={entry.text} /> : entry.text}</div>
                 <div className="gf-assist-actions">
                   <CopyButton text={entry.text} />
-                  {entry.kind === 'reply' && speech && <SpeakButton id={entry.id} text={entry.text} voice={speakRef.current.voice} onError={speechError} />}
+                  {entry.kind === 'reply' && activeSpeech && <SpeakButton id={entry.id} text={entry.text} choice={choice} onError={speechError} />}
                 </div>
               </div>
             ) : (
@@ -336,23 +347,32 @@ function AssistPrompt() {
               Cloud
             </span>
           )}
-          {speech && (
+          {activeSpeech && (
             <button
               type="button"
               className={`gf-tool gf-assist-icon${speakOn ? ' is-active' : ''}`}
               aria-label="Speak replies"
               aria-pressed={speakOn}
-              title={`Speak replies aloud with ${speech.model} (on this machine)`}
+              title={`Speak replies aloud with ${activeSpeech.model} (on this machine)`}
               onClick={toggleSpeak}
             >
               <SpeakerIcon on={speakOn} />
             </button>
           )}
-          {speech && speakOn && (
-            <select className="gf-assist-model gf-assist-voice" aria-label="Voice" value={speakRef.current.voice} onChange={(e) => chooseVoice(e.target.value)}>
-              {speech.voices.map((v) => (
+          {activeSpeech && speakOn && speech.length > 1 && (
+            <select className="gf-assist-model gf-assist-voice" aria-label="Speech model" value={activeSpeech.model} onChange={(e) => chooseSpeechModel(e.target.value)}>
+              {speech.map((m) => (
+                <option key={m.model} value={m.model}>
+                  {m.model.replace(/:latest$/, '')}
+                </option>
+              ))}
+            </select>
+          )}
+          {activeSpeech && speakOn && (
+            <select className="gf-assist-model gf-assist-voice" aria-label="Voice" value={choice.voice} onChange={(e) => chooseVoice(e.target.value)}>
+              {activeSpeech.voices.map((v) => (
                 <option key={v} value={v}>
-                  {v === 'default' ? 'Default voice' : v}
+                  {voiceLabel(v)}
                 </option>
               ))}
             </select>
