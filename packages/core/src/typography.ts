@@ -1,13 +1,14 @@
 import type { StyleMap } from './schema';
 
 /**
- * Text roles, like the color roles: a role is a set of tokens (`font-size.h1`,
+ * Text roles, like the color roles (`body-lg` lead text, `body-md` default,
+ * `body-sm` secondary, `label` for controls, `caption` for what explains something else): a role is a set of tokens (`font-size.h1`,
  * `font-weight.h1`, `line-height.h1`, `letter-spacing.h1`) plus a font role, and
  * a layer uses one through ordinary styles (`textRoleStyles`). Documents and
  * themes change a role by setting its tokens. Nothing applies by tag in CSS, so
  * designs made before the roles keep their look.
  */
-export const TEXT_ROLES = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'body', 'caption'] as const;
+export const TEXT_ROLES = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'body-lg', 'body-md', 'body-sm', 'label', 'caption'] as const;
 export type TextRole = (typeof TEXT_ROLES)[number];
 
 /** What each role points at by default. */
@@ -18,7 +19,10 @@ export const TEXT_ROLE_DEFAULTS: Record<TextRole, { size: string; weight: string
   h4: { size: '2xl', weight: 'semibold', lineHeight: 'snug', letterSpacing: 'normal' },
   h5: { size: 'xl', weight: 'semibold', lineHeight: 'snug', letterSpacing: 'normal' },
   h6: { size: 'lg', weight: 'semibold', lineHeight: 'snug', letterSpacing: 'normal' },
-  body: { size: 'md', weight: 'regular', lineHeight: 'normal', letterSpacing: 'normal' },
+  'body-lg': { size: 'lg', weight: 'regular', lineHeight: 'normal', letterSpacing: 'normal' },
+  'body-md': { size: 'md', weight: 'regular', lineHeight: 'normal', letterSpacing: 'normal' },
+  'body-sm': { size: 'sm', weight: 'regular', lineHeight: 'normal', letterSpacing: 'normal' },
+  label: { size: 'sm', weight: 'medium', lineHeight: 'snug', letterSpacing: 'normal' },
   caption: { size: 'xs', weight: 'regular', lineHeight: 'normal', letterSpacing: 'wide' },
 };
 
@@ -53,9 +57,10 @@ export function textRoleOf(styles: Readonly<StyleMap>): TextRole | null {
   );
 }
 
-/** The role a tag starts with: headings, and the tags that mean a caption. */
+/** The role a tag starts with: headings, controls, and the tags that mean a caption. */
 export function textRoleForTag(tag: string): TextRole | null {
   if (/^h[1-6]$/.test(tag)) return tag as TextRole;
+  if (tag === 'button' || tag === 'label') return 'label';
   return tag === 'figcaption' || tag === 'small' ? 'caption' : null;
 }
 

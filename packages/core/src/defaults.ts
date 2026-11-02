@@ -8,7 +8,7 @@ export const DEFAULT_ARTBOARD_STYLES: StyleMap = {
   padding: 'var(--space-8)',
   backgroundColor: 'var(--color-surface)',
   color: 'var(--color-on-surface)',
-  ...textRoleStyles('body'),
+  ...textRoleStyles('body-md'),
 };
 
 export const DEFAULT_FRAME_STYLES: StyleMap = {

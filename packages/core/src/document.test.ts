@@ -1084,15 +1084,17 @@ describe('theme edge cases', () => {
 describe('text roles', () => {
   const value = (doc: GridDocument, name: string, mode?: string) => resolvedTokenValues(doc.tokenSet(), mode).get(name);
 
-  it('gives every document H1 to H6, body and caption, each with all its tokens', () => {
+  it('gives every document H1 to H6, three body sizes, label and caption, each with all its tokens', () => {
     const doc = new GridDocument();
-    expect(TEXT_ROLES).toEqual(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'body', 'caption']);
+    expect(TEXT_ROLES).toEqual(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'body-lg', 'body-md', 'body-sm', 'label', 'caption']);
     for (const role of TEXT_ROLES) {
       for (const group of Object.values(TEXT_ROLE_GROUPS)) expect(value(doc, `${group}.${role}`), `${group}.${role}`).toBeTruthy();
     }
     expect(['font-size', 'font-weight', 'line-height', 'letter-spacing'].map((g) => value(doc, `${g}.h1`))).toEqual(['56px', '700', '1.15', '-0.03em']);
-    expect(value(doc, 'font-size.body')).toBe('16px');
-    expect(value(doc, 'font-size.caption')).toBe('12px');
+    expect((['body-lg', 'body-md', 'body-sm', 'label', 'caption'] as const).map((r) => value(doc, `font-size.${r}`))).toEqual(['18px', '16px', '14px', '14px', '12px']);
+    // A label is the same size as secondary text, and stands out by weight.
+    expect(value(doc, 'font-weight.label')).toBe('500');
+    expect(value(doc, 'font-weight.body-sm')).toBe('400');
     // Sizes step down from H1 to H6.
     const sizes = (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const).map((r) => parseFloat(value(doc, `font-size.${r}`)!));
     expect(sizes).toEqual([...sizes].sort((a, b) => b - a));
@@ -1101,9 +1103,9 @@ describe('text roles', () => {
 
   it('points headings at the heading font and the rest at the body font', () => {
     expect(textRoleStyles('h3').fontFamily).toBe('var(--font-family-heading)');
-    expect(textRoleStyles('body').fontFamily).toBe('var(--font-family-body)');
-    expect(textRoleStyles('caption').fontFamily).toBe('var(--font-family-body)');
-    expect(textRoleOf(DEFAULT_ARTBOARD_STYLES)).toBe('body');
+    expect(textRoleStyles('body-md').fontFamily).toBe('var(--font-family-body)');
+    for (const role of ['body-lg', 'body-sm', 'label', 'caption'] as const) expect(textRoleStyles(role).fontFamily).toBe('var(--font-family-body)');
+    expect(textRoleOf(DEFAULT_ARTBOARD_STYLES)).toBe('body-md');
   });
 
   it('lets a document and each theme change any part of a role, as one undo step each', () => {
@@ -1144,6 +1146,8 @@ describe('text roles', () => {
     expect(withTagTextRole('h2', undefined)).toEqual(textRoleStyles('h2'));
     expect(withTagTextRole('h2', { fontSize: '99px', color: 'red' })).toEqual({ ...textRoleStyles('h2'), fontSize: '99px', color: 'red' });
     expect(withTagTextRole('figcaption', {})).toEqual(textRoleStyles('caption'));
+    expect(withTagTextRole('button', {})).toEqual(textRoleStyles('label'));
+    expect(withTagTextRole('label', {})).toEqual(textRoleStyles('label'));
     expect(withTagTextRole('p', { color: 'red' })).toEqual({ color: 'red' });
     expect(withTagTextRole(undefined, undefined)).toBeUndefined();
   });

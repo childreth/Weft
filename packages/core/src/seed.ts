@@ -52,7 +52,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
       padding: 'var(--space-3) var(--space-5)',
       borderRadius: 'var(--radius-md)',
       borderWidth: '0',
-      fontWeight: 'var(--font-weight-semibold)',
+      ...textRoleStyles('label'),
     });
     text(actions, 'button', 'Read the docs', {
       backgroundColor: 'var(--color-surface)',
@@ -61,7 +61,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
       borderWidth: '1px',
       borderStyle: 'solid',
       borderColor: 'var(--color-outline-variant)',
-      fontWeight: 'var(--font-weight-semibold)',
+      ...textRoleStyles('label'),
     });
     frame(hero, 'figure', 'Hero visual', {
       minHeight: '320px',

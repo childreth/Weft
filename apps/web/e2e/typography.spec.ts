@@ -23,7 +23,7 @@ test('a layer takes a text style from the Inspector, as one undo step, and a han
   const picker = page.getByLabel('Text style');
   await expect(picker).toHaveValue('');
   await expect(picker.locator('option:checked')).toHaveText('Custom');
-  await expect(picker.locator('option')).toHaveText(['Custom', 'H1 · 56px', 'H2 · 40px', 'H3 · 30px', 'H4 · 24px', 'H5 · 20px', 'H6 · 18px', 'Body · 16px', 'Caption · 12px']);
+  await expect(picker.locator('option')).toHaveText(['Custom', 'H1 · 56px', 'H2 · 40px', 'H3 · 30px', 'H4 · 24px', 'H5 · 20px', 'H6 · 18px', 'Body lg · 18px', 'Body md · 16px', 'Body sm · 14px', 'Label · 14px', 'Caption · 12px']);
 
   await picker.selectOption('h2');
   await expect.poll(() => computed(page, id)).toEqual({ size: '40px', weight: '700', line: '46px', track: '-0.8px' });
@@ -88,6 +88,8 @@ test('the Type panel changes a role for the document or one theme, and clearing 
   await expect(size).toHaveValue('56px');
   await expect(panel.getByLabel('H1 weight')).toHaveValue('700');
   await expect(panel.getByLabel('Caption track')).toHaveValue('0.02em');
+  await expect(panel.getByLabel('Body lg size')).toHaveValue('18px');
+  await expect(panel.getByLabel('Label weight')).toHaveValue('500');
 
   // For the document: every layer using the role follows, themed or not.
   await size.fill('64px');

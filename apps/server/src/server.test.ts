@@ -763,6 +763,7 @@ describe('sync relay', () => {
   it('teaches agents the text roles', async () => {
     const skill = (await call('read_skill', { topic: 'style' })).text;
     expect(skill).toContain('`h1`, `h2`');
+    expect(skill).toContain('`body-lg`, `body-md`, `body-sm`, `label`, `caption`');
     expect(skill).not.toContain('{{');
   });
 

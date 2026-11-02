@@ -4,7 +4,7 @@ import { doc, run } from '../editor/editor';
 import { useDocTokens } from '../editor/fonts';
 import { CommitInput, Row } from './controls';
 
-export const textRoleLabel = (role: TextRole) => (role.length === 2 ? role.toUpperCase() : role.charAt(0).toUpperCase() + role.slice(1));
+export const textRoleLabel = (role: TextRole) => (role.length === 2 ? role.toUpperCase() : role.charAt(0).toUpperCase() + role.slice(1).replace('-', ' '));
 
 const COLUMNS = [
   { group: TEXT_ROLE_GROUPS.fontSize, label: 'Size' },
