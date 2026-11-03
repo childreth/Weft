@@ -183,7 +183,9 @@ test('the Tokens section lists every token for the document or a theme, with wha
 
   // A theme: its overrides come first and are marked; the rest resolve through it.
   await panel.getByLabel('Tokens for').selectOption('ember');
-  await expect(colors.locator('li').first()).toHaveAttribute('data-token', 'color.primary');
+  await expect(colors.locator('.gf-token-item').first()).toHaveAttribute('data-token', 'color.primary');
+  // Headings say where each part comes from.
+  await expect(colors.locator('.gf-token-source')).toHaveText(['Set in ember', "Weft's defaults (same in every theme)"]);
   await expect(colors.locator('[data-token="color.primary"]')).toHaveClass(/is-set/);
   await expect(colors.locator('[data-token="color.primary"] .gf-token-value')).toHaveText('#c2410c');
   await expect(colors.locator('[data-token="color.on-surface"]')).not.toHaveClass(/is-set/);
@@ -195,7 +197,7 @@ test('the Tokens section lists every token for the document or a theme, with wha
   await expect(panel.locator('.gf-token-item')).toHaveCount(3);
   await panel.getByText('Set here (3)').click();
   await panel.getByLabel('Filter tokens').fill('surface-container');
-  await expect(colors.locator('li')).toHaveCount(5);
+  await expect(colors.locator('.gf-token-item')).toHaveCount(5);
   await panel.getByLabel('Filter tokens').fill('');
   await panel.scrollIntoViewIfNeeded();
   await panel.getByLabel('Tokens for').scrollIntoViewIfNeeded();
