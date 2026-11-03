@@ -166,3 +166,40 @@ test('the token picker never scrolls the Inspector or its list sideways', async 
   await expectFits();
   await page.keyboard.press('Escape');
 });
+
+test('the Tokens section lists every token for the document or a theme, with what that level sets first', async ({ page }) => {
+  await page.goto('/?ephemeral');
+  await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
+  await page.evaluate(() => {
+    window.weft.doc.setTheme('ember', { 'color.primary': '#c2410c', 'color.surface': '#fff7ed', 'space.6': '28px' });
+    window.weft.editor.getState().select([]);
+  });
+  const panel = page.getByTestId('document-tokens');
+  const colors = panel.getByRole('list', { name: 'color tokens' });
+  // The document: defaults only, nothing set here.
+  await expect(panel.getByText('Set here (0)')).toBeVisible();
+  await expect(colors.locator('[data-token="color.primary"]')).not.toHaveClass(/is-set/);
+  await expect(colors.locator('[data-token="color.text"]')).toHaveCount(0);
+
+  // A theme: its overrides come first and are marked; the rest resolve through it.
+  await panel.getByLabel('Tokens for').selectOption('ember');
+  await expect(colors.locator('li').first()).toHaveAttribute('data-token', 'color.primary');
+  await expect(colors.locator('[data-token="color.primary"]')).toHaveClass(/is-set/);
+  await expect(colors.locator('[data-token="color.primary"] .gf-token-value')).toHaveText('#c2410c');
+  await expect(colors.locator('[data-token="color.on-surface"]')).not.toHaveClass(/is-set/);
+  await expect(panel.getByText('Set here (3)')).toBeVisible();
+  // Aliases show what they point at.
+  await expect(panel.locator('[data-token="font-size.h1"] .gf-token-value')).toHaveText('→ 5xl');
+
+  await panel.getByText('Set here (3)').click();
+  await expect(panel.locator('.gf-token-item')).toHaveCount(3);
+  await panel.getByText('Set here (3)').click();
+  await panel.getByLabel('Filter tokens').fill('surface-container');
+  await expect(colors.locator('li')).toHaveCount(5);
+  await panel.getByLabel('Filter tokens').fill('');
+  await panel.scrollIntoViewIfNeeded();
+  await panel.getByLabel('Tokens for').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'test-results/m4-token-table.png' });
+  // No sideways scroll in the Inspector.
+  expect(await page.getByTestId('inspector').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+});

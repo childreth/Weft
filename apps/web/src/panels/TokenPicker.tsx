@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { COLOR_ROLES, LEGACY_COLOR_ROLES, getStyleMeta, type FlatToken, type StyleProp } from '@weft/core';
+import { COLOR_ROLES, LEGACY_COLOR_ROLES, getStyleMeta, legacyColorRole, type FlatToken, type StyleProp } from '@weft/core';
 import { useFlatTokens } from '../editor/fonts';
 
 interface Option {
   token: FlatToken;
   label: string;
-  group: 'roles' | 'other';
+  group: 'roles' | 'other' | 'current';
   /** Shown on the right: the resolved value, or the role's text pairing. */
   meta: string;
 }
@@ -39,7 +39,8 @@ export function tokenOptions(tokens: readonly FlatToken[], prop: StyleProp): Fla
 /**
  * Searchable list of the tokens a style property can use. Colors list the
  * Material roles first (in Material's order), then the document's other
- * colors; the old role names are aliases and stay out of the list. Swatches
+ * colors; the old role names are aliases and stay out of the list, except as
+ * the current value, which is listed first when it would be hidden. Swatches
  * resolve in the Inspector's token scope, so they show the selection's theme.
  * Typing a value that isn't a token offers it as a raw value.
  */
@@ -71,8 +72,16 @@ export function TokenPicker({ prop, value, onPick, onClose }: { prop: StyleProp;
   const matches = q ? all.filter((o) => o.label.toLowerCase().includes(q)) : all;
   // Colors keep the long tail (primitives, document colors) folded until asked for or searched.
   const folded = isColor && !q && !showOther;
-  const visible = folded ? matches.filter((o) => o.group === 'roles') : matches;
-  const hidden = matches.length - visible.length;
+  const shown = folded ? matches.filter((o) => o.group === 'roles') : matches;
+  // The value in use, so the list never hides what's set: an old name (text) or a folded color.
+  const current = useMemo<Option | null>(() => {
+    const token = tokens.find((t) => value.trim() === `var(${t.cssVar})`);
+    if (!token || q) return null;
+    const role = legacyColorRole(token.name);
+    return { token, label: token.path.slice(1).join('.'), group: 'current', meta: role ? `old name for ${role}` : 'current' };
+  }, [tokens, value, q]);
+  const visible = current && !shown.some((o) => o.token.cssVar === current.token.cssVar) ? [current, ...shown] : shown;
+  const hidden = matches.length - shown.length;
   const raw = q && !visible.some((o) => o.label.toLowerCase() === q) ? query.trim() : null;
   const count = visible.length + (raw ? 1 : 0);
 

@@ -7,7 +7,9 @@ import {
   STYLE_PROPS,
   TEXT_ROLES,
   compileTokensCSS,
+  flattenTokens,
   getStyleMeta,
+  legacyColorRole,
   resolvedTokenValues,
   tagsFor,
   textRoleForTag,
@@ -32,6 +34,7 @@ import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
 import { DocumentType, textRoleLabel } from './DocumentType';
+import { DocumentTokens } from './DocumentTokens';
 import { DocumentFonts, FontPicker, fontForValue, fontVar } from './FontPicker';
 import { StylePicker, styleLabel } from './StylePicker';
 import { TokenPicker, tokenOptions } from './TokenPicker';
@@ -79,6 +82,7 @@ export function Inspector() {
           <DocumentFonts />
           <DocumentColors />
           <DocumentType />
+          <DocumentTokens />
         </>
       )}
       {selection.length > 0 && <AlignSection ids={selection} />}
@@ -367,6 +371,36 @@ function StyleSection({
   );
 }
 
+/**
+ * What a color token stands for, when its name doesn't say: an old name
+ * (`text` is `on-surface`, and what the selection's theme sets it to) or an
+ * alias of another color (`brand` → `primary`).
+ */
+function ColorTokenHint({ value }: { value: string }) {
+  const tokens = useDocTokens();
+  const selection = useEditor((s) => s.selection);
+  const theme = useEffectiveTheme(selection.length === 1 ? selection[0] : undefined);
+  const name = /^var\(--color-([\w-]+)\)$/.exec(value.trim())?.[1];
+  if (!name) return null;
+  const path = `color.${name}`;
+  const themed = theme ? flattenTokens(tokens.modes?.[theme] ?? {}).find((t) => t.name === path)?.value : undefined;
+  const own = themed ?? flattenTokens(tokens.tokens).find((t) => t.name === path)?.value;
+  const target = own && /^var\(--color-([\w-]+)\)$/.exec(own)?.[1];
+  const role = legacyColorRole(path);
+  let hint: string | null = null;
+  if (role) {
+    hint = `Old name for ${role}`;
+    if (target && target !== role) hint += `; here it's ${target}`;
+    else if (!target && own) hint += `; ${themed !== undefined ? themeLabel(theme!) : 'this document'} sets it to ${own}`;
+  } else if (target) hint = `${name} → ${target}`;
+  if (!hint) return null;
+  return (
+    <p className="gf-style-hint" data-testid="color-token-hint" title={role ? `Weft's first color names are aliases of Material roles. Use var(--color-${role}), or Update color names in the Colors section.` : undefined}>
+      {hint}
+    </p>
+  );
+}
+
 function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (v: string | null) => void }) {
   const meta = getStyleMeta(prop);
   const bound = value.includes('var(--');
@@ -375,6 +409,7 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
   const fonts = useDocFonts();
   const tokenTitle = bound ? 'Bound to a design token. Choose another' : 'Raw value, not bound to a token. Choose a token';
   const row = (
+    <>
     <div className="gf-style-row" data-style-prop={prop}>
       <span className="gf-row-label" title={prop}>{styleLabel(prop)}</span>
       {meta.group === 'fill' || meta.tokenGroups?.includes('color') ? (
@@ -427,6 +462,8 @@ function StyleRow({ prop, value, set }: { prop: StyleProp; value: string; set: (
         ×
       </button>
     </div>
+    {meta.tokenGroups?.includes('color') && <ColorTokenHint value={value} />}
+    </>
   );
   if (picking === 'token') {
     return (

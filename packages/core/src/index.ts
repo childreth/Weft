@@ -4,6 +4,7 @@ export * from './history';
 export * from './tokens';
 export * from './document-tokens';
 export * from './material';
+export * from './legacy-colors';
 export * from './typography';
 export * from './defaults';
 export { defaultTokens } from './default-tokens';

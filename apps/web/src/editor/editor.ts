@@ -122,6 +122,7 @@ export const agentApi = {
   setTheme: (name: string, tokens: Record<string, string | null>) => doc.setTheme(name, tokens, ORIGIN_AGENT),
   removeTheme: (name: string) => doc.removeTheme(name, ORIGIN_AGENT),
   setSeedColor: (seed: string, options?: { theme?: string; variant?: SchemeVariant }) => doc.setSeedColor(seed, options, ORIGIN_AGENT),
+  migrateLegacyColors: () => doc.migrateLegacyColors(ORIGIN_AGENT),
   select: (ids: string[]) => useEditor.getState().select(ids),
 };
 
