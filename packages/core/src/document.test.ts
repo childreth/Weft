@@ -9,6 +9,7 @@ import { ARTBOARD_RESET_CSS, DEFAULT_ARTBOARD_STYLES } from './defaults';
 import { TEXT_ROLES, TEXT_ROLE_GROUPS, textRoleForTagChange, textRoleOf, textRoleStyles, withTagTextRole } from './typography';
 import { defaultTokens } from './default-tokens';
 import { COLOR_ROLES, DEFAULT_SEED, LEGACY_COLOR_ROLES, materialScheme } from './material';
+import { legacyColorOfValue, renameLegacyColors } from './legacy-colors';
 
 function artboard(doc: GridDocument) {
   return doc.createNode({ type: 'frame', name: 'A', frame: { x: 0, y: 0, width: 100, height: 100 } });
@@ -170,19 +171,19 @@ describe('tokens', () => {
     const doc = new GridDocument();
     const history = new History(doc);
     const board = artboard(doc);
-    doc.setTokens({ 'color.ember-500': '#c2410c', 'color.accent': '{color.ember-500}', 'space.18': '72px' });
+    doc.setTokens({ 'color.ember-500': '#c2410c', 'font-size.h1': '{font-size.4xl}', 'space.18': '72px' });
     const flat = flattenTokens(doc.tokenSet().tokens);
     expect(flat.find((t) => t.name === 'color.ember-500')).toMatchObject({ cssVar: '--color-ember-500', type: 'color', value: '#c2410c' });
-    expect(flat.find((t) => t.name === 'color.accent')?.value).toBe('var(--color-ember-500)');
+    expect(flat.find((t) => t.name === 'font-size.h1')?.value).toBe('var(--font-size-4xl)');
     expect(flat.find((t) => t.name === 'space.18')?.type).toBe('dimension');
     // Defaults aren't changed, and export ships the document's tokens.
-    expect(flattenTokens(defaultTokens.tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-primary)');
+    expect(flattenTokens(defaultTokens.tokens).find((t) => t.name === 'font-size.h1')?.value).toBe('var(--font-size-5xl)');
     expect(exportArtboardHTML(doc, board)).toContain('--color-ember-500: #c2410c;');
 
-    doc.setTokens({ 'color.accent': null });
-    expect(flattenTokens(doc.tokenSet().tokens).find((t) => t.name === 'color.accent')?.value).toBe('var(--color-primary)');
+    doc.setTokens({ 'font-size.h1': null });
+    expect(flattenTokens(doc.tokenSet().tokens).find((t) => t.name === 'font-size.h1')?.value).toBe('var(--font-size-5xl)');
     history.undo();
-    expect(doc.getTokens()['color.accent']).toBe('{color.ember-500}');
+    expect(doc.getTokens()['font-size.h1']).toBe('{font-size.4xl}');
 
     const copy = new GridDocument();
     copy.loadSnapshot(doc.toSnapshot());
@@ -248,15 +249,15 @@ describe('themes', () => {
     expect(doc.getThemeNames()).toEqual(['dark']);
 
     doc.setTokens({ 'color.ember-500': '#c2410c' });
-    doc.setTheme('ember', { 'color.accent': '{color.ember-500}', 'color.surface': '#fff7ed' });
+    doc.setTheme('ember', { 'color.primary': '{color.ember-500}', 'color.surface': '#fff7ed' });
     expect(doc.getThemeNames()).toEqual(['dark', 'ember']);
     const ember = flattenTokens(doc.tokenSet().modes!.ember!);
-    expect(ember.find((t) => t.name === 'color.accent')?.value).toBe('var(--color-ember-500)');
+    expect(ember.find((t) => t.name === 'color.primary')?.value).toBe('var(--color-ember-500)');
 
     // The document can override the built-in dark theme too; its other overrides stay.
-    doc.setTheme('dark', { 'color.accent': '#f97316' });
+    doc.setTheme('dark', { 'color.primary': '#f97316' });
     const dark = flattenTokens(doc.tokenSet().modes!.dark!);
-    expect(dark.find((t) => t.name === 'color.accent')?.value).toBe('#f97316');
+    expect(dark.find((t) => t.name === 'color.primary')?.value).toBe('#f97316');
     expect(dark.find((t) => t.name === 'color.surface')?.value).toBe(materialScheme(DEFAULT_SEED, { variant: 'fidelity', dark: true }).surface);
 
     doc.updateNode(board, { theme: 'ember' });
@@ -283,7 +284,7 @@ describe('themes', () => {
     expect(doc.getNode(board)?.theme).toBe('ember');
     doc.removeTheme('dark');
     expect(doc.getNode(section)?.theme).toBe('dark');
-    expect(doc.getThemes()).toEqual({ ember: { 'color.accent': '{color.ember-500}', 'color.surface': '#fff7ed' } });
+    expect(doc.getThemes()).toEqual({ ember: { 'color.primary': '{color.ember-500}', 'color.surface': '#fff7ed' } });
   });
 
   it('checks theme names and overrides, and changes nothing when one is wrong', () => {
@@ -849,7 +850,8 @@ describe('material color roles', () => {
   it("sets the document's roles and its dark theme from a seed, or a theme pair, in one undo step", () => {
     const doc = new GridDocument();
     const history = new History(doc);
-    doc.setTokens({ 'color.accent': '#ff0000' });
+    // Old documents can still override the legacy names (setTokens refuses them now).
+    doc.loadSnapshot({ ...doc.toSnapshot(), tokens: { 'color.accent': '#ff0000' } });
     expect(doc.setSeedColor('#b85c38')).toEqual(['dark']);
     expect(doc.getTokens()['color.primary']).toBe('#8f4c33');
     // A legacy override would stop the old name following the new primary.
@@ -922,18 +924,18 @@ describe('theme edge cases', () => {
 
   it("won't let a document token close a circle through a default alias", () => {
     const doc = new GridDocument();
-    // color.accent is a default alias of color.primary.
-    expect(issue(() => doc.setTokens({ 'color.primary': '{color.accent}' }))).toContain('in a circle');
+    // font-size.h1 is a default alias of font-size.5xl.
+    expect(issue(() => doc.setTokens({ 'font-size.5xl': '{font-size.h1}' }))).toContain('in a circle');
     expect(doc.getTokens()).toEqual({});
     // Overriding the alias in the same call breaks the circle.
-    expect(issue(() => doc.setTokens({ 'color.accent': '#ff0000', 'color.primary': '{color.accent}' }))).toBe('');
+    expect(issue(() => doc.setTokens({ 'font-size.h1': '64px', 'font-size.5xl': '{font-size.h1}' }))).toBe('');
   });
 
   it("won't let removing a token's override bring back a default alias that closes a circle", () => {
     const doc = new GridDocument();
-    doc.setTokens({ 'color.accent': '#ff0000', 'color.primary': '{color.accent}' });
-    expect(issue(() => doc.setTokens({ 'color.accent': null }))).toContain('in a circle');
-    expect(doc.getTokens()['color.accent']).toBe('#ff0000');
+    doc.setTokens({ 'font-size.h1': '64px', 'font-size.5xl': '{font-size.h1}' });
+    expect(issue(() => doc.setTokens({ 'font-size.h1': null }))).toContain('in a circle');
+    expect(doc.getTokens()['font-size.h1']).toBe('64px');
   });
 
   it("won't let a document token close a circle through a theme", () => {
@@ -1185,5 +1187,120 @@ describe('text roles', () => {
     expect(html).toContain('--font-size-h1: var(--font-size-5xl);');
     expect(html).toMatch(/\[data-theme="poster"\] \{[^}]*--font-size-h1: 80px;/);
     expect(html).toContain('--letter-spacing-h1: var(--letter-spacing-tighter);');
+  });
+});
+
+describe('old color names', () => {
+  /** A document saved before the Material roles: old names in its tokens, themes and layers. */
+  const oldDocument = (tokens: Record<string, string>, themes: Record<string, Record<string, string>>) => {
+    const doc = new GridDocument();
+    artboard(doc);
+    doc.loadSnapshot({ ...doc.toSnapshot(), tokens, themes });
+    return { doc, board: doc.getTree()[0]!.id };
+  };
+
+  it('refuses setting an old name, but opening a file keeps the ones it has', () => {
+    const doc = new GridDocument();
+    expect(() => doc.setTokens({ 'color.text': '#111111' })).toThrow('"color.text" is an old name for color.on-surface; set color.on-surface instead');
+    expect(() => doc.setTheme('smoky', { 'color.accent': '#b85c38' })).toThrow('smoky: "color.accent" is an old name for color.primary');
+    const { doc: old } = oldDocument({}, { smoky: { 'color.text': '#3d2e1f' } });
+    expect(old.getThemes().smoky).toEqual({ 'color.text': '#3d2e1f' });
+    // Resending a theme unchanged, or removing the old name, still works.
+    old.setTheme('smoky', { 'color.text': '#3d2e1f', 'color.surface': '#faf5ee' });
+    old.setTheme('smoky', { 'color.text': null });
+    expect(old.getThemes().smoky).toEqual({ 'color.surface': '#faf5ee' });
+  });
+
+  it('moves themes and layers onto the roles, keeping their colors, in one undo step', () => {
+    const { doc, board } = oldDocument(
+      { 'color.brand': '{color.accent}' },
+      { smoky: { 'color.text': '#3d2e1f', 'color.accent': '#b85c38', 'color.border': '{color.surface-dim}', 'color.surface': '#faf5ee' } },
+    );
+    doc.updateNode(board, { theme: 'smoky' });
+    const card = doc.createNode({
+      type: 'frame',
+      parentId: board,
+      styles: { color: 'var(--color-text)', border: '1px solid var(--color-border)', boxShadow: '0 0 0 2px var(--color-text-muted)' },
+      breakpoints: { mobile: { backgroundColor: 'var(--color-surface-subtle)' } },
+    });
+    // A button that already used the role: the theme's accent reaches it now.
+    const button = doc.createNode({ type: 'frame', parentId: board, tag: 'button', styles: { backgroundColor: 'var(--color-primary)' } });
+    const outside = doc.createNode({ type: 'frame', name: 'B', frame: { x: 200, y: 0, width: 100, height: 100 }, styles: { backgroundColor: 'var(--color-primary)' } });
+    const history = new History(doc);
+    const resolved = () => resolvedTokenValues(doc.tokenSet(), 'smoky');
+    const before = resolved();
+    expect(doc.legacyColorUsage()).toEqual({ layers: 1, overrides: 4 });
+
+    const result = doc.migrateLegacyColors();
+    // Restyled: the button, now in the theme's accent.
+    expect(result).toMatchObject({ layers: 1, restyled: 1, themes: ['smoky'], skipped: [] });
+    expect([doc.getNode(button)?.styles.backgroundColor, doc.getNode(outside)?.styles.backgroundColor]).toEqual(['var(--color-primary)', 'var(--color-primary)']);
+    expect(result.renamed).toMatchObject({ text: 'on-surface', accent: 'primary' });
+    // The old names' values became the roles' values (a reference too); an old name that only pointed at its own role goes.
+    expect(doc.getThemes().smoky).toEqual({ 'color.on-surface': '#3d2e1f', 'color.primary': '#b85c38', 'color.outline-variant': '{color.surface-dim}', 'color.surface': '#faf5ee' });
+    expect(doc.getTokens()).toEqual({ 'color.brand': '{color.primary}' });
+    expect(doc.getNode(card)?.styles).toMatchObject({
+      color: 'var(--color-on-surface)',
+      border: '1px solid var(--color-outline-variant)',
+      boxShadow: '0 0 0 2px var(--color-on-surface-variant)',
+    });
+    expect(doc.getNode(card)?.breakpoints?.mobile).toEqual({ backgroundColor: 'var(--color-surface-container)' });
+    expect(doc.legacyColorUsage()).toEqual({ layers: 0, overrides: 0 });
+    // Every token the theme uses resolves as before; the old names now follow the roles.
+    const after = resolved();
+    expect(after.get('color.on-surface')).toBe('#3d2e1f');
+    for (const name of ['color.text', 'color.accent', 'color.border', 'color.brand', 'color.surface']) expect(after.get(name), name).toBe(before.get(name));
+
+    history.undo();
+    expect(doc.getThemes().smoky).toMatchObject({ 'color.text': '#3d2e1f' });
+    expect(doc.getNode(card)?.styles.color).toBe('var(--color-text)');
+  });
+
+  it('skips an old name whose move would change a color', () => {
+    const { doc } = oldDocument(
+      { 'color.text': '#222222' },
+      {
+        // Both names set, differently: layers using each show a different color.
+        clash: { 'color.accent': '#ff0000', 'color.primary': '#0000ff' },
+        // The role points at the old name.
+        loop: { 'color.border': '#cccccc', 'color.outline-variant': '{color.border}' },
+      },
+    );
+    const card = doc.createNode({ type: 'frame', parentId: doc.getTree()[0]!.id, styles: { color: 'var(--color-text)', backgroundColor: 'var(--color-accent)', borderColor: 'var(--color-border)', textDecorationColor: 'var(--color-text-muted)' } });
+    const result = doc.migrateLegacyColors();
+    const skipped = Object.fromEntries(result.skipped.map((s) => [s.name, s.reason]));
+    expect(skipped.accent).toContain('the clash theme sets color.accent (#ff0000) and color.primary (#0000ff)');
+    expect(skipped.border).toContain('the loop theme sets color.outline-variant to {color.border}');
+    // The document sets color.text, and the built-in dark theme sets on-surface: dark layers would change.
+    expect(skipped.text).toContain('the document sets color.text, but the dark theme sets color.on-surface');
+    expect(result.renamed).toEqual({ 'on-accent': 'on-primary', 'text-muted': 'on-surface-variant', 'surface-subtle': 'surface-container' });
+    expect(doc.getNode(card)?.styles).toMatchObject({
+      color: 'var(--color-text)',
+      backgroundColor: 'var(--color-accent)',
+      borderColor: 'var(--color-border)',
+      textDecorationColor: 'var(--color-on-surface-variant)',
+    });
+    expect(doc.getTokens()).toEqual({ 'color.text': '#222222' });
+  });
+
+  it('skips an old name that refers to a role another old name moves onto', () => {
+    // muted text is on-surface here; moving text onto on-surface would recolor it.
+    const { doc } = oldDocument({}, { chain: { 'color.text': '#111111', 'color.text-muted': '{color.on-surface}' } });
+    const before = resolvedTokenValues(doc.tokenSet(), 'chain').get('color.text-muted');
+    const result = doc.migrateLegacyColors();
+    expect(result.skipped).toEqual([
+      { name: 'text', reason: 'moving it would recolor text-muted in the chain theme' },
+      { name: 'text-muted', reason: 'its color would change in the chain theme' },
+    ]);
+    expect(doc.getThemes().chain).toEqual({ 'color.text': '#111111', 'color.text-muted': '{color.on-surface}' });
+    expect(resolvedTokenValues(doc.tokenSet(), 'chain').get('color.text-muted')).toBe(before);
+  });
+
+  it('reads old names in values, longest first', () => {
+    expect(renameLegacyColors('var(--color-text-muted) var(--color-text) {color.text} var(--color-textual)', ['text', 'text-muted'])).toBe(
+      'var(--color-on-surface-variant) var(--color-on-surface) {color.on-surface} var(--color-textual)',
+    );
+    expect(legacyColorOfValue(' var(--color-border) ')).toBe('border');
+    expect(legacyColorOfValue('var(--color-primary)')).toBeUndefined();
   });
 });

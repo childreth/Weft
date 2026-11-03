@@ -16,7 +16,7 @@ export const DEFAULT_FRAME_STYLES: StyleMap = {
   flexDirection: 'column',
   gap: 'var(--space-3)',
   padding: 'var(--space-4)',
-  backgroundColor: 'var(--color-surface-subtle)',
+  backgroundColor: 'var(--color-surface-container)',
   borderRadius: 'var(--radius-md)',
   minHeight: '64px',
 };

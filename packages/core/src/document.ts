@@ -3,9 +3,10 @@ import { generateKeyBetween } from 'fractional-indexing';
 import { createId } from './ids';
 import { defaultTokens } from './default-tokens';
 import { MAX_DOCUMENT_TOKENS, MAX_THEMES, documentTokenIssues, themeCycleIssues, themeIssues, themeNameIssue, withDocumentTokens } from './document-tokens';
-import { LEGACY_COLOR_ROLES, SCHEME_VARIANT_NAMES, materialScheme, schemeTokens, seedIssue, type SchemeVariant } from './material';
+import { LEGACY_COLOR_ROLES, SCHEME_VARIANT_NAMES, materialScheme, schemeTokens, seedIssue, type ColorRole, type SchemeVariant } from './material';
+import { legacyColorIssues, planLegacyColors, renameLegacyColors, usesLegacyColor, type LegacyColorPlan } from './legacy-colors';
 import { defaultWeights, findFont, fontSlug, withFontTokens, type DocumentFont } from './fonts';
-import { flattenTokens, mergeTokenGroups, type TokenGroup, type TokenSet } from './tokens';
+import { flattenTokens, mergeTokenGroups, resolvedTokenValues, type TokenGroup, type TokenSet } from './tokens';
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
 import {
   BREAKPOINTS,
@@ -599,15 +600,7 @@ export class GridDocument {
    * `base` (the defaults), the document's own tokens, then its fonts.
    */
   tokenSet(base: TokenSet = defaultTokens): TokenSet {
-    const set = withFontTokens(withDocumentTokens(base, this.getTokens()), this.getFonts());
-    const known = new Set(flattenTokens(set.tokens).map((t) => t.name));
-    const modes: Record<string, TokenGroup> = { ...base.modes };
-    for (const [name, overrides] of Object.entries(this.getThemes())) {
-      // A token removed after the theme overrode it is skipped, not brought back.
-      const entries = Object.fromEntries(Object.entries(overrides).filter(([path]) => known.has(path)));
-      modes[name] = mergeTokenGroups(modes[name] ?? {}, withDocumentTokens({ tokens: {} }, entries).tokens);
-    }
-    return { ...set, modes };
+    return composeTokenSet(base, this.getTokens(), this.getFonts(), this.getThemes());
   }
 
   /** The document's own themes, by name; built-in ones (`dark`) appear only once the document overrides them. */
@@ -622,11 +615,18 @@ export class GridDocument {
 
   /**
    * Creates theme `name` or changes its overrides (token path → value; null
-   * removes one). Themes override existing tokens only. All are checked first.
+   * removes one). Themes override existing tokens only, and not the old color
+   * names (`color.text`): set the role. All are checked first.
    */
   setTheme(name: string, entries: Readonly<Record<string, string | null>>, origin: Origin = ORIGIN_LOCAL): void {
+    this.writeTheme(name, entries, origin, false);
+  }
+
+  /** `setTheme`; opening a file (`legacy`) keeps the old names its themes set, so it renders as saved. */
+  private writeTheme(name: string, entries: Readonly<Record<string, string | null>>, origin: Origin, legacy: boolean): void {
     const current = this.themes.get(name) ?? {};
     const issues = themeIssues(name, entries, current, this.tokenSet());
+    if (!legacy) issues.push(...legacyColorIssues(entries, current, `${name}: `));
     if (!this.themes.has(name) && !this.getThemeNames().includes(name) && this.themes.size >= MAX_THEMES) {
       issues.push(`A document can have at most ${MAX_THEMES} themes`);
     }
@@ -664,13 +664,20 @@ export class GridDocument {
 
   /**
    * Adds or changes the document's own tokens; null removes one, bringing back
-   * the default it overrode, if any. All are checked before any changes.
+   * the default it overrode, if any. The old color names (`color.text`) can
+   * only be removed: set the role. All are checked before any changes.
    */
   setTokens(entries: Readonly<Record<string, string | null>>, origin: Origin = ORIGIN_LOCAL): void {
+    this.writeTokens(entries, origin, false);
+  }
+
+  /** `setTokens`; opening a file (`legacy`) keeps its old color names, so it renders as saved. */
+  private writeTokens(entries: Readonly<Record<string, string | null>>, origin: Origin, legacy: boolean): void {
     const base = withFontTokens(defaultTokens, this.getFonts());
     const current = this.getTokens();
     const themes = this.getThemes();
     const issues = [...documentTokenIssues(entries, current, base), ...themeCycleIssues(entries, current, base, themes)];
+    if (!legacy) issues.push(...legacyColorIssues(entries, current));
     // A token that stops existing can't still be referred to; themes' overrides of it go with it.
     const next: Record<string, string> = { ...current };
     for (const [path, value] of Object.entries(entries)) {
@@ -735,6 +742,130 @@ export class GridDocument {
       });
       return names.filter((name): name is string => name !== null);
     }, origin);
+  }
+
+  /** How many layers and token overrides still use the old color names (`var(--color-text)`). */
+  legacyColorUsage(): { layers: number; overrides: number } {
+    const layers = this.getNodes().filter((node) =>
+      [node.styles, ...Object.values(node.breakpoints ?? {})].some((styles) => Object.values(styles ?? {}).some((v) => v !== undefined && usesLegacyColor(v))),
+    ).length;
+    const legacyPaths = new Set(Object.keys(LEGACY_COLOR_ROLES).map((name) => `color.${name}`));
+    const overrides = [this.getTokens(), ...Object.values(this.getThemes())]
+      .flatMap((set) => Object.entries(set))
+      .filter(([path, value]) => legacyPaths.has(path) || usesLegacyColor(value)).length;
+    return { layers, overrides };
+  }
+
+  /**
+   * Moves the document onto the Material roles: overrides of the old color
+   * names (`color.text` in a theme) become overrides of their roles
+   * (`color.on-surface`), and layers and tokens that use an old name use the
+   * role, keeping their colors. An old name is left alone where moving it would
+   * change a color everywhere it's used (`planLegacyColors`); those come back in
+   * `skipped`. Layers that already used the role in a theme that set the old
+   * name take that value (a theme's accent reaching its primary buttons):
+   * `restyled` counts them. One undo step.
+   */
+  migrateLegacyColors(origin: Origin = ORIGIN_LOCAL): {
+    renamed: Record<string, ColorRole>;
+    skipped: { name: string; reason: string }[];
+    layers: number;
+    restyled: number;
+    themes: string[];
+  } {
+    const tokens = this.getTokens();
+    const themes = this.getThemes();
+    const effective = Object.fromEntries(
+      Object.entries(this.tokenSet().modes ?? {}).map(([name, group]) => [name, new Set(flattenTokens(group).map((t) => t.name))]),
+    );
+    // A moved value can refer to another role that moves too (border: {color.on-surface}
+    // while text moves onto on-surface). Check each old name resolves as its role did, in
+    // every theme, and keep the ones that wouldn't.
+    const before = this.tokenSet();
+    const keep: Record<string, string> = {};
+    let plan: LegacyColorPlan;
+    let after: TokenSet;
+    for (;;) {
+      plan = planLegacyColors(tokens, themes, effective, keep);
+      after = composeTokenSet(defaultTokens, plan.tokens, this.getFonts(), plan.themes);
+      const scopes = ['', ...new Set([...Object.keys(before.modes ?? {}), ...Object.keys(after.modes ?? {})])].map((mode) => ({
+        mode,
+        was: resolvedByVar(before, mode || undefined),
+        will: resolvedByVar(after!, mode || undefined),
+      }));
+      const kept = Object.keys(keep).length;
+      const where = (mode: string) => (mode ? `in the ${mode} theme` : 'in the document');
+      for (const [name, role] of Object.entries(LEGACY_COLOR_ROLES)) {
+        const moved = name in plan.renamed;
+        const scope = scopes.find(({ was, will }) => was.get(`color-${name}`) !== will.get(`color-${moved ? role : name}`));
+        if (!scope) continue;
+        if (moved) keep[name] ??= `its color would change ${where(scope.mode)}`;
+        else {
+          // Kept, yet it still changes: it refers to a role another old name moves onto. Keep that one.
+          const causes = Object.entries(plan.renamed).filter(([, r]) => scope.was.get(`color-${r}`) !== scope.will.get(`color-${r}`));
+          for (const [cause] of causes.length ? causes : Object.entries(plan.renamed)) keep[cause] ??= `moving it would recolor ${name} ${where(scope.mode)}`;
+        }
+      }
+      if (Object.keys(keep).length === kept) break;
+    }
+    const names = Object.keys(plan.renamed);
+    // The moved values were valid under their old names; check them as roles before writing anything.
+    const base = withFontTokens(defaultTokens, this.getFonts());
+    const tokenChanges = changes(tokens, plan.tokens);
+    const issues = [...documentTokenIssues(tokenChanges, tokens, base), ...themeCycleIssues(tokenChanges, tokens, base, plan.themes)];
+    const set = withFontTokens(withDocumentTokens(defaultTokens, plan.tokens), this.getFonts());
+    for (const [name, overrides] of Object.entries(plan.themes)) issues.push(...themeIssues(name, overrides, {}, set));
+    throwIssues(issues);
+    const changedThemes = Object.keys(themes).filter((name) => Object.keys(changes(themes[name]!, plan.themes[name]!)).length > 0);
+    // Layers that already used a role pick up the value its old name had (a theme's
+    // brand color reaching its primary buttons): count them, by each layer's theme.
+    const resolved = new Map<string, [Map<string, string>, Map<string, string>]>();
+    const valuesIn = (theme: string | undefined) => {
+      const key = theme ?? '';
+      if (!resolved.has(key)) resolved.set(key, [resolvedByVar(before, theme), resolvedByVar(after, theme)]);
+      return resolved.get(key)!;
+    };
+    const themeOf = (id: string): string | undefined => {
+      for (let node = this.getNode(id); node; node = node.parentId ? this.getNode(node.parentId) : undefined) if (node.theme) return node.theme;
+      return undefined;
+    };
+    let restyled = 0;
+    for (const node of this.getNodes()) {
+      const [was, will] = valuesIn(themeOf(node.id));
+      const values = [node.styles, ...Object.values(node.breakpoints ?? {})].flatMap((styles) => Object.values(styles ?? {}));
+      if (values.some((v) => v !== undefined && resolveTokenRefs(v, was) !== resolveTokenRefs(renameLegacyColors(v, names), will))) restyled++;
+    }
+    let layers = 0;
+    this.transact(() => {
+      for (const [path, value] of Object.entries(tokenChanges)) {
+        if (value === null) this.tokens.delete(path);
+        else this.tokens.set(path, value);
+      }
+      for (const name of changedThemes) this.themes.set(name, plan.themes[name]!);
+      for (const node of this.getNodes()) {
+        const rename = (styles: Partial<Record<string, string>> | undefined) =>
+          Object.fromEntries(
+            Object.entries(styles ?? {}).flatMap(([prop, value]) => {
+              const next = value === undefined ? value : renameLegacyColors(value, names);
+              return next !== value ? [[prop, next!]] : [];
+            }),
+          );
+        const styles = rename(node.styles);
+        const breakpoints = Object.fromEntries(
+          Object.entries(node.breakpoints ?? {}).flatMap(([bp, bpStyles]) => {
+            const patch = rename(bpStyles);
+            return Object.keys(patch).length ? [[bp, patch]] : [];
+          }),
+        );
+        if (Object.keys(styles).length === 0 && Object.keys(breakpoints).length === 0) continue;
+        const y = this.requireY(node.id);
+        const map = y.get('styles') as Y.Map<string>;
+        for (const [prop, value] of Object.entries(styles)) map.set(prop, value);
+        if (Object.keys(breakpoints).length > 0) writeBreakpoints(y, breakpoints);
+        layers++;
+      }
+    }, origin);
+    return { renamed: plan.renamed, skipped: plan.skipped, layers, restyled, themes: changedThemes };
   }
 
   getFonts(): DocumentFont[] {
@@ -1228,7 +1359,7 @@ export class GridDocument {
     while (entries.length) {
       const asked = Object.fromEntries(entries);
       const issues = [...documentTokenIssues(asked, this.getTokens(), base), ...themeCycleIssues(asked, this.getTokens(), base, this.getThemes())];
-      if (issues.length === 0) return this.setTokens(Object.fromEntries(entries), origin);
+      if (issues.length === 0) return this.writeTokens(Object.fromEntries(entries), origin, true);
       const kept = entries.filter(([path]) => !issues.some((i) => i.startsWith(`"${path}"`)));
       // An issue with no token named (too many tokens): import none.
       entries = kept.length < entries.length ? kept : [];
@@ -1251,7 +1382,7 @@ export class GridDocument {
         const kept = entries.filter(([path]) => !issues.some((i) => i.startsWith(`${name}: "${path}"`)));
         entries = kept.length < entries.length ? kept : [];
       }
-      this.setTheme(name, Object.fromEntries(entries), origin);
+      this.writeTheme(name, Object.fromEntries(entries), origin, true);
     }
   }
 
@@ -1402,6 +1533,42 @@ class PatchPlan {
   list(): PlannedPatch[] {
     return [...this.patches].map(([id, patch]) => ({ id, patch }));
   }
+}
+
+/** `base` with a document's tokens, fonts and themes: what `tokenSet` returns. */
+function composeTokenSet(
+  base: TokenSet,
+  tokens: Readonly<Record<string, string>>,
+  fonts: readonly DocumentFont[],
+  themes: Readonly<Record<string, Readonly<Record<string, string>>>>,
+): TokenSet {
+  const set = withFontTokens(withDocumentTokens(base, tokens), fonts);
+  const known = new Set(flattenTokens(set.tokens).map((t) => t.name));
+  const modes: Record<string, TokenGroup> = { ...base.modes };
+  for (const [name, overrides] of Object.entries(themes)) {
+    // A token removed after the theme overrode it is skipped, not brought back.
+    const entries = Object.fromEntries(Object.entries(overrides).filter(([path]) => known.has(path)));
+    modes[name] = mergeTokenGroups(modes[name] ?? {}, withDocumentTokens({ tokens: {} }, entries).tokens);
+  }
+  return { ...set, modes };
+}
+
+/** Each token's resolved value in `mode`, by custom property name (`color-primary`). */
+function resolvedByVar(set: TokenSet, mode: string | undefined): Map<string, string> {
+  return new Map([...resolvedTokenValues(set, mode)].map(([name, value]) => [name.replace(/\./g, '-'), value]));
+}
+
+/** `value` with every token it uses (`var(--color-primary)`) replaced by its resolved value. */
+function resolveTokenRefs(value: string, values: ReadonlyMap<string, string>): string {
+  return value.replace(/var\(--([\w-]+)\)/g, (ref, name: string) => values.get(name) ?? ref);
+}
+
+/** The entries that turn `from` into `to`: changed values, and null for each one removed. */
+function changes(from: Readonly<Record<string, string>>, to: Readonly<Record<string, string>>): Record<string, string | null> {
+  return {
+    ...Object.fromEntries(Object.keys(from).filter((path) => !(path in to)).map((path) => [path, null])),
+    ...Object.fromEntries(Object.entries(to).filter(([path, value]) => from[path] !== value)),
+  };
 }
 
 function writeBreakpoints(y: YNode, patch: NonNullable<NodePatch['breakpoints']>): void {

@@ -56,7 +56,7 @@ describe('MCP tools', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
-        'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'export_html', 'import_file',
+        'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'upgrade_color_names', 'export_html', 'import_file',
         'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens',
       ].sort(),
     );
@@ -573,12 +573,16 @@ describe('sync relay', () => {
   });
 
   it('sets document tokens that list_tokens, export and undo see', async () => {
-    const res = await call('set_tokens', { doc: 'tokens', tokens: { 'color.ember-500': '#c2410c', 'color.accent': '{color.ember-500}' } });
+    const res = await call('set_tokens', { doc: 'tokens', tokens: { 'color.ember-500': '#c2410c', 'color.primary': '{color.ember-500}' } });
     expect(res.isError).toBe(false);
     expect(res.data.set).toContainEqual({ name: 'color.ember-500', use: 'var(--color-ember-500)', value: '#c2410c' });
-    const listed = (await call('list_tokens', { doc: 'tokens', group: 'color' })).data.tokens as Array<{ name: string; value: string; document?: boolean }>;
-    expect(listed.find((t) => t.name === 'color.accent')).toMatchObject({ value: 'var(--color-ember-500)', document: true });
+    const listed = (await call('list_tokens', { doc: 'tokens', group: 'color' })).data.tokens as Array<{ name: string; value: string; use: string; document?: boolean; oldNameFor?: string }>;
+    expect(listed.find((t) => t.name === 'color.primary')).toMatchObject({ value: 'var(--color-ember-500)', document: true });
     expect(listed.find((t) => t.name === 'color.surface')?.document).toBeUndefined();
+    // The old names point agents at their roles, and can't be set.
+    expect(listed.find((t) => t.name === 'color.text')).toMatchObject({ use: 'var(--color-on-surface)', oldNameFor: 'color.on-surface' });
+    const legacy = await call('set_tokens', { doc: 'tokens', tokens: { 'color.accent': '#ff0000' } });
+    expect(legacy.text).toContain('"color.accent" is an old name for color.primary');
     const [page] = server.rooms.get('tokens').doc.getTree();
     expect((await call('export_html', { doc: 'tokens', id: page!.id })).text).toContain('--color-ember-500: #c2410c;');
 
@@ -593,14 +597,14 @@ describe('sync relay', () => {
   it('creates a theme with set_tokens, applies it with update_nodes, and removes it', async () => {
     const room = server.rooms.get('themes');
     const [page] = room.doc.getTree();
-    const res = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: { 'color.accent': '#c2410c', 'color.surface': '#fff7ed' } });
+    const res = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: { 'color.primary': '#c2410c', 'color.surface': '#fff7ed' } });
     expect(res.isError).toBe(false);
-    expect(res.data).toMatchObject({ theme: 'ember', set: [{ name: 'color.accent', value: '#c2410c' }, { name: 'color.surface', value: '#fff7ed' }] });
+    expect(res.data).toMatchObject({ theme: 'ember', set: [{ name: 'color.primary', value: '#c2410c' }, { name: 'color.surface', value: '#fff7ed' }] });
     const bad = await call('set_tokens', { doc: 'themes', theme: 'ember', tokens: { 'color.brand': '#111' } });
     expect(bad.text).toContain(`"color.brand" isn't a token`);
 
     const listed = (await call('list_tokens', { doc: 'themes', group: 'color' })).data;
-    expect(listed.themes.ember).toMatchObject({ 'color.accent': '#c2410c' });
+    expect(listed.themes.ember).toMatchObject({ 'color.primary': '#c2410c' });
     expect(listed.themes.dark['color.surface']).toMatch(/^#[0-9a-f]{6}$/);
 
     expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'nope' }] })).text).toContain('Unknown theme "nope"');
@@ -616,6 +620,22 @@ describe('sync relay', () => {
     expect(room.doc.getNode(page!.id)?.theme).toBeUndefined();
     await call('undo_agent_change', { doc: 'themes' });
     expect(room.doc.getNode(page!.id)?.theme).toBe('ember');
+  });
+
+  it('moves old color names onto the roles with upgrade_color_names', async () => {
+    const room = server.rooms.get('legacy-colors');
+    const [page] = room.doc.getTree();
+    // A document saved before the roles: a theme overriding color.text, a layer using it.
+    room.doc.loadSnapshot({ ...room.doc.toSnapshot(), themes: { smoky: { 'color.text': '#3d2e1f', 'color.surface': '#faf5ee' } } });
+    const title = room.doc.createNode({ type: 'text', parentId: page!.id, text: 'Stew', styles: { color: 'var(--color-text)' } });
+    const res = await call('upgrade_color_names', { doc: 'legacy-colors' });
+    expect(res.isError).toBe(false);
+    expect(res.data).toMatchObject({ renamed: { 'color.text': 'color.on-surface' }, themes: ['smoky'] });
+    expect(room.doc.getThemes().smoky).toEqual({ 'color.on-surface': '#3d2e1f', 'color.surface': '#faf5ee' });
+    expect(room.doc.getNode(title)?.styles.color).toBe('var(--color-on-surface)');
+    await call('undo_agent_change', { doc: 'legacy-colors' });
+    expect(room.doc.getThemes().smoky).toEqual({ 'color.text': '#3d2e1f', 'color.surface': '#faf5ee' });
+    expect(room.doc.getNode(title)?.styles.color).toBe('var(--color-text)');
   });
 
   it('warns when a themed frame has nothing the theme changes', async () => {

@@ -181,6 +181,8 @@ body {
 }
 .gf-style-row:not(:has(.gf-swatch)) { grid-template-columns: 68px minmax(0, 1fr) auto auto; }
 .gf-style-row + .gf-style-row { margin-top: 2px; }
+.gf-legacy-colors { display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ui-border); }
+.gf-style-hint { margin: 2px 0 6px 74px; color: var(--ui-text-muted); font-size: 11px; line-height: 1.35; }
 /* Font family rows have an extra button for the font picker. */
 .gf-style-row[data-style-prop="fontFamily"] { grid-template-columns: 68px minmax(0, 1fr) auto auto auto; }
 .gf-style-row[data-style-prop="fontFamily"] .gf-icon-btn[aria-label="Choose a font"] { font-size: 12px; font-weight: 600; }
