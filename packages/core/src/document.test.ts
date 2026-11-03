@@ -207,12 +207,13 @@ describe('tokens', () => {
     expect(issues({ 'font-family.x': 'Inter' })).toContain('add_fonts');
     expect(issues({ 'colour.x': '#fff' })).toContain('unknown group');
     expect(issues({ 'color.Ember': '#fff' })).toContain('kebab-case');
-    expect(issues({ 'color.neutral': '#fff' })).toContain('is a group');
+    doc.setTokens({ 'color.brand.500': '#c2410c' });
+    expect(issues({ 'color.brand': '#fff' })).toContain('is a group');
     expect(issues({ 'color.accent.soft': '#fff' })).toContain('is a token, not a group');
     expect(issues({ 'color.x': '{color.nope}' })).toContain("isn't a token");
     expect(issues({ 'color.x': '{space.4}' })).toContain('another color token');
     expect(issues({ 'color.a': '{color.b}', 'color.b': '{color.a}' })).toContain('in a circle');
-    expect(issues({ 'color.white': null })).toContain('nothing to remove');
+    expect(issues({ 'color.surface': null })).toContain('nothing to remove');
     expect(issues({ 'color.mix': 'color-mix(in oklab, var(--color-accent) 40%, white)', 'font-size.hero': 'clamp(40px, 6vw, 72px)' })).toBe('');
   });
 
@@ -308,7 +309,7 @@ describe('themes', () => {
     expect(issues('ember', { 'color.surface': '{color.nope}' })).toContain("isn't a token");
     expect(issues('ember', { 'color.primary': '{color.accent}' })).toContain('in a circle');
     expect(issues('ember', { 'color.surface': null })).toContain('nothing to remove');
-    expect(issues('ember', { 'color.surface': '{color.neutral.900}', 'space.4': '20px' })).toBe('');
+    expect(issues('ember', { 'color.surface': '{color.inverse-surface}', 'space.4': '20px' })).toBe('');
   });
 
   it('points the font roles at document fonts, per document and per theme', () => {
@@ -1294,6 +1295,28 @@ describe('old color names', () => {
     ]);
     expect(doc.getThemes().chain).toEqual({ 'color.text': '#111111', 'color.text-muted': '{color.on-surface}' });
     expect(resolvedTokenValues(doc.tokenSet(), 'chain').get('color.text-muted')).toBe(before);
+  });
+
+  it("gives a document that uses Weft's first palette those colors back as its own tokens", () => {
+    expect(flattenTokens(defaultTokens.tokens).some((t) => /^color\.(white|neutral|blue)/.test(t.name))).toBe(false);
+    // A saved document: a layer and a theme use retired colors.
+    const saved = new GridDocument();
+    const board = artboard(saved);
+    saved.createNode({ type: 'frame', parentId: board, styles: { color: 'var(--color-neutral-600)', borderColor: 'var(--color-white)' } });
+    const snapshot = { ...saved.toSnapshot(), themes: { night: { 'color.surface': '{color.neutral.900}', 'color.blue.600': '#60a5fa' } } };
+    const doc = new GridDocument();
+    doc.loadSnapshot(snapshot);
+    expect(doc.getTokens()).toEqual({ 'color.white': '#ffffff', 'color.neutral.600': '#475569', 'color.neutral.900': '#0f172a', 'color.blue.600': '#2563eb' });
+    expect(doc.getThemes().night).toEqual({ 'color.surface': '{color.neutral.900}', 'color.blue.600': '#60a5fa' });
+    // A stored live document (no snapshot) gets them when opened; nothing to add the second time.
+    const live = new GridDocument();
+    live.createNode({ type: 'frame', name: 'A', frame: { x: 0, y: 0, width: 100, height: 100 }, styles: { backgroundColor: 'var(--color-blue-700)' } });
+    expect(live.restoreRetiredColors()).toEqual(['color.blue.700']);
+    expect(live.restoreRetiredColors()).toEqual([]);
+    // A file brings them along too.
+    const other = new GridDocument();
+    other.importFile(readWeftFile(JSON.stringify(saved.toSnapshot())));
+    expect(other.getTokens()).toMatchObject({ 'color.neutral.600': '#475569', 'color.white': '#ffffff' });
   });
 
   it('reads old names in values, longest first', () => {

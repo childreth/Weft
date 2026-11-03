@@ -185,6 +185,7 @@ body {
 .gf-token-filter .gf-input { flex: 1; min-width: 0; }
 .gf-token-only { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ui-text-muted); white-space: nowrap; }
 .gf-token-group { margin-top: 4px; }
+.gf-token-source { padding: 8px 6px 3px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ui-text-muted); }
 .gf-token-group > summary { display: flex; align-items: baseline; gap: 6px; cursor: pointer; padding: 4px 0; font-size: 12px; font-weight: 600; }
 .gf-token-group > summary .gf-font-meta { margin-left: auto; }
 .gf-token-list { list-style: none; margin: 0 0 6px; padding: 0; }

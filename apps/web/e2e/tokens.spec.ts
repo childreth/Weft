@@ -38,6 +38,8 @@ test('the token picker binds a style to a role, a spacing token or a raw value, 
   await page.goto('/?ephemeral');
   await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
   const button = await page.evaluate(() => window.weft.doc.getNodes().find((n) => n.text === 'Get started')!.id);
+  // A document color of its own, beyond the roles.
+  await page.evaluate(() => window.weft.doc.setTokens({ 'color.brand': '#c2410c' }));
   const styles = () => page.evaluate((id) => window.weft.doc.getNode(id)!.styles, button);
   await page.evaluate((id) => window.weft.editor.getState().select([id]), button);
   const row = page.locator('[data-style-prop="backgroundColor"]').first();
@@ -50,11 +52,11 @@ test('the token picker binds a style to a role, a spacing token or a raw value, 
   await expect(names.first()).toHaveText('primary');
   const listed = await names.allTextContents();
   expect(listed).not.toContain('accent');
-  expect(listed).not.toContain('neutral.50');
+  expect(listed).not.toContain('brand');
   await expect(picker.getByRole('option', { name: /^primary-container/ })).toContainText('text: on-primary-container');
   await page.screenshot({ path: 'test-results/m4-token-picker.png' });
   await picker.getByRole('button', { name: /Other colors/ }).click();
-  await expect(picker.getByRole('option', { name: 'neutral.50' })).toBeVisible();
+  await expect(picker.getByRole('option', { name: 'brand' })).toBeVisible();
 
   // Search and the keyboard pick a role.
   await picker.getByLabel('Search tokens').fill('tertiary-con');
@@ -182,8 +184,14 @@ test('the Tokens section lists every token for the document or a theme, with wha
   await expect(colors.locator('[data-token="color.text"]')).toHaveCount(0);
 
   // A theme: its overrides come first and are marked; the rest resolve through it.
-  await panel.getByLabel('Tokens for').selectOption('ember');
-  await expect(colors.locator('li').first()).toHaveAttribute('data-token', 'color.primary');
+  await page.getByLabel('Document theme').selectOption('ember');
+  // One menu drives every document section: the Colors swatches resolve in it too.
+  await expect(page.getByTestId('inspector')).toHaveAttribute('data-theme', 'ember');
+  await expect(page.getByLabel('Text roles for')).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/m4-document-theme.png' });
+  await expect(colors.locator('.gf-token-item').first()).toHaveAttribute('data-token', 'color.primary');
+  // Headings say where each part comes from.
+  await expect(colors.locator('.gf-token-source')).toHaveText(['Set in ember', "Weft's defaults (same in every theme)"]);
   await expect(colors.locator('[data-token="color.primary"]')).toHaveClass(/is-set/);
   await expect(colors.locator('[data-token="color.primary"] .gf-token-value')).toHaveText('#c2410c');
   await expect(colors.locator('[data-token="color.on-surface"]')).not.toHaveClass(/is-set/);
@@ -195,10 +203,9 @@ test('the Tokens section lists every token for the document or a theme, with wha
   await expect(panel.locator('.gf-token-item')).toHaveCount(3);
   await panel.getByText('Set here (3)').click();
   await panel.getByLabel('Filter tokens').fill('surface-container');
-  await expect(colors.locator('li')).toHaveCount(5);
+  await expect(colors.locator('.gf-token-item')).toHaveCount(5);
   await panel.getByLabel('Filter tokens').fill('');
   await panel.scrollIntoViewIfNeeded();
-  await panel.getByLabel('Tokens for').scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/m4-token-table.png' });
   // No sideways scroll in the Inspector.
   expect(await page.getByTestId('inspector').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);

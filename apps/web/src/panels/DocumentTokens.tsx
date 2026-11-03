@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react';
 import { COLOR_ROLES, flattenTokens, legacyColorRole, resolvedTokenValues, type FlatToken } from '@weft/core';
 import { doc } from '../editor/editor';
 import { useDocTokens } from '../editor/fonts';
-import { Row } from './controls';
 
 type Source = 'theme' | 'document' | 'default';
 
 const ROLE_ORDER = new Map<string, number>(COLOR_ROLES.map((role, i) => [role, i]));
+const SOURCE_ORDER: Record<Source, number> = { theme: 0, document: 1, default: 2 };
 
 interface TokenRow {
   token: FlatToken;
@@ -26,11 +26,11 @@ function rawLabel(value: string): string {
 /**
  * Every token for the document or one theme, like a stylesheet's
  * `[data-theme]` block: what each resolves to there, and where it comes from.
- * What that level sets is marked and listed first in each group.
+ * What that level sets is marked and listed first in each group. `theme` is
+ * the Inspector's theme menu.
  */
-export function DocumentTokens() {
+export function DocumentTokens({ theme }: { theme: string }) {
   const tokens = useDocTokens();
-  const [theme, setTheme] = useState('');
   const [query, setQuery] = useState('');
   const [onlySet, setOnlySet] = useState(false);
   const themes = Object.keys(tokens.modes ?? {}).sort();
@@ -52,10 +52,9 @@ export function DocumentTokens() {
       const group = row.token.path[0]!;
       out.set(group, [...(out.get(group) ?? []), row]);
     }
-    // What this level sets first, then the rest; colors list the Material roles (in Material's order) before other colors.
-    const level: Source = active ? 'theme' : 'document';
-    const rank = (r: TokenRow) => (r.source === level ? 0 : 1) * 1000 + (ROLE_ORDER.get(r.label) ?? 500);
-    for (const [group, list] of out) out.set(group, group === 'color' ? [...list].sort((a, b) => rank(a) - rank(b)) : [...list.filter((r) => r.source === level), ...list.filter((r) => r.source !== level)]);
+    // By where each comes from (the theme, the document, Weft's defaults); colors list the Material roles (in Material's order) first.
+    const rank = (r: TokenRow) => SOURCE_ORDER[r.source] * 1000 + (ROLE_ORDER.get(r.label) ?? 500);
+    for (const [group, list] of out) out.set(group, [...list].sort((a, b) => rank(a) - rank(b) || (group === 'color' ? 0 : list.indexOf(a) - list.indexOf(b))));
     return out;
   }, [tokens, active]);
 
@@ -68,16 +67,6 @@ export function DocumentTokens() {
       <header className="gf-section-header">
         <h2>Tokens</h2>
       </header>
-      <Row label="For">
-        <select className="gf-input" aria-label="Tokens for" value={active} onChange={(e) => setTheme(e.target.value)}>
-          <option value="">Document</option>
-          {themes.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </Row>
       <div className="gf-token-filter">
         <input className="gf-input" aria-label="Filter tokens" placeholder="Filter tokens" value={query} spellCheck={false} onChange={(e) => setQuery(e.target.value)} />
         <label className="gf-token-only" title={active ? `Only the tokens ${active} sets` : "Only the document's own tokens"}>
@@ -99,9 +88,23 @@ export function DocumentTokens() {
               </span>
             </summary>
             <ul className="gf-token-list" aria-label={`${group} tokens`}>
-              {shown.map((r) => {
+              {shown.map((r, i) => {
                 const where = r.source === 'theme' ? `set in ${active}` : r.source === 'document' ? 'set in the document' : 'default';
-                return (
+                // A heading where the source changes: what's set here, then what's inherited.
+                const heading =
+                  i === 0 || shown[i - 1]!.source !== r.source
+                    ? r.source === 'theme'
+                      ? `Set in ${active}`
+                      : r.source === 'document'
+                        ? active ? 'From the document (same in every theme)' : "The document's own"
+                        : active ? "Weft's defaults (same in every theme)" : "Weft's defaults"
+                    : null;
+                return [
+                  heading && (
+                    <li key={`${r.source}-heading`} className="gf-token-source" role="presentation">
+                      {heading}
+                    </li>
+                  ),
                   <li
                     key={r.token.name}
                     className={`gf-token-item${r.source === level ? ' is-set' : ''}`}
@@ -111,8 +114,8 @@ export function DocumentTokens() {
                     {group === 'color' && <span className="gf-swatch" style={{ background: r.resolved }} />}
                     <span className="gf-token-name">{r.label}</span>
                     <span className="gf-token-value">{r.raw}</span>
-                  </li>
-                );
+                  </li>,
+                ];
               })}
             </ul>
           </details>

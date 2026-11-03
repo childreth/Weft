@@ -96,7 +96,7 @@ export function mergeTokenGroups(base: TokenGroup, overrides: TokenGroup): Token
 
 /**
  * CSS custom properties for a token set. Each mode (theme) block declares every
- * token, not just its overrides: an alias (`--color-accent: var(--color-blue-600)`)
+ * token, not just its overrides: an alias (`--color-brand: var(--color-primary)`)
  * is resolved where it's declared, so it must be declared again under the theme
  * for an override of what it points to to reach it.
  */

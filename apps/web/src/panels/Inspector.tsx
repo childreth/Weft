@@ -72,17 +72,40 @@ export function Inspector() {
   const tokens = useDocTokens();
   // Token values resolve inside the panel too, for swatches and font samples, in the selection's theme.
   const scopeCSS = useMemo(() => compileTokensCSS(tokens, '.gf-token-scope'), [tokens]);
-  const theme = useEffectiveTheme(selection.length === 1 ? selection[0] : undefined);
+  const selected = useEffectiveTheme(selection.length === 1 ? selection[0] : undefined);
+  // With nothing selected, one menu picks the theme the document sections show and edit.
+  const [docTheme, setDocTheme] = useState('');
+  const themes = Object.keys(tokens.modes ?? {}).sort();
+  const shown = themes.includes(docTheme) ? docTheme : '';
+  const theme = selection.length === 0 ? shown || undefined : selected;
   return (
     <aside className="gf-panel gf-inspector gf-token-scope" data-testid="inspector" data-theme={theme}>
       <style>{scopeCSS}</style>
       {selection.length === 0 && (
         <>
           <p className="gf-empty">Select a layer to inspect it.</p>
+          <section className="gf-section" data-testid="document-theme">
+            <Row label="Theme">
+              <select
+                className="gf-input"
+                aria-label="Document theme"
+                title="The theme the Colors, Type and Tokens sections show and edit"
+                value={shown}
+                onChange={(e) => setDocTheme(e.target.value)}
+              >
+                <option value="">Document</option>
+                {themes.map((name) => (
+                  <option key={name} value={name}>
+                    {themeLabel(name)}
+                  </option>
+                ))}
+              </select>
+            </Row>
+          </section>
           <DocumentFonts />
           <DocumentColors />
-          <DocumentType />
-          <DocumentTokens />
+          <DocumentType theme={shown} />
+          <DocumentTokens theme={shown} />
         </>
       )}
       {selection.length > 0 && <AlignSection ids={selection} />}

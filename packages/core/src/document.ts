@@ -4,7 +4,7 @@ import { createId } from './ids';
 import { defaultTokens } from './default-tokens';
 import { MAX_DOCUMENT_TOKENS, MAX_THEMES, documentTokenIssues, themeCycleIssues, themeIssues, themeNameIssue, withDocumentTokens } from './document-tokens';
 import { LEGACY_COLOR_ROLES, SCHEME_VARIANT_NAMES, materialScheme, schemeTokens, seedIssue, type ColorRole, type SchemeVariant } from './material';
-import { legacyColorIssues, planLegacyColors, renameLegacyColors, usesLegacyColor, type LegacyColorPlan } from './legacy-colors';
+import { legacyColorIssues, planLegacyColors, renameLegacyColors, retiredColorsIn, usesLegacyColor, type LegacyColorPlan } from './legacy-colors';
 import { defaultWeights, findFont, fontSlug, withFontTokens, type DocumentFont } from './fonts';
 import { flattenTokens, mergeTokenGroups, resolvedTokenValues, type TokenGroup, type TokenSet } from './tokens';
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
@@ -744,6 +744,18 @@ export class GridDocument {
     }, origin);
   }
 
+  /**
+   * Gives a document that still uses Weft's first palette (`var(--color-neutral-600)`)
+   * those colors back as its own tokens, with their old values, so it renders as
+   * saved. Opening a stored document runs it. Returns the tokens it added.
+   */
+  restoreRetiredColors(origin: Origin = ORIGIN_SEED): string[] {
+    const used = retiredColorsIn(JSON.stringify([this.getNodes(), this.getTokens(), this.getThemes()]));
+    const missing = Object.fromEntries(Object.entries(used).filter(([path]) => !this.tokens.has(path)));
+    if (Object.keys(missing).length) this.writeTokens(missing, origin, true);
+    return Object.keys(missing);
+  }
+
   /** How many layers and token overrides still use the old color names (`var(--color-text)`). */
   legacyColorUsage(): { layers: number; overrides: number } {
     const layers = this.getNodes().filter((node) =>
@@ -1342,7 +1354,8 @@ export class GridDocument {
     throwIssues(treeIssues(file.artboards));
     return this.transact(() => {
       if (file.fonts.length) this.addFonts(file.fonts, origin);
-      this.importTokens(file.tokens, origin);
+      // Retired default colors the file uses come along as tokens of their own.
+      this.importTokens({ ...retiredColorsIn(JSON.stringify(file)), ...file.tokens }, origin);
       this.importThemes(file.themes, origin);
       return this.insertTrees(file.artboards, { parentId: null }, origin);
     }, origin);
@@ -1413,7 +1426,9 @@ export class GridDocument {
       this.tokens.clear();
       this.themes.clear();
       if (snapshot.fonts?.length) this.addFonts(snapshot.fonts, origin);
-      if (snapshot.tokens) this.importTokens(snapshot.tokens, origin);
+      // Retired default colors the document uses come back as its own tokens.
+      const tokens = { ...retiredColorsIn(JSON.stringify(snapshot)), ...snapshot.tokens };
+      if (Object.keys(tokens).length) this.importTokens(tokens, origin);
       // Like a file's: overrides that aren't valid any more (a token removed since) are dropped.
       this.importThemes(snapshot.themes ?? {}, origin);
       const byParent = new Map<string | null, SceneNode[]>();

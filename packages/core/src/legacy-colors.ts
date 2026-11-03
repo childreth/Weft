@@ -123,3 +123,34 @@ export function planLegacyColors(
     themes: Object.fromEntries(Object.entries(themes).map(([theme, set]) => [theme, move(set)])),
   };
 }
+
+/**
+ * Weft's first palette (white, Tailwind's slate grays, three blues), no
+ * longer default tokens: designs use the roles. A document that still uses
+ * one gets it back as its own token, with the same value, so it renders as
+ * saved (`retiredColorsIn`, `GridDocument.restoreRetiredColors`).
+ */
+export const RETIRED_COLORS: Readonly<Record<string, string>> = {
+  'color.white': '#ffffff',
+  'color.neutral.50': '#f8fafc',
+  'color.neutral.100': '#f1f5f9',
+  'color.neutral.200': '#e2e8f0',
+  'color.neutral.400': '#94a3b8',
+  'color.neutral.600': '#475569',
+  'color.neutral.800': '#1e293b',
+  'color.neutral.900': '#0f172a',
+  'color.neutral.950': '#020617',
+  'color.blue.500': '#3b82f6',
+  'color.blue.600': '#2563eb',
+  'color.blue.700': '#1d4ed8',
+};
+
+/** The retired colors `text` (any JSON: styles, token values, theme keys) uses, by token path. */
+export function retiredColorsIn(text: string): Record<string, string> {
+  const used: Record<string, string> = {};
+  for (const m of text.matchAll(/--color-(white|neutral-\d+|blue-\d+)(?![\w-])|color\.(white|neutral\.\d+|blue\.\d+)(?![\w.-])/g)) {
+    const path = m[1] ? `color.${m[1].replace('-', '.')}` : `color.${m[2]}`;
+    if (path in RETIRED_COLORS) used[path] = RETIRED_COLORS[path]!;
+  }
+  return used;
+}
