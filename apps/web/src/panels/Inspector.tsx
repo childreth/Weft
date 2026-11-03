@@ -34,6 +34,7 @@ import { zoomToFit } from '../editor/viewport';
 import { AlignSection } from './AlignSection';
 import { CommitInput, Row, Section } from './controls';
 import { DocumentType, textRoleLabel } from './DocumentType';
+import { DocumentTokens } from './DocumentTokens';
 import { DocumentFonts, FontPicker, fontForValue, fontVar } from './FontPicker';
 import { StylePicker, styleLabel } from './StylePicker';
 import { TokenPicker, tokenOptions } from './TokenPicker';
@@ -81,6 +82,7 @@ export function Inspector() {
           <DocumentFonts />
           <DocumentColors />
           <DocumentType />
+          <DocumentTokens />
         </>
       )}
       {selection.length > 0 && <AlignSection ids={selection} />}

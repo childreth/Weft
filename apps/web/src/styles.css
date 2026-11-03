@@ -181,6 +181,18 @@ body {
 }
 .gf-style-row:not(:has(.gf-swatch)) { grid-template-columns: 68px minmax(0, 1fr) auto auto; }
 .gf-style-row + .gf-style-row { margin-top: 2px; }
+.gf-token-filter { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; }
+.gf-token-filter .gf-input { flex: 1; min-width: 0; }
+.gf-token-only { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ui-text-muted); white-space: nowrap; }
+.gf-token-group { margin-top: 4px; }
+.gf-token-group > summary { display: flex; align-items: baseline; gap: 6px; cursor: pointer; padding: 4px 0; font-size: 12px; font-weight: 600; }
+.gf-token-group > summary .gf-font-meta { margin-left: auto; }
+.gf-token-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.gf-token-item { display: grid; grid-template-columns: auto minmax(0, 1.6fr) minmax(0, 1fr); align-items: center; gap: 6px; padding: 2px 6px; border-left: 2px solid transparent; font-size: 11px; }
+.gf-token-item:not(:has(.gf-swatch)) { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+.gf-token-item.is-set { border-left-color: var(--ui-accent, #4f8cff); background: var(--ui-panel-2); }
+.gf-token-name, .gf-token-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-token-value { color: var(--ui-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .gf-legacy-colors { display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ui-border); }
 .gf-style-hint { margin: 2px 0 6px 74px; color: var(--ui-text-muted); font-size: 11px; line-height: 1.35; }
 /* Font family rows have an extra button for the font picker. */
