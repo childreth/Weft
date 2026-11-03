@@ -64,7 +64,7 @@ export function documentTokenIssues(
     else next[path] = value.trim();
   }
   const known = new Set(flattenTokens(withDocumentTokens(base, next).tokens).map((t) => t.name));
-  // A token can't replace a group (color.neutral) or sit inside a token (color.accent.soft).
+  // A token can't replace a group (color.brand, holding color.brand.500) or sit inside a token (color.accent.soft).
   const before = [...flattenTokens(withDocumentTokens(base, current).tokens).map((t) => t.name), ...Object.keys(entries)];
   const tokenNames = new Set(before);
   const groupNames = new Set(before.flatMap(groupsOf));
@@ -218,7 +218,7 @@ function aliasesOf(group: TokenGroup, path: string[] = []): Record<string, strin
   return out;
 }
 
-/** The groups a token sits in: `color.neutral.100` → `color`, `color.neutral`. */
+/** The groups a token sits in: `color.brand.500` → `color`, `color.brand`. */
 function groupsOf(name: string): string[] {
   const parts = name.split('.');
   return parts.slice(1).map((_, i) => parts.slice(0, i + 1).join('.'));

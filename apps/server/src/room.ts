@@ -57,7 +57,10 @@ export class Room {
   ) {
     const loaded = this.load();
     if (!loaded) seedLandingPage(this.doc);
-    else this.doc.repairGradients();
+    else {
+      this.doc.repairGradients();
+      this.doc.restoreRetiredColors();
+    }
     // The room itself is not a participant; agents get their own awareness clients.
     this.awareness.setLocalState(null);
 

@@ -38,6 +38,8 @@ test('the token picker binds a style to a role, a spacing token or a raw value, 
   await page.goto('/?ephemeral');
   await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
   const button = await page.evaluate(() => window.weft.doc.getNodes().find((n) => n.text === 'Get started')!.id);
+  // A document color of its own, beyond the roles.
+  await page.evaluate(() => window.weft.doc.setTokens({ 'color.brand': '#c2410c' }));
   const styles = () => page.evaluate((id) => window.weft.doc.getNode(id)!.styles, button);
   await page.evaluate((id) => window.weft.editor.getState().select([id]), button);
   const row = page.locator('[data-style-prop="backgroundColor"]').first();
@@ -50,11 +52,11 @@ test('the token picker binds a style to a role, a spacing token or a raw value, 
   await expect(names.first()).toHaveText('primary');
   const listed = await names.allTextContents();
   expect(listed).not.toContain('accent');
-  expect(listed).not.toContain('neutral.50');
+  expect(listed).not.toContain('brand');
   await expect(picker.getByRole('option', { name: /^primary-container/ })).toContainText('text: on-primary-container');
   await page.screenshot({ path: 'test-results/m4-token-picker.png' });
   await picker.getByRole('button', { name: /Other colors/ }).click();
-  await expect(picker.getByRole('option', { name: 'neutral.50' })).toBeVisible();
+  await expect(picker.getByRole('option', { name: 'brand' })).toBeVisible();
 
   // Search and the keyboard pick a role.
   await picker.getByLabel('Search tokens').fill('tertiary-con');
