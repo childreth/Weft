@@ -41,11 +41,11 @@ export function DocumentColors() {
           ))}
         </select>
       </Row>
-      <Row label="Theme">
+      <Row label="Name">
         <input
           className="gf-input"
           aria-label="New theme name"
-          placeholder="Document colors"
+          placeholder="New theme (optional)"
           value={theme}
           onChange={(e) => setTheme(e.target.value)}
         />

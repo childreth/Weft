@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { COLOR_ROLES, flattenTokens, legacyColorRole, resolvedTokenValues, type FlatToken } from '@weft/core';
 import { doc } from '../editor/editor';
 import { useDocTokens } from '../editor/fonts';
-import { Row } from './controls';
 
 type Source = 'theme' | 'document' | 'default';
 
@@ -27,11 +26,11 @@ function rawLabel(value: string): string {
 /**
  * Every token for the document or one theme, like a stylesheet's
  * `[data-theme]` block: what each resolves to there, and where it comes from.
- * What that level sets is marked and listed first in each group.
+ * What that level sets is marked and listed first in each group. `theme` is
+ * the Inspector's theme menu.
  */
-export function DocumentTokens() {
+export function DocumentTokens({ theme }: { theme: string }) {
   const tokens = useDocTokens();
-  const [theme, setTheme] = useState('');
   const [query, setQuery] = useState('');
   const [onlySet, setOnlySet] = useState(false);
   const themes = Object.keys(tokens.modes ?? {}).sort();
@@ -68,16 +67,6 @@ export function DocumentTokens() {
       <header className="gf-section-header">
         <h2>Tokens</h2>
       </header>
-      <Row label="For">
-        <select className="gf-input" aria-label="Tokens for" value={active} onChange={(e) => setTheme(e.target.value)}>
-          <option value="">Document</option>
-          {themes.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </Row>
       <div className="gf-token-filter">
         <input className="gf-input" aria-label="Filter tokens" placeholder="Filter tokens" value={query} spellCheck={false} onChange={(e) => setQuery(e.target.value)} />
         <label className="gf-token-only" title={active ? `Only the tokens ${active} sets` : "Only the document's own tokens"}>

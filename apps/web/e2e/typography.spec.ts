@@ -98,7 +98,7 @@ test('the Type panel changes a role for the document or one theme, and clearing 
   expect((await computed(page, posterH1!)).size).toBe('64px');
 
   // For one theme: only frames in that theme change, and the rest comes from the document.
-  await panel.getByLabel('Text roles for').selectOption('poster');
+  await page.getByLabel('Document theme').selectOption('poster');
   await expect(size).toHaveValue('64px');
   await size.fill('80px');
   await size.press('Enter');

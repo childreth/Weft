@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { TEXT_ROLES, TEXT_ROLE_GROUPS, resolvedTokenValues, type TextRole } from '@weft/core';
 import { doc, run } from '../editor/editor';
 import { useDocTokens } from '../editor/fonts';
-import { CommitInput, Row } from './controls';
+import { CommitInput } from './controls';
 
 export const textRoleLabel = (role: TextRole) => (role.length === 2 ? role.toUpperCase() : role.charAt(0).toUpperCase() + role.slice(1).replace('-', ' '));
 
@@ -14,12 +14,12 @@ const COLUMNS = [
 ] as const;
 
 /**
- * The text roles' values, for the document or one theme. A value set at that
- * level is highlighted; clearing it goes back to what it inherits.
+ * The text roles' values, for the document or one theme (`theme`, the
+ * Inspector's theme menu). A value set at that level is highlighted; clearing
+ * it goes back to what it inherits.
  */
-export function DocumentType() {
+export function DocumentType({ theme }: { theme: string }) {
   const tokens = useDocTokens();
-  const [theme, setTheme] = useState('');
   // Clearing a value that isn't set changes nothing, so the field is reset by hand.
   const [resets, setResets] = useState(0);
   const themes = Object.keys(tokens.modes ?? {}).sort();
@@ -37,16 +37,6 @@ export function DocumentType() {
       <header className="gf-section-header">
         <h2>Type</h2>
       </header>
-      <Row label="For">
-        <select className="gf-input" aria-label="Text roles for" value={active} onChange={(e) => setTheme(e.target.value)}>
-          <option value="">Document</option>
-          {themes.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </Row>
       <div className="gf-type-grid" role="group" aria-label="Text roles">
         <span />
         {COLUMNS.map((c) => (

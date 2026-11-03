@@ -184,7 +184,11 @@ test('the Tokens section lists every token for the document or a theme, with wha
   await expect(colors.locator('[data-token="color.text"]')).toHaveCount(0);
 
   // A theme: its overrides come first and are marked; the rest resolve through it.
-  await panel.getByLabel('Tokens for').selectOption('ember');
+  await page.getByLabel('Document theme').selectOption('ember');
+  // One menu drives every document section: the Colors swatches resolve in it too.
+  await expect(page.getByTestId('inspector')).toHaveAttribute('data-theme', 'ember');
+  await expect(page.getByLabel('Text roles for')).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/m4-document-theme.png' });
   await expect(colors.locator('.gf-token-item').first()).toHaveAttribute('data-token', 'color.primary');
   // Headings say where each part comes from.
   await expect(colors.locator('.gf-token-source')).toHaveText(['Set in ember', "Weft's defaults (same in every theme)"]);
@@ -202,7 +206,6 @@ test('the Tokens section lists every token for the document or a theme, with wha
   await expect(colors.locator('.gf-token-item')).toHaveCount(5);
   await panel.getByLabel('Filter tokens').fill('');
   await panel.scrollIntoViewIfNeeded();
-  await panel.getByLabel('Tokens for').scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/m4-token-table.png' });
   // No sideways scroll in the Inspector.
   expect(await page.getByTestId('inspector').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
