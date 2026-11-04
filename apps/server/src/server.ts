@@ -7,7 +7,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { AgentRoster, type AgentIdentity } from './agents';
-import { Assistant, SESSION_ID, ollamaUrlFrom, type AssistEvent, type ChatRequest } from './assist';
+import { Assistant, SESSION_ID, THINK_CHOICES, ollamaUrlFrom, type AssistEvent, type ChatRequest, type ThinkChoice } from './assist';
 import { MAX_SPOKEN_CHARS, Speech } from './speech';
 import { RemoteAccess } from './remote';
 import { AssetError, AssetStore } from './assets';
@@ -238,6 +238,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
           model: body.model,
           prompt: body.prompt.slice(0, 4000),
           selection: Array.isArray(body.selection) ? body.selection.filter((id): id is string => typeof id === 'string') : [],
+          think: THINK_CHOICES.includes(body.think as ThinkChoice) ? body.think : undefined,
         },
         emit,
         controller.signal,

@@ -369,6 +369,19 @@ body {
 .gf-assist-entry.is-failed, .gf-assist-entry.is-error { color: var(--ui-warn); }
 .gf-assist-tool-mark { display: inline-block; width: 16px; }
 .gf-assist-detail { display: block; margin-left: 16px; white-space: pre-wrap; word-break: break-word; }
+/* A step's reasoning: collapsed to one muted line, opened to read why the model chose its next call. */
+.gf-assist-entry.is-thinking { color: var(--ui-text-muted); font-size: 12px; }
+.gf-assist-entry.is-thinking summary { cursor: pointer; width: fit-content; }
+.gf-assist-entry.is-thinking summary:hover { color: var(--ui-text); }
+.gf-assist-thought {
+  margin: 4px 0 2px 4px;
+  padding-left: 10px;
+  border-left: 2px solid var(--ui-border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
 
 /* Fonts */
 .gf-icon-btn.is-active { background: var(--ui-accent-soft); color: var(--ui-text); }

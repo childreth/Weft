@@ -10,8 +10,10 @@ let replies: Array<Record<string, unknown>> = [];
 const requests: Array<{
   messages: Array<{ role: string; content: string; images?: string[] }>;
   tools: Array<{ function: { name: string; parameters: { properties?: object } } }>;
-  think?: boolean;
+  think?: boolean | string;
 }> = [];
+/** Makes the fake refuse an effort level, like a model that only takes on/off. */
+let refuseLevels = false;
 const spoken: Array<Record<string, unknown>> = [];
 let server: GridServer;
 const SESSION = 'test-session-1';
@@ -24,6 +26,7 @@ beforeAll(async () => {
           models: [
             { name: 'small:1b', size: 1, capabilities: ['completion', 'tools'] },
             { name: 'big:27b', size: 27, capabilities: ['completion', 'tools', 'thinking'] },
+            { name: 'gpt-oss:20b', size: 20, capabilities: ['completion', 'tools', 'thinking'] },
             { name: 'vision-only', size: 5, capabilities: ['completion', 'vision'] },
             { name: 'kimi:cloud', size: 100, capabilities: ['completion', 'tools', 'thinking'] },
             { name: 'qwen3-vl:235b-cloud', size: 200, remote_host: 'https://ollama.com:443', capabilities: ['completion', 'tools', 'vision'] },
@@ -52,7 +55,12 @@ beforeAll(async () => {
       spoken.push(body);
       return res.end('RIFF-fake-wav');
     }
-    requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+    const request = JSON.parse(Buffer.concat(chunks).toString());
+    if (refuseLevels && typeof request.think === 'string') {
+      res.statusCode = 400;
+      return res.end(JSON.stringify({ error: 'think value "high" is not supported for this model' }));
+    }
+    requests.push(request);
     res.end(JSON.stringify({ message: replies.shift() ?? { role: 'assistant', content: 'Done.' } }));
   });
   await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
@@ -76,11 +84,15 @@ async function chat(body: Record<string, unknown>): Promise<AssistEvent[]> {
 describe('assist', () => {
   it('lists tool-capable models: local ones largest first, then cloud ones', async () => {
     const res = await fetch(`${server.httpUrl}/assist/models`);
-    const { models } = (await res.json()) as { models: Array<{ name: string; thinking: boolean; cloud: boolean; vision: boolean }> };
-    expect(models.map((m) => m.name)).toEqual(['big:27b', 'small:1b', 'kimi:cloud', 'qwen3-vl:235b-cloud']);
-    expect(models.map((m) => m.cloud)).toEqual([false, false, true, true]);
-    expect(models[0]!.thinking).toBe(true);
-    expect(models[3]!.vision).toBe(true);
+    const { models } = (await res.json()) as {
+      models: Array<{ name: string; thinking: boolean; thinkLevels: boolean; cloud: boolean; vision: boolean }>;
+    };
+    expect(models.map((m) => m.name)).toEqual(['big:27b', 'gpt-oss:20b', 'small:1b', 'kimi:cloud', 'qwen3-vl:235b-cloud']);
+    expect(models.map((m) => m.cloud)).toEqual([false, false, false, true, true]);
+    expect(models.map((m) => m.thinking)).toEqual([true, true, false, true, false]);
+    // Only some families take an effort level.
+    expect(models.map((m) => m.thinkLevels)).toEqual([false, true, false, false, false]);
+    expect(models[4]!.vision).toBe(true);
   });
 
   it('gives cloud models the skill, screenshots when they can see, and their reasoning', async () => {
@@ -107,6 +119,50 @@ describe('assist', () => {
     expect(skill).toMatchObject({ role: 'tool' });
     expect(skill.content.length).toBeGreaterThan(8000);
     expect(skill.content).not.toContain('[Cut off:');
+  });
+
+  it('thinks as chosen: off, on, a level where the model takes one, and shows the reasoning', async () => {
+    const think = () => requests.at(-1)!.think;
+    await chat({ prompt: 'hi', model: 'big:27b', think: 'on' });
+    expect(think()).toBe(true);
+    await chat({ prompt: 'hi', model: 'kimi:cloud', think: 'off' });
+    expect(think()).toBe(false);
+    // A level means "on" for a model that doesn't take levels.
+    await chat({ prompt: 'hi', model: 'big:27b', think: 'high' });
+    expect(think()).toBe(true);
+    await chat({ prompt: 'hi', model: 'gpt-oss:20b', think: 'low' });
+    expect(think()).toBe('low');
+    // Models that can't think are never sent it, and junk is ignored.
+    await chat({ prompt: 'hi', model: 'small:1b', think: 'on' });
+    expect(think()).toBeUndefined();
+    await chat({ prompt: 'hi', model: 'big:27b', think: 'lots' });
+    expect(think()).toBe(false);
+
+    // A refused level falls back to plain on.
+    refuseLevels = true;
+    try {
+      await chat({ prompt: 'hi', model: 'gpt-oss:20b', think: 'high' });
+      expect(think()).toBe(true);
+    } finally {
+      refuseLevels = false;
+    }
+
+    // Each step's reasoning is streamed before its result, and isn't sent back to the model.
+    replies = [
+      { role: 'assistant', content: '', thinking: '  The user wants the canvas read first.  ', tool_calls: [{ function: { name: 'list_tokens', arguments: {} } }] },
+      { role: 'assistant', content: 'Nothing to change.', thinking: '' },
+    ];
+    const events = await chat({ prompt: 'look', model: 'big:27b', think: 'on' });
+    expect(events.map((e) => e.type)).toEqual(['thinking', 'tool', 'tool_result', 'message', 'done']);
+    expect(events[0]).toMatchObject({ type: 'thinking', text: 'The user wants the canvas read first.' });
+    expect(typeof (events[0] as { ms: number }).ms).toBe('number');
+    expect(JSON.stringify(requests.at(-1)!.messages)).not.toContain('canvas read first');
+
+    // An answer given only in the reasoning becomes the reply, not "Done.".
+    replies = [{ role: 'assistant', content: '', thinking: 'The button is #004ac6.' }];
+    const answered = await chat({ prompt: 'what color?', model: 'big:27b', think: 'on' });
+    expect(answered.map((e) => e.type)).toEqual(['message', 'done']);
+    expect(answered[0]).toEqual({ type: 'message', text: 'The button is #004ac6.' });
   });
 
   it('runs tool calls against the document and undoes the whole turn', async () => {
