@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { docName, mode, scene } from '../editor/editor';
-import { listModels, resetAssist, sendPrompt, undoAssistTurn, type AssistEvent, type AssistModel, type SpeechModel } from '../editor/assist';
+import { listModels, resetAssist, sendPrompt, undoAssistTurn, type AssistEvent, type AssistModel, type SpeechModel, type ThinkChoice } from '../editor/assist';
 import { speak, stopSpeaking, useSpeaking, voiceLabel, type SpeechChoice } from '../editor/speech';
 import { useEditor } from '../editor/store';
 import { Markdown } from './Markdown';
@@ -8,6 +8,7 @@ import { Markdown } from './Markdown';
 type Entry =
   | { kind: 'user'; text: string }
   | { kind: 'tool'; name: string; ok?: boolean; detail?: string }
+  | { kind: 'thinking'; text: string; ms: number }
   | { kind: 'reply'; text: string; id: string }
   | { kind: 'error'; text: string };
 
@@ -49,6 +50,21 @@ const remember = (key: string, value: string) => {
     // Not remembered.
   }
 };
+/** The thinking choice is kept per model under `<key>:<model>`. */
+const THINK_KEY = 'weft:assist-think';
+const THINK_LABELS: Record<ThinkChoice, string> = { off: 'Think: off', on: 'Think: on', low: 'Think: low', medium: 'Think: medium', high: 'Think: high' };
+const thinkOptions = (m: AssistModel): ThinkChoice[] => (m.thinkLevels ? ['off', 'low', 'medium', 'high'] : ['off', 'on']);
+/** A model's thinking choice: the one remembered for it, else off locally (fast small edits) and on in the cloud. */
+function thinkFor(m: AssistModel, wanted: string | null | undefined): ThinkChoice {
+  const options = thinkOptions(m);
+  if (options.includes(wanted as ThinkChoice)) return wanted as ThinkChoice;
+  // A choice made under the other kind of menu: "on" becomes a middle level, a level becomes "on".
+  if (wanted && wanted !== 'off') return m.thinkLevels ? 'medium' : 'on';
+  if (wanted === 'off' || !m.cloud) return 'off';
+  return m.thinkLevels ? 'medium' : 'on';
+}
+const seconds = (ms: number) => (ms < 1000 ? 'under a second' : `${Math.round(ms / 1000)}s`);
+
 const gb = (bytes: number) => (bytes > 0 ? ` · ${(bytes / 1e9).toFixed(1)} GB` : '');
 
 /** Copies a message's text (a reply's Markdown source), confirming briefly. */
@@ -122,6 +138,7 @@ function AssistPrompt() {
   const [speechModel, setSpeechModel] = useState(() => saved(SPEECH_MODEL_KEY));
   const [speakOn, setSpeakOn] = useState(() => saved(SPEAK_KEY) === 'on');
   const [voices, setVoices] = useState<Record<string, string>>({});
+  const [thinkChoices, setThinkChoices] = useState<Record<string, ThinkChoice>>({});
   const logRef = useRef<HTMLDivElement>(null);
   const replyIds = useRef(0);
   // A reply arrives mid-turn: read the speech choices as they are then, not when the prompt was sent.
@@ -177,6 +194,14 @@ function AssistPrompt() {
     remember(MODEL_KEY, name);
   };
 
+  const selected = models?.find((m) => m.name === model);
+  const think = selected?.thinking ? thinkFor(selected, thinkChoices[selected.name] ?? saved(`${THINK_KEY}:${selected.name}`)) : undefined;
+  const chooseThink = (choice: ThinkChoice) => {
+    if (!selected) return;
+    setThinkChoices((all) => ({ ...all, [selected.name]: choice }));
+    remember(`${THINK_KEY}:${selected.name}`, choice);
+  };
+
   const onEvent = (e: AssistEvent) => {
     const id = e.type === 'message' ? `reply-${replyIds.current++}` : '';
     if (e.type === 'message' && speakRef.current.on) speakReply(id, e.text);
@@ -184,6 +209,8 @@ function AssistPrompt() {
       switch (e.type) {
         case 'tool':
           return [...list, { kind: 'tool', name: e.name }];
+        case 'thinking':
+          return [...list, { kind: 'thinking', text: e.text, ms: e.ms }];
         case 'tool_result': {
           const at = list.findLastIndex((x) => x.kind === 'tool' && x.name === e.name && x.ok === undefined);
           if (at < 0) return list;
@@ -213,7 +240,7 @@ function AssistPrompt() {
     setOpen(true);
     setEntries((list) => [...list, { kind: 'user', text: prompt }]);
     try {
-      await sendPrompt({ doc: docName, model, prompt, selection: useEditor.getState().selection }, onEvent, controller.signal);
+      await sendPrompt({ doc: docName, model, prompt, selection: useEditor.getState().selection, ...(think && { think }) }, onEvent, controller.signal);
     } catch (err) {
       if (!controller.signal.aborted) onEvent({ type: 'error', message: (err as Error).message });
     } finally {
@@ -237,7 +264,7 @@ function AssistPrompt() {
     setCanUndo(false);
   };
 
-  const cloud = !!models?.find((m) => m.name === model)?.cloud;
+  const cloud = !!selected?.cloud;
   const local = models?.filter((m) => !m.cloud) ?? [];
   const remote = models?.filter((m) => m.cloud) ?? [];
   const target =
@@ -248,7 +275,12 @@ function AssistPrompt() {
       {open && entries.length > 0 && (
         <div className="gf-assist-log" ref={logRef} data-testid="assist-log">
           {entries.map((entry, i) =>
-            entry.kind === 'reply' || entry.kind === 'user' ? (
+            entry.kind === 'thinking' ? (
+              <details key={i} className="gf-assist-entry is-thinking">
+                <summary>Thought for {seconds(entry.ms)}</summary>
+                <div className="gf-assist-thought">{entry.text}</div>
+              </details>
+            ) : entry.kind === 'reply' || entry.kind === 'user' ? (
               <div key={i} className={`gf-assist-message is-${entry.kind}`}>
                 <div className={`gf-assist-entry is-${entry.kind}`}>{entry.kind === 'reply' ? <Markdown text={entry.text} /> : entry.text}</div>
                 <div className="gf-assist-actions">
@@ -340,6 +372,22 @@ function AssistPrompt() {
                   ))}
                 </optgroup>
               )}
+            </select>
+          )}
+          {selected?.thinking && think && (
+            <select
+              className="gf-assist-model gf-assist-think"
+              aria-label="Thinking"
+              title="Reasoning before each step: slower, but better at harder changes"
+              value={think}
+              disabled={!!running}
+              onChange={(e) => chooseThink(e.target.value as ThinkChoice)}
+            >
+              {thinkOptions(selected).map((o) => (
+                <option key={o} value={o}>
+                  {THINK_LABELS[o]}
+                </option>
+              ))}
             </select>
           )}
           {cloud && (

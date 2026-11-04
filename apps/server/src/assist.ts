@@ -62,10 +62,21 @@ interface ChatMessage {
   images?: string[];
 }
 
+/** How much a thinking model reasons: off/on, or an effort level for models that take one. */
+export const THINK_CHOICES = ['off', 'on', 'low', 'medium', 'high'] as const;
+export type ThinkChoice = (typeof THINK_CHOICES)[number];
+/**
+ * Families whose `think` takes an effort level. Ollama reports only that a
+ * model thinks; any other thinking model treats a level as plain "on".
+ */
+const THINK_LEVEL_MODELS = /^(gpt-oss|granite4\.2)\b/;
+
 export interface AssistModel {
   name: string;
   size: number;
   thinking: boolean;
+  /** `think` takes low/medium/high rather than only on/off. */
+  thinkLevels: boolean;
   vision: boolean;
   /** Runs on ollama.com through the local daemon: needs a network and sends the prompt off the machine. */
   cloud: boolean;
@@ -75,6 +86,8 @@ export interface AssistModel {
 export type AssistEvent =
   | { type: 'tool'; name: string; args: Record<string, unknown> }
   | { type: 'tool_result'; name: string; ok: boolean; text: string }
+  /** A step's reasoning, when thinking is on, and how long that step took. */
+  | { type: 'thinking'; text: string; ms: number }
   | { type: 'message'; text: string }
   | { type: 'error'; message: string }
   | { type: 'done'; edits: number };
@@ -98,6 +111,16 @@ export interface ChatRequest {
   model: string;
   prompt: string;
   selection?: string[];
+  /** Left out: local models don't think (slow for small edits), cloud models use Ollama's default. */
+  think?: ThinkChoice;
+}
+
+/** Ollama's `think` for a request, or undefined to leave it out. */
+export function thinkParam(info: Pick<AssistModel, 'thinking' | 'thinkLevels' | 'cloud'> | undefined, choice: ThinkChoice | undefined): boolean | string | undefined {
+  if (!info?.thinking) return undefined;
+  if (choice === undefined) return info.cloud ? undefined : false;
+  if (choice === 'off' || choice === 'on') return choice === 'on';
+  return info.thinkLevels ? choice : true;
 }
 
 function toOllamaTool(tool: { name: string; description?: string; inputSchema: Record<string, unknown> }): OllamaTool {
@@ -182,6 +205,7 @@ export class Assistant {
         name: m.name,
         size: m.size ?? 0,
         thinking: !!m.capabilities?.includes('thinking'),
+        thinkLevels: !!m.capabilities?.includes('thinking') && THINK_LEVEL_MODELS.test(m.name),
         vision: !!m.capabilities?.includes('vision'),
         cloud: !!m.remote_host || /[:-]cloud$/.test(m.name),
       }))
@@ -249,18 +273,26 @@ ${selection}`;
       const tools = toolsFor(session.tools, info);
       // Snapshot the selection once: re-reading it after edits makes models think their change was already there.
       const system = this.systemPrompt(req, info);
+      /** One model call: its reasoning is shown, not kept in the history sent back. */
+      const ask = async (prompt: string, offered?: OllamaTool[]): Promise<ChatMessage> => {
+        const started = Date.now();
+        const { reply, thinking } = await this.complete(session, req.model, info, prompt, signal, offered, req.think);
+        // Some models (Qwen 3.5) put a final answer only in their reasoning: that is the reply then.
+        if (!reply.content.trim() && !reply.tool_calls) reply.content = thinking;
+        else if (thinking) emit({ type: 'thinking', text: thinking, ms: Date.now() - started });
+        session.history.push(reply);
+        return reply;
+      };
       const seen = new Set<string>();
       let repeats = 0;
       for (let step = 0; step < MAX_STEPS; step++) {
         if (repeats >= MAX_REPEATS) {
           // A looping model ignores "you already made this call"; without tools it has to answer.
-          const reply = await this.complete(session, req.model, info, `${system}\n\n${ANSWER_NOW}`, signal);
-          session.history.push(reply);
+          const reply = await ask(`${system}\n\n${ANSWER_NOW}`);
           emit({ type: 'message', text: reply.content.trim() || 'Done.' });
           return;
         }
-        const reply = await this.complete(session, req.model, info, system, signal, tools);
-        session.history.push(reply);
+        const reply = await ask(system, tools);
         const calls = reply.tool_calls ?? [];
         if (calls.length === 0) {
           emit({ type: 'message', text: reply.content.trim() || 'Done.' });
@@ -309,24 +341,32 @@ ${selection}`;
     system: string,
     signal: AbortSignal,
     tools?: OllamaTool[],
-  ): Promise<ChatMessage> {
-    const res = await fetch(`${this.ollamaUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      signal,
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'system', content: system }, ...recent(session.history)],
-        ...(tools && { tools }),
-        stream: false,
-        // Reasoning makes local models far slower for small edits; cloud models keep it.
-        ...(info?.thinking && !info.cloud && { think: false }),
-        options: { temperature: 0.2 },
-      }),
-    });
+    choice?: ThinkChoice,
+  ): Promise<{ reply: ChatMessage; thinking: string }> {
+    const send = (think: boolean | string | undefined) =>
+      fetch(`${this.ollamaUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        signal,
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'system', content: system }, ...recent(session.history)],
+          ...(tools && { tools }),
+          stream: false,
+          ...(think !== undefined && { think }),
+          options: { temperature: 0.2 },
+        }),
+      });
+    const think = thinkParam(info, choice);
+    let res = await send(think);
+    // A model that turns out not to take a level still thinks with plain "on".
+    if (!res.ok && typeof think === 'string') res = await send(true);
     if (!res.ok) throw new Error(`Ollama: ${(await res.text()).slice(0, 300) || res.status}`);
-    const { message } = (await res.json()) as { message: ChatMessage };
-    return { role: 'assistant', content: message.content ?? '', ...(message.tool_calls?.length && { tool_calls: message.tool_calls }) };
+    const { message } = (await res.json()) as { message: ChatMessage & { thinking?: string } };
+    return {
+      reply: { role: 'assistant', content: message.content ?? '', ...(message.tool_calls?.length && { tool_calls: message.tool_calls }) },
+      thinking: message.thinking?.trim() ?? '',
+    };
   }
 
   private async callTool(

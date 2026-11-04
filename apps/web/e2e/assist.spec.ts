@@ -100,6 +100,71 @@ test('cloud models are grouped apart, never picked by default, and flagged when 
   await page.screenshot({ path: 'test-results/m3-assist-cloud.png' });
 });
 
+test('thinking models get a Thinking menu (levels where the model takes them), remembered per model; reasoning folds into the log', async ({ page }) => {
+  const bodies: Array<Record<string, unknown>> = [];
+  await page.route('**/assist/chat', (route) => {
+    bodies.push(route.request().postDataJSON());
+    const events = [
+      { type: 'thinking', text: 'The headline is the h1 in Hero. A theme font change belongs in set_tokens, not on the layer.', ms: 4200 },
+      { type: 'tool', name: 'list_tokens', args: {} },
+      { type: 'tool_result', name: 'list_tokens', ok: true, text: '{}' },
+      { type: 'message', text: 'Pointed the theme’s heading font at Comic Neue.' },
+      { type: 'done', edits: 1 },
+    ];
+    return route.fulfill({ contentType: 'application/x-ndjson', body: events.map((e) => JSON.stringify(e)).join('\n') + '\n' });
+  });
+  const granite = { name: 'granite4.2:8b', size: 5.3e9, thinking: true, thinkLevels: true, vision: false, cloud: false };
+  const cloud = { name: 'kimi-k3:cloud', size: 0, thinking: true, thinkLevels: false, vision: false, cloud: true };
+  await open(page, { json: { models: [granite, ...MODELS.json.models.map((m) => ({ ...m, thinkLevels: false })), cloud] } });
+  const model = page.getByLabel('Assist model');
+  const thinking = page.getByLabel('Thinking');
+
+  // Local models start with thinking off; a model that takes levels offers them.
+  await expect(model).toHaveValue('granite4.2:8b');
+  await expect(thinking).toHaveValue('off');
+  await expect(thinking.locator('option')).toHaveText(['Think: off', 'Think: low', 'Think: medium', 'Think: high']);
+  await thinking.selectOption('high');
+
+  // Other thinking models offer on/off; cloud ones start on; models that can't think have no menu.
+  await model.selectOption('qwen3.8:27b-mlx');
+  await expect(thinking.locator('option')).toHaveText(['Think: off', 'Think: on']);
+  await expect(thinking).toHaveValue('off');
+  await model.selectOption('kimi-k3:cloud');
+  await expect(thinking).toHaveValue('on');
+  await model.selectOption('granite4.1:3b');
+  await expect(thinking).toHaveCount(0);
+
+  // Each model keeps its choice, and the prompt carries it.
+  await model.selectOption('granite4.2:8b');
+  await expect(thinking).toHaveValue('high');
+  await page.getByLabel('Ask the model').fill('use comic sans for the bubblegum headline');
+  await page.getByLabel('Ask the model').press('Enter');
+  const log = page.getByTestId('assist-log');
+  await expect(log).toContainText('Pointed the theme’s heading font at Comic Neue.');
+  expect(bodies[0]).toMatchObject({ model: 'granite4.2:8b', think: 'high' });
+
+  // Reasoning shows as one collapsed line that opens.
+  const thought = log.locator('.is-thinking');
+  await expect(thought.locator('summary')).toHaveText('Thought for 4s');
+  await expect(thought.locator('.gf-assist-thought')).toBeHidden();
+  await thought.locator('summary').click();
+  await expect(thought.locator('.gf-assist-thought')).toContainText('belongs in set_tokens');
+  await page.screenshot({ path: 'test-results/m3-assist-thinking.png' });
+
+  // A model that can't think is never sent a choice.
+  await model.selectOption('granite4.1:3b');
+  await page.getByLabel('Ask the model').fill('again');
+  await page.getByLabel('Ask the model').press('Enter');
+  await expect.poll(() => bodies.length).toBe(2);
+  expect(bodies[1]).not.toHaveProperty('think');
+
+  // The choice survives a reload.
+  await page.reload();
+  await expect(page.getByLabel('Assist model')).toHaveValue('granite4.1:3b');
+  await page.getByLabel('Assist model').selectOption('granite4.2:8b');
+  await expect(page.getByLabel('Thinking')).toHaveValue('high');
+});
+
 /** A silent WAV, so the browser has something real to play. */
 function silentWav(ms = 200): Buffer {
   const rate = 24000;
