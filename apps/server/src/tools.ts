@@ -60,7 +60,7 @@ Model:
 - styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required ("" if decorative); remote URLs aren't loaded, and agents can't add image files yet. Fonts: any Google Font via search_fonts → add_fonts, then point a role at it with set_tokens {"font-family.heading": "{font-family.<slug>}"} (and font-family.body) and set fontFamily var(--font-family-heading) / var(--font-family-body). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Text roles work like the color roles: ${TEXT_ROLES.join(', ')}. A role is its tokens: var(--font-size-<role>), var(--font-weight-<role>), var(--line-height-<role>), var(--letter-spacing-<role>), with var(--font-family-heading) on headings and var(--font-family-body) otherwise. body-lg is lead text, body-md the default, body-sm secondary text, label for buttons and form labels, caption for what explains something else. A node with a heading tag, button, label, figcaption or small starts with its role; styles you pass win. For other text, set the role's styles. Change a role with set_tokens ("font-size.h1": "64px"), for the document or a theme, not layer by layer.\n- Prefer design tokens over raw values: var(--space-4), var(--color-primary), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
-- Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). Older designs may use Weft's first names (var(--color-text), --color-accent, --color-border…): aliases of roles, never to be added or set; upgrade_color_names moves a document onto the roles. For a brand palette, set_tokens with "seed" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.
+- Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). For a brand palette, set_tokens with "seed" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), or change roles in one with "tokens" and "theme".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
@@ -761,7 +761,7 @@ export function createMcpServer(
     {
       title: 'List design tokens',
       description:
-        'Lists design tokens with the CSS value to use in styles, e.g. "var(--space-4)". Tokens with "oldNameFor" (color.text, color.accent…) are Weft\'s first color names, aliases of a Material role kept for old designs: use the role.',
+        'Lists design tokens with the CSS value to use in styles, e.g. "var(--space-4)".',
       inputSchema: {
         doc: docParam,
         group: z.string().optional().describe('Filter by top-level group: color, space, radius, font-family, font-size, …'),
@@ -774,19 +774,15 @@ export function createMcpServer(
       const own = document.getTokens();
       const set = document.tokenSet();
       const tokens = flattenTokens(set.tokens)
-        .filter((t) => !group || t.path[0] === group)
-        .map((t) => {
-          // An old name (color.text) points agents at its role: layers should use that.
-          const role = legacyColorRole(t.name);
-          return {
-            name: t.name,
-            use: role ? `var(--color-${role})` : `var(${t.cssVar})`,
-            type: t.type,
-            value: t.value,
-            ...(t.name in own && { document: true }),
-            ...(role && { oldNameFor: `color.${role}` }),
-          };
-        });
+        // Weft's first color names (color.text…) are aliases kept for rendering only: agents use the roles.
+        .filter((t) => (!group || t.path[0] === group) && !legacyColorRole(t.name))
+        .map((t) => ({
+          name: t.name,
+          use: `var(${t.cssVar})`,
+          type: t.type,
+          value: t.value,
+          ...(t.name in own && { document: true }),
+        }));
       // Each theme's overrides; a frame with that theme uses them in place of the values above.
       const themes = Object.fromEntries(
         Object.entries(set.modes ?? {}).map(([name, overrides]) => [
@@ -851,24 +847,6 @@ export function createMcpServer(
           set: paths.filter((p) => tokens[p] !== null).map((p) => ({ name: p, use: `var(${flat.get(p)!.cssVar})`, value: flat.get(p)!.value })),
           ...(paths.some((p) => tokens[p] === null) && { removed: paths.filter((p) => tokens[p] === null) }),
         };
-      });
-    },
-  );
-
-  server.registerTool(
-    'upgrade_color_names',
-    {
-      title: 'Move old color names onto the roles',
-      description:
-        "Moves a document off Weft's first color names (color.text, color.accent, color.border…, older designs' var(--color-text)) onto the Material roles they stand for: themes' and the document's overrides of an old name become overrides of its role (color.on-surface), and layers use the role. Layers using an old name keep their colors (an old name whose move would change one is skipped, with the reason); restyled counts layers that already used a role in a theme that set the old name, which now take the theme's color (its accent reaching its primary buttons). One undoable step.",
-      inputSchema: { doc: docParam, model: modelParam },
-    },
-    async ({ doc, model }) => {
-      const { room, agent } = open(doc, model);
-      return mutate(room, agent, 'upgrade_color_names', (_touched, report) => {
-        report.action = 'Moving old color names onto the roles';
-        const result = room.doc.migrateLegacyColors(agent.identity.origin);
-        return { renamed: Object.fromEntries(Object.entries(result.renamed).map(([old, role]) => [`color.${old}`, `color.${role}`])), layers: result.layers, restyled: result.restyled, themes: result.themes, ...(result.skipped.length && { skipped: result.skipped }) };
       });
     },
   );
