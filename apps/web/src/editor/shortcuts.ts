@@ -2,6 +2,7 @@ import type { Alignment, Axis } from '@weft/core';
 import { doc, history, run, scene } from './editor';
 import { useEditor } from './store';
 import { zoomBy, zoomTo, zoomToFit, zoomToSelection } from './viewport';
+import { interactingArtboard } from '../canvas/interact';
 
 const ALIGN_KEYS: Record<string, Alignment> = {
   KeyA: 'left', KeyH: 'center', KeyD: 'right', KeyW: 'top', KeyV: 'middle', KeyS: 'bottom',
@@ -17,7 +18,9 @@ export function outermost(ids: readonly string[]): string[] {
   });
 }
 
+/** Typing into a field, or keys meant for an artboard in interact mode (a focused button, a select). */
 export function isTyping(e: Event): boolean {
+  if (interactingArtboard(e)) return true;
   const target = e.composedPath()[0];
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);

@@ -61,6 +61,8 @@ interface EditorState {
   agentActivity: AgentActivity | null;
   /** Layers collapsed in the layers panel. */
   collapsed: ReadonlySet<string>;
+  /** Artboards in interact mode: the canvas steps aside so they work like a page. This viewer only. */
+  interacting: ReadonlySet<string>;
   setTool(tool: Tool): void;
   setCamera(camera: Camera): void;
   /** Zoom by `factor` keeping the screen point (px, py) fixed. */
@@ -76,6 +78,7 @@ interface EditorState {
   setCollapsed(id: string, collapsed: boolean): void;
   /** Collapses these layers and expands every other (⌥L passes every layer with children). */
   collapseOnly(ids: Iterable<string>): void;
+  setInteracting(id: string, on: boolean): void;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -93,6 +96,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   collaborators: [],
   agentActivity: null,
   collapsed: new Set(),
+  interacting: new Set(),
   setTool: (tool) => set({ tool }),
   setCamera: (camera) => set({ camera }),
   zoomAt: (px, py, factor) => {
@@ -117,4 +121,11 @@ export const useEditor = create<EditorState>()((set, get) => ({
     set({ collapsed: next });
   },
   collapseOnly: (ids) => set({ collapsed: new Set(ids) }),
+  setInteracting: (id, on) => {
+    if (get().interacting.has(id) === on) return;
+    const next = new Set(get().interacting);
+    if (on) next.add(id);
+    else next.delete(id);
+    set({ interacting: next });
+  },
 }));
