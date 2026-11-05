@@ -50,6 +50,13 @@ Removing generic devices isn't enough: a page with every tell taken out and noth
 - Left-aligned by default. Centering is a decision for one moment, not the default for every heading, paragraph and button stack.
 - Empty space should be placed, not left over: if one half of a section is empty, or a gap is taller than half a screen, fill it with the main element or close it up.
 
+## States
+
+- Links, buttons and fields get `states`: `hover` (a tone step, e.g. `primary` to a slightly different container role, or an underline), `focus` (a visible ring: `outline` 2px in `primary` with `outlineOffset` 2px; never remove focus without a replacement) and `active` (pressed: a deeper tone or `transform: scale(0.98)`).
+- Keep state changes small and on the element itself: color, background, shadow, underline. Don't change size or layout on hover; neighbors would jump.
+- Add `transition` to the base styles for the properties that change (`background-color 150ms ease, box-shadow 150ms ease`), 100–200ms. Not `all`.
+- Screenshots show the resting state; the user tries the others with the artboard's Interact toggle.
+
 ## Generic tells
 
 These read as generated because tools produce them by default. Avoid them unless the user's direction calls for them: then they're the brand, not a tell.

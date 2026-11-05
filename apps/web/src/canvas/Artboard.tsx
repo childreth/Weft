@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { ARTBOARD_RESET_CSS, compileBreakpointCSS, compileTokensCSS, type SceneNode } from '@weft/core';
+import { ARTBOARD_RESET_CSS, compileBreakpointCSS, compileStateCSS, compileTokensCSS, type SceneNode } from '@weft/core';
 import { scene, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { zoomTo } from '../editor/viewport';
@@ -134,8 +134,10 @@ function ClipMarker({ root }: { root: ShadowRoot }) {
 }
 
 /**
- * Breakpoint overrides for one artboard. They key off the artboard's own
- * width (a container query), so resizing an artboard previews the breakpoint.
+ * Breakpoint and state overrides for one artboard. Breakpoints key off the
+ * artboard's own width (a container query), so resizing an artboard previews
+ * them. Real states (:hover…) apply only in interact mode, so editing doesn't
+ * flicker through them; the Inspector's Preview forces one on a layer.
  */
 function BreakpointStyles({ rootId }: { rootId: string }) {
   const getCSS = useMemo(() => {
@@ -152,7 +154,12 @@ function BreakpointStyles({ rootId }: { rootId: string }) {
           if (node) subtree.push(node);
           stack.push(...scene.children(id));
         }
-        css = compileBreakpointCSS(subtree, (w) => `@container artboard (max-width: ${w}px)`);
+        css = [
+          compileBreakpointCSS(subtree, (w) => `@container artboard (max-width: ${w}px)`),
+          compileStateCSS(subtree, { scope: ':host([data-interact])', preview: (state) => `[data-gf-preview="${state}"]` }),
+        ]
+          .filter(Boolean)
+          .join('\n');
       }
       return css;
     };

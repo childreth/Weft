@@ -233,6 +233,8 @@ export const STYLE_PROP_META = {
   objectFit: { group: 'effects', options: ['fill', 'contain', 'cover', 'none', 'scale-down'] },
   objectPosition: { group: 'effects' },
   cursor: { group: 'effects', options: ['auto', 'default', 'pointer', 'text', 'not-allowed'] },
+  /** For states: e.g. background-color 150ms ease. */
+  transition: { group: 'effects' },
   accentColor: { group: 'forms', tokenGroups: COLOR },
   caretColor: { group: 'forms', tokenGroups: COLOR },
   appearance: { group: 'forms', options: ['auto', 'none'] },
@@ -278,6 +280,24 @@ export function isBreakpointId(key: string): key is BreakpointId {
   return (BREAKPOINT_IDS as string[]).includes(key);
 }
 
+/**
+ * Interaction states. A node's override styles for a state apply while the
+ * element is in it (export: the selector; canvas: only while the artboard is
+ * in interact mode, or when previewed). Later entries win when several apply.
+ */
+export const STATES = [
+  { id: 'hover', label: 'Hover', selector: ':hover' },
+  { id: 'focus', label: 'Focus', selector: ':focus-visible' },
+  { id: 'active', label: 'Pressed', selector: ':active' },
+] as const;
+export type StateId = (typeof STATES)[number]['id'];
+export const STATE_IDS = STATES.map((s) => s.id) as StateId[];
+export type StateStyles = Partial<Record<StateId, StyleMap>>;
+
+export function isStateId(key: string): key is StateId {
+  return (STATE_IDS as string[]).includes(key);
+}
+
 /** Align commands, named by the edge or center they line up. */
 export const ALIGNMENTS = ['left', 'center', 'right', 'top', 'middle', 'bottom'] as const;
 export type Alignment = (typeof ALIGNMENTS)[number];
@@ -308,6 +328,8 @@ export interface SceneNode {
   styles: StyleMap;
   /** Style overrides per breakpoint, layered over `styles`. */
   breakpoints?: BreakpointStyles;
+  /** Style overrides per interaction state (hover, focus, active), layered over everything else. */
+  states?: StateStyles;
   attributes: Record<string, string>;
   frame?: ArtboardFrame;
   /** A theme applied to this frame and everything in it (`data-theme`). */

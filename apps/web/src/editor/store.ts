@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { StateId } from '@weft/core';
 
 export type Tool = 'select' | 'frame' | 'text';
 
@@ -63,6 +64,8 @@ interface EditorState {
   collapsed: ReadonlySet<string>;
   /** Artboards in interact mode: the canvas steps aside so they work like a page. This viewer only. */
   interacting: ReadonlySet<string>;
+  /** A layer shown in one of its states (the Inspector's Preview), as if hovered, focused or pressed. */
+  statePreview: { id: string; state: StateId } | null;
   setTool(tool: Tool): void;
   setCamera(camera: Camera): void;
   /** Zoom by `factor` keeping the screen point (px, py) fixed. */
@@ -79,6 +82,7 @@ interface EditorState {
   /** Collapses these layers and expands every other (⌥L passes every layer with children). */
   collapseOnly(ids: Iterable<string>): void;
   setInteracting(id: string, on: boolean): void;
+  setStatePreview(preview: { id: string; state: StateId } | null): void;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -97,6 +101,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
   agentActivity: null,
   collapsed: new Set(),
   interacting: new Set(),
+  statePreview: null,
   setTool: (tool) => set({ tool }),
   setCamera: (camera) => set({ camera }),
   zoomAt: (px, py, factor) => {
@@ -105,7 +110,8 @@ export const useEditor = create<EditorState>()((set, get) => ({
     const k = zoom / c.zoom;
     set({ camera: { zoom, x: px - (px - c.x) * k, y: py - (py - c.y) * k } });
   },
-  select: (selection) => set({ selection }),
+  // A preview belongs to the selected layer: selecting something else ends it.
+  select: (selection) => set((s) => ({ selection, ...(s.statePreview && !selection.includes(s.statePreview.id) && { statePreview: null }) })),
   setHovered: (hoveredId) => set({ hoveredId }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setSpaceHeld: (spaceHeld) => set({ spaceHeld }),
@@ -121,6 +127,7 @@ export const useEditor = create<EditorState>()((set, get) => ({
     set({ collapsed: next });
   },
   collapseOnly: (ids) => set({ collapsed: new Set(ids) }),
+  setStatePreview: (statePreview) => set({ statePreview }),
   setInteracting: (id, on) => {
     if (get().interacting.has(id) === on) return;
     const next = new Set(get().interacting);
