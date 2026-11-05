@@ -12,6 +12,7 @@ import { doc, history, isLocked, recordHugHeight, run, scene, useChildren } from
 import { useEditor, type Camera } from '../editor/store';
 import { Artboard } from './Artboard';
 import { artboardHeight, nodeElements } from './elements';
+import { canScrollInside, interactingArtboard } from './interact';
 import { commitActiveText } from './NodeView';
 import { draggableIds, dropTargetAt, isNoop, type DropTarget } from './reorder';
 import { SelectionOverlay, type Box, type DragPreview, type Handle } from './SelectionOverlay';
@@ -165,6 +166,8 @@ export function Canvas() {
 
     // Wheel: pinch / ⌘-scroll zooms around the cursor, plain scroll pans.
     const onWheel = (e: WheelEvent) => {
+      // An artboard in interact mode scrolls its own content; past the end, the canvas pans.
+      if (!(e.ctrlKey || e.metaKey) && interactingArtboard(e) && canScrollInside(e)) return;
       e.preventDefault();
       const state = useEditor.getState();
       if (e.ctrlKey || e.metaKey) {
@@ -178,6 +181,13 @@ export function Canvas() {
 
     const onPointerDown = (e: PointerEvent) => {
       const state = useEditor.getState();
+      // Artboard chrome (the interact toggle) handles its own clicks.
+      if (e.composedPath().some((t) => t instanceof HTMLElement && t.dataset.artboardChrome !== undefined)) return;
+      // Inside an artboard in interact mode the page gets the pointer; space or the middle button still pans.
+      if (interactingArtboard(e) && !(e.button === 1 || (e.button === 0 && state.spaceHeld))) {
+        commitActiveText?.();
+        return;
+      }
       const hit = hitTest(e);
 
       // Let the caret move inside the text being edited.
@@ -294,7 +304,7 @@ export function Canvas() {
       const state = useEditor.getState();
       const g = gesture;
       if (!g) {
-        const { id } = hitTest(e);
+        const { id } = interactingArtboard(e) ? { id: null } : hitTest(e);
         if (id !== state.hoveredId) state.setHovered(id);
         return;
       }
@@ -452,6 +462,7 @@ export function Canvas() {
     };
 
     const onDoubleClick = (e: MouseEvent) => {
+      if (interactingArtboard(e)) return;
       const { id, label } = hitTest(e);
       if (!id || label) return;
       const node = scene.nodes.get(id);

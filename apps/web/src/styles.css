@@ -249,6 +249,28 @@ body {
   white-space: nowrap;
   cursor: default;
 }
+/* Interact toggle at an artboard's top right: shown on hover, selection, or while on. */
+.gf-artboard-interact {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: calc(4px / var(--gf-zoom));
+  padding: calc(2px / var(--gf-zoom)) calc(8px / var(--gf-zoom));
+  font: inherit;
+  font-size: calc(11px / var(--gf-zoom));
+  line-height: 1.4;
+  color: var(--ui-text-muted);
+  background: var(--ui-panel);
+  border: calc(1px / var(--gf-zoom)) solid var(--ui-border);
+  border-radius: calc(999px / var(--gf-zoom));
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0;
+}
+.gf-artboard:hover > .gf-artboard-interact, .gf-artboard-interact[data-show], .gf-artboard-interact:focus-visible { opacity: 1; }
+.gf-artboard-interact:hover { color: var(--ui-text); }
+.gf-artboard-interact[aria-pressed='true'] { color: var(--ui-on-accent, #fff); background: var(--ui-accent); border-color: var(--ui-accent); }
+.gf-artboard[data-interact] > .gf-artboard-host { outline: calc(2px / var(--gf-zoom)) solid var(--ui-accent); }
 /* Fixed-height artboard whose content overflows: fade plus a dashed edge at the clip line. */
 .gf-artboard-clipped {
   position: absolute;
