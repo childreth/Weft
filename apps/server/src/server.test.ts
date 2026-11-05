@@ -65,7 +65,7 @@ describe('MCP tools', () => {
     expect(JSON.stringify(create.inputSchema)).toContain('children');
     // Styles are described by what isn't supported, not by listing every property.
     const styles = JSON.stringify(create.inputSchema).match(/Standard CSS properties[^"]*/)![0];
-    expect(styles).toContain('Not supported: background, font, transition');
+    expect(styles).toContain('Not supported: background, font, animation');
     expect(styles.length).toBeLessThan(400);
   });
 
@@ -309,6 +309,37 @@ describe('MCP tools', () => {
     const { data: canvas } = await call('get_canvas', { doc: 'bp', rootId: id });
     expect(canvas.nodes[0].breakpoints).toEqual({ mobile: { gridTemplateColumns: '1fr', gap: 'var(--space-2)' } });
     const bad = await call('update_nodes', { doc: 'bp', updates: [{ id, breakpoints: { watch: { gap: '1px' } } }] });
+    expect(bad.isError).toBe(true);
+  });
+
+  it('creates, updates and reads back interaction states', async () => {
+    const { data } = await call('create_nodes', {
+      doc: 'states',
+      nodes: [
+        {
+          type: 'frame',
+          name: 'Page',
+          frame: { width: 600, height: 300 },
+          children: [
+            {
+              tag: 'button',
+              text: 'Save',
+              styles: { backgroundColor: 'var(--color-primary)', transition: 'background-color 150ms ease' },
+              states: { hover: { backgroundColor: 'var(--color-on-primary-container)' } },
+            },
+          ],
+        },
+      ],
+    });
+    const page = data.created[0].id;
+    const { data: tree } = await call('get_canvas', { doc: 'states', rootId: page });
+    const button = tree.nodes[0].children[0];
+    expect(button.states).toEqual({ hover: { backgroundColor: 'var(--color-on-primary-container)' } });
+    await call('update_nodes', { doc: 'states', updates: [{ id: button.id, states: { focus: { outline: '2px solid var(--color-primary)' }, hover: null } }] });
+    const { data: after } = await call('get_canvas', { doc: 'states', rootId: button.id });
+    expect(after.nodes[0].states).toEqual({ focus: { outline: '2px solid var(--color-primary)' } });
+    expect((await call('export_html', { doc: 'states', id: page })).text).toContain(`[data-gf-id="${button.id}"]:focus-visible {`);
+    const bad = await call('update_nodes', { doc: 'states', updates: [{ id: button.id, states: { disabled: { opacity: '0.5' } } }] });
     expect(bad.isError).toBe(true);
   });
 

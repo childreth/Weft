@@ -10,6 +10,9 @@ import { flattenTokens, mergeTokenGroups, resolvedTokenValues, type TokenGroup, 
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
 import {
   BREAKPOINTS,
+  STATES,
+  STATE_IDS,
+  isStateId,
   VOID_TAGS,
   getStyleMeta,
   isBreakpointId,
@@ -23,6 +26,8 @@ import {
   type Axis,
   type BreakpointId,
   type BreakpointStyles,
+  type StateId,
+  type StateStyles,
   type NodeType,
   type SceneNode,
   type SceneTree,
@@ -53,6 +58,7 @@ export interface CreateNodeInput {
   text?: string;
   styles?: StyleMap;
   breakpoints?: BreakpointStyles;
+  states?: StateStyles;
   attributes?: Record<string, string>;
   frame?: ArtboardFrame;
   /** A theme (`getThemeNames`) for this frame and everything in it. */
@@ -70,6 +76,8 @@ export interface NodePatch {
   styles?: Partial<Record<StyleProp, string | null>>;
   /** Merged per breakpoint like `styles`; a null breakpoint clears all its overrides. */
   breakpoints?: Partial<Record<BreakpointId, Partial<Record<StyleProp, string | null>> | null>>;
+  /** Merged per state like `breakpoints`. */
+  states?: Partial<Record<StateId, Partial<Record<StyleProp, string | null>> | null>>;
   attributes?: Record<string, string | null>;
   /** null removes the frame's theme. */
   theme?: string | null;
@@ -173,6 +181,7 @@ function checkLayerShapes(nodes: readonly unknown[], where: string, maxNodes: nu
       !record(n.styles) ||
       !record(n.attributes) ||
       !record(n.breakpoints) ||
+      !record(n.states) ||
       !record(n.frame)
     ) {
       throw new GridError(`Malformed layers ${where}`);
@@ -209,7 +218,7 @@ function repairGradients(trees: readonly SceneTree[]): void {
   };
   const visit = (tree: SceneTree) => {
     repair(tree.styles);
-    for (const styles of Object.values(tree.breakpoints ?? {})) repair(styles);
+    for (const styles of [...Object.values(tree.breakpoints ?? {}), ...Object.values(tree.states ?? {})]) repair(styles);
     tree.children.forEach(visit);
   };
   trees.forEach(visit);
@@ -333,12 +342,10 @@ export function readNode(y: YNode): SceneNode {
     styles: styles ? (styles.toJSON() as StyleMap) : {},
     attributes: attributes ? (attributes.toJSON() as Record<string, string>) : {},
   };
-  const breakpoints = y.get('breakpoints') as Y.Map<Y.Map<string>> | undefined;
-  if (breakpoints) {
-    const out: BreakpointStyles = {};
-    for (const [bp, map] of breakpoints) if (map.size > 0) out[bp as BreakpointId] = map.toJSON() as StyleMap;
-    if (Object.keys(out).length) node.breakpoints = out;
-  }
+  const breakpoints = readOverrides(y, 'breakpoints');
+  if (breakpoints) node.breakpoints = breakpoints as BreakpointStyles;
+  const states = readOverrides(y, 'states');
+  if (states) node.states = states as StateStyles;
   const text = y.get('text');
   if (typeof text === 'string') node.text = text;
   const frame = y.get('frame') as ArtboardFrame | undefined;
@@ -401,8 +408,7 @@ function patchFrame(frame: ArtboardFrame, patch: Partial<ArtboardFrame>): Artboa
 export const UNSUPPORTED_STYLES: Readonly<Record<string, string>> = {
   background: 'use backgroundColor, or backgroundImage for a gradient',
   font: 'use fontFamily, fontSize, fontWeight and lineHeight',
-  transition: 'Weft has no hover states or animation yet',
-  animation: 'Weft has no hover states or animation yet',
+  animation: 'Weft has no animation yet; for hover, focus and pressed styles use states (with transition)',
   content: 'add a text node instead',
   float: 'use flex or grid',
   clear: 'use flex or grid',
@@ -460,6 +466,12 @@ export function breakpointIssues(breakpoints: Record<string, Partial<Record<stri
   );
 }
 
+export function stateIssues(states: Record<string, Partial<Record<string, string | null>> | null | undefined>): string[] {
+  return Object.entries(states).flatMap(([state, styles]) =>
+    !isStateId(state) ? [`Unknown state "${state}" (use ${STATE_IDS.join(', ')})`] : styles ? styleIssues(styles).map((m) => `${state}: ${m}`) : [],
+  );
+}
+
 export function attributeIssues(attributes: Record<string, string | null>): string[] {
   const issues: string[] = [];
   for (const [name, value] of Object.entries(attributes)) {
@@ -491,6 +503,7 @@ export interface TreeInput {
   tag?: string;
   styles?: Partial<Record<string, string | null>>;
   breakpoints?: Record<string, Partial<Record<string, string | null>> | null | undefined>;
+  states?: Record<string, Partial<Record<string, string | null>> | null | undefined>;
   attributes?: Record<string, string | null>;
   children?: readonly TreeInput[];
 }
@@ -510,6 +523,7 @@ export function treeIssues(nodes: readonly TreeInput[], path = 'nodes'): string[
     if (bad) add([bad]);
     if (node.styles) add(styleIssues(node.styles));
     if (node.breakpoints) add(breakpointIssues(node.breakpoints));
+    if (node.states) add(stateIssues(node.states));
     if (node.attributes) add(attributeIssues(node.attributes));
     add([altIssue(tag, node.attributes ?? {}) ?? []].flat());
     const children = node.children ?? [];
@@ -561,6 +575,36 @@ export function compileBreakpointCSS(
   return blocks.join('\n');
 }
 
+
+/**
+ * CSS for interaction-state overrides, keyed by `[data-gf-id]` plus each
+ * state's selector (`:hover`), after breakpoints so a state wins over them.
+ * `scope` prefixes each rule (the canvas: only in interact mode); `preview`
+ * adds a second selector that forces a state on (the canvas: the Inspector's
+ * preview, `[data-gf-preview="hover"]`).
+ */
+export function compileStateCSS(
+  nodes: Iterable<SceneNode>,
+  options: { scope?: string; preview?: (state: StateId) => string } = {},
+): string {
+  const rules: string[] = [];
+  const list = [...nodes];
+  const prefix = options.scope ? `${options.scope} ` : '';
+  for (const state of STATES) {
+    for (const node of list) {
+      const styles = node.states?.[state.id];
+      if (!styles || !/^[\w-]+$/.test(node.id)) continue;
+      const decls = Object.entries(styles)
+        .filter(([prop]) => !(node.hidden && prop === 'display'))
+        .map(([prop, value]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${value} !important;`);
+      if (!decls.length) continue;
+      const el = `[data-gf-id="${node.id}"]`;
+      const selectors = [`${prefix}${el}${state.selector}`, ...(options.preview ? [`${el}${options.preview(state.id)}`] : [])];
+      rules.push(`${selectors.join(', ')} { ${decls.join(' ')} }`);
+    }
+  }
+  return rules.join('\n');
+}
 
 /**
  * The scene graph. All reads and writes go through this class so that the
@@ -873,7 +917,7 @@ export class GridDocument {
         const y = this.requireY(node.id);
         const map = y.get('styles') as Y.Map<string>;
         for (const [prop, value] of Object.entries(styles)) map.set(prop, value);
-        if (Object.keys(breakpoints).length > 0) writeBreakpoints(y, breakpoints);
+        if (Object.keys(breakpoints).length > 0) writeOverrides(y, 'breakpoints', breakpoints);
         layers++;
       }
     }, origin);
@@ -1009,6 +1053,7 @@ export class GridDocument {
       ...[tagIssue(input.type, tag) ?? []].flat(),
       ...(input.styles ? styleIssues(input.styles) : []),
       ...(input.breakpoints ? breakpointIssues(input.breakpoints) : []),
+      ...(input.states ? stateIssues(input.states) : []),
       ...(input.attributes ? attributeIssues(input.attributes) : []),
       ...[altIssue(tag, input.attributes ?? {}) ?? []].flat(),
       ...(input.theme !== undefined ? [this.themeIssue(input.type, input.theme) ?? []].flat() : []),
@@ -1032,7 +1077,8 @@ export class GridDocument {
       const styles = new Y.Map<string>();
       y.set('styles', styles);
       for (const [k, v] of Object.entries(input.styles ?? {})) if (v) styles.set(k, v.trim());
-      if (input.breakpoints) writeBreakpoints(y, input.breakpoints);
+      if (input.breakpoints) writeOverrides(y, 'breakpoints', input.breakpoints);
+      if (input.states) writeOverrides(y, 'states', input.states);
       const attributes = new Y.Map<string>();
       y.set('attributes', attributes);
       for (const [k, v] of Object.entries(input.attributes ?? {})) attributes.set(k, v);
@@ -1054,6 +1100,7 @@ export class GridDocument {
     throwIssues([
       ...(patch.styles ? styleIssues(patch.styles) : []),
       ...(patch.breakpoints ? breakpointIssues(patch.breakpoints) : []),
+      ...(patch.states ? stateIssues(patch.states) : []),
       ...(patch.attributes ? attributeIssues(patch.attributes) : []),
       ...(patch.tag !== undefined || patch.attributes
         ? [altIssue(patch.tag ?? (y.get('tag') as string), { ...(y.get('attributes') as Y.Map<string>).toJSON(), ...patch.attributes }) ?? []].flat()
@@ -1081,7 +1128,8 @@ export class GridDocument {
           else styles.set(k, v.trim());
         }
       }
-      if (patch.breakpoints) writeBreakpoints(y, patch.breakpoints);
+      if (patch.breakpoints) writeOverrides(y, 'breakpoints', patch.breakpoints);
+      if (patch.states) writeOverrides(y, 'states', patch.states);
       if (patch.attributes) {
         const attributes = y.get('attributes') as Y.Map<string>;
         for (const [k, v] of Object.entries(patch.attributes)) {
@@ -1263,7 +1311,7 @@ export class GridDocument {
           if (v === null) map.delete(k);
           else map.set(k, v);
         }
-        if (Object.keys(breakpoints).length > 0) writeBreakpoints(y, breakpoints);
+        if (Object.keys(breakpoints).length > 0) writeOverrides(y, 'breakpoints', breakpoints);
         changed++;
       }
     }, origin);
@@ -1332,6 +1380,7 @@ export class GridDocument {
         text: node.text,
         styles: node.styles,
         breakpoints: node.breakpoints,
+        states: node.states,
         attributes: node.attributes,
         frame: root.frame ?? node.frame,
         // Layers from another document may name a theme this one lacks.
@@ -1586,11 +1635,21 @@ function changes(from: Readonly<Record<string, string>>, to: Readonly<Record<str
   };
 }
 
-function writeBreakpoints(y: YNode, patch: NonNullable<NodePatch['breakpoints']>): void {
-  let all = y.get('breakpoints') as Y.Map<Y.Map<string>> | undefined;
+/** Style overrides keyed by breakpoint or state, or undefined when there are none. */
+function readOverrides(y: YNode, key: 'breakpoints' | 'states'): Record<string, StyleMap> | undefined {
+  const all = y.get(key) as Y.Map<Y.Map<string>> | undefined;
+  if (!all) return undefined;
+  const out: Record<string, StyleMap> = {};
+  for (const [name, map] of all) if (map.size > 0) out[name] = map.toJSON() as StyleMap;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Merges a patch into a node's breakpoint or state overrides; a null entry clears that one. */
+function writeOverrides(y: YNode, key: 'breakpoints' | 'states', patch: Record<string, Partial<Record<string, string | null>> | null | undefined>): void {
+  let all = y.get(key) as Y.Map<Y.Map<string>> | undefined;
   if (!all) {
     all = new Y.Map<Y.Map<string>>();
-    y.set('breakpoints', all);
+    y.set(key, all);
   }
   for (const [bp, styles] of Object.entries(patch)) {
     if (styles === null) {

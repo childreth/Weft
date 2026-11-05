@@ -81,12 +81,14 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
   const node = useNode(id);
   const childIds = useChildren(id);
   const editing = useEditor((s) => s.editingTextId === id);
+  const preview = useEditor((s) => (s.statePreview?.id === id ? s.statePreview.state : undefined));
   if (!node) return null;
 
   const props: Record<string, unknown> = {
     ...node.attributes,
     'data-gf-id': id,
     ...(node.theme && { 'data-theme': node.theme }),
+    ...(preview && { 'data-gf-preview': preview }),
     ref: registerRef(id),
     style: toStyle(node, isRoot),
   };

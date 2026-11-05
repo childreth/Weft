@@ -4,6 +4,8 @@ import {
   ALIGNMENTS,
   AXES,
   BREAKPOINTS,
+  STATES,
+  STATE_IDS,
   BREAKPOINT_IDS,
   COLOR_ROLES,
   DEFAULT_ARTBOARD_STYLES,
@@ -15,6 +17,7 @@ import {
   UNSUPPORTED_STYLES,
   attributeIssues,
   breakpointIssues,
+  stateIssues,
   defaultTokens,
   exportArtboardHTML,
   fontSlug,
@@ -35,6 +38,7 @@ import {
   type SchemeVariant,
   type ArtboardFrame,
   type BreakpointStyles,
+  type StateStyles,
   type NodePatch,
   type SceneTree,
   type SemanticTag,
@@ -64,6 +68,7 @@ Model:
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), or change roles in one with "tokens" and "theme".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
+- States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
 - Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
@@ -109,6 +114,8 @@ function nullAsMissing<S extends z.ZodRawShape>(shape: S): S {
 const THEME_PARAM = 'Theme for this frame and everything in it (list_tokens lists themes; "dark" is built in): its token values replace the defaults inside it. Frames only';
 const BREAKPOINT_STYLES = `Style overrides per breakpoint (${BREAKPOINT_IDS.join(', ')}), layered over styles`;
 const breakpointKey = z.enum(BREAKPOINT_IDS as [string, ...string[]]);
+const STATE_STYLES = `Style overrides per interaction state (${STATES.map((s) => `${s.id} = ${s.selector}`).join(', ')}), layered over styles and breakpoints`;
+const stateKey = z.enum(STATE_IDS as [string, ...string[]]);
 
 const frameSchema = z
   .object({
@@ -129,6 +136,7 @@ interface NodeSpec {
   text?: string;
   styles?: Record<string, string>;
   breakpoints?: Partial<Record<string, Record<string, string>>>;
+  states?: Partial<Record<string, Record<string, string>>>;
   attributes?: Record<string, string>;
   frame?: Partial<ArtboardFrame>;
   theme?: string;
@@ -155,6 +163,7 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     text: z.string().optional().describe('Text content (text nodes only)'),
     styles: z.record(z.string(), z.string()).optional().describe(AUTHORED_STYLES),
     breakpoints: z.partialRecord(breakpointKey, z.record(z.string(), z.string())).optional().describe(BREAKPOINT_STYLES),
+    states: z.partialRecord(stateKey, z.record(z.string(), z.string())).optional().describe(STATE_STYLES),
     attributes: z.record(z.string(), z.string()).optional().describe('HTML attributes such as aria-label, href, type, alt'),
     frame: frameSchema.optional().describe('Canvas placement; only for new artboards (parentId null)'),
     theme: z.string().optional().describe(THEME_PARAM),
@@ -193,6 +202,7 @@ export function compact(tree: SceneTree, depth: number): Record<string, unknown>
   if (tree.theme) out.theme = tree.theme;
   if (Object.keys(tree.styles).length) out.styles = tree.styles;
   if (tree.breakpoints) out.breakpoints = tree.breakpoints;
+  if (tree.states) out.states = tree.states;
   if (Object.keys(tree.attributes).length) out.attributes = tree.attributes;
   if (tree.hidden) out.hidden = true;
   if (tree.locked) out.locked = true;
@@ -282,7 +292,7 @@ function themeWarnings(room: Room, ids: Iterable<string>): string[] {
     const changed = modeChangedVars(set, node.theme);
     const values = [id, ...room.doc.getDescendantIds(id)].flatMap((d) => {
       const n = room.doc.getNode(d)!;
-      return [n.styles, ...Object.values(n.breakpoints ?? {})].flatMap((styles) => Object.values(styles ?? {}));
+      return [n.styles, ...Object.values(n.breakpoints ?? {}), ...Object.values(n.states ?? {})].flatMap((styles) => Object.values(styles ?? {}));
     });
     const uses = values.some((v) => [...v.matchAll(/var\((--[\w-]+)\)/g)].some((m) => changed.has(m[1]!)));
     if (uses) return [];
@@ -357,6 +367,7 @@ function createTree(
       text: spec.text,
       styles,
       breakpoints: spec.breakpoints as BreakpointStyles | undefined,
+      states: spec.states as StateStyles | undefined,
       attributes: spec.attributes,
       frame,
       theme: spec.theme,
@@ -569,6 +580,10 @@ export function createMcpServer(
                 .partialRecord(breakpointKey, z.record(z.string(), z.string().nullable()).nullable())
                 .optional()
                 .describe(`${BREAKPOINT_STYLES}; merged like styles, null clears a whole breakpoint`),
+              states: z
+                .partialRecord(stateKey, z.record(z.string(), z.string().nullable()).nullable())
+                .optional()
+                .describe(`${STATE_STYLES}; merged like styles, null clears a whole state`),
               attributes: z.record(z.string(), z.string().nullable()).optional(),
             }),
           )
@@ -581,8 +596,8 @@ export function createMcpServer(
       return mutate(room, agent, 'update_nodes', (touched, report) => {
         const only = updates.length === 1 ? updates[0]! : undefined;
         if (only?.text !== undefined) Object.assign(report, { kind: 'text', action: `Writing ${nameOf(room, only.id)}` });
-        else if (only) report.action = `${only.styles || only.breakpoints ? 'Styling' : 'Editing'} ${nameOf(room, only.id)}`;
-        else report.action = `${updates.every((u) => u.styles || u.breakpoints) ? 'Styling' : 'Editing'} ${plural(updates.length, 'node')}`;
+        else if (only) report.action = `${only.styles || only.breakpoints || only.states ? 'Styling' : 'Editing'} ${nameOf(room, only.id)}`;
+        else report.action = `${updates.every((u) => u.styles || u.breakpoints || u.states) ? 'Styling' : 'Editing'} ${plural(updates.length, 'node')}`;
         throwIssues(
           updates.flatMap((u, i) => {
             const node = room.doc.getNode(u.id);
@@ -591,6 +606,7 @@ export function createMcpServer(
               ...(node && u.tag ? [tagIssue(node.type, u.tag) ?? []].flat() : []),
               ...(u.styles ? styleIssues(u.styles) : []),
               ...(u.breakpoints ? breakpointIssues(u.breakpoints) : []),
+              ...(u.states ? stateIssues(u.states) : []),
               ...(u.attributes ? attributeIssues(u.attributes) : []),
             ];
             return issues.map((m) => `updates[${i}]: ${m}`);
@@ -605,7 +621,7 @@ export function createMcpServer(
           ...themeWarnings(room, updates.filter((u) => u.theme).map((u) => u.id)),
           ...iconWarnings(room, touched),
         ];
-        const restyled = updates.some((u) => u.styles || u.breakpoints);
+        const restyled = updates.some((u) => u.styles || u.breakpoints || u.states);
         return {
           updated: updates.map((u) => u.id),
           ...(warnings.length && { warnings }),
@@ -1014,7 +1030,7 @@ export function createMcpServer(
     {
       title: 'Export an artboard as HTML',
       description:
-        'Returns an artboard as a standalone HTML page: tokens, reset, styles, and breakpoints as @media rules, with the document\'s Google Fonts linked. The same page get_screenshot renders. Use it when the user wants the code.',
+        'Returns an artboard as a standalone HTML page: tokens, reset, styles, breakpoints as @media rules and states (:hover…), with the document\'s Google Fonts linked. The same page get_screenshot renders. Use it when the user wants the code.',
       inputSchema: {
         doc: docParam,
         id: z.string().optional().describe('Artboard id; defaults to the first artboard'),

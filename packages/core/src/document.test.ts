@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, readClipboard, readWeftFile, styleIssues, treeIssues } from './document';
+import { GridDocument, GridError, ORIGIN_AGENT, compileBreakpointCSS, compileStateCSS, readClipboard, readWeftFile, styleIssues, treeIssues } from './document';
 import { exportArtboardHTML } from './export';
 import { History } from './history';
 import { seedLandingPage } from './seed';
@@ -60,6 +60,40 @@ describe('GridDocument', () => {
     doc.updateNode(grid, { breakpoints: { mobile: null } });
     expect(doc.getNode(grid)?.breakpoints).toBeUndefined();
     expect(compileBreakpointCSS(doc.getNodes())).toBe('');
+  });
+
+  it('stores, merges, copies and compiles interaction states', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const button = doc.createNode({
+      type: 'text',
+      tag: 'button',
+      parentId: root,
+      text: 'Save',
+      styles: { backgroundColor: 'var(--color-primary)', transition: 'background-color 150ms ease' },
+      states: { hover: { backgroundColor: 'var(--color-primary-container)' }, active: { transform: 'scale(0.98)' } },
+    });
+    expect(doc.getNode(button)?.states).toEqual({ hover: { backgroundColor: 'var(--color-primary-container)' }, active: { transform: 'scale(0.98)' } });
+    doc.updateNode(button, { states: { focus: { outline: '2px solid var(--color-primary)' }, active: null } });
+    expect(doc.getNode(button)?.states).toEqual({ hover: { backgroundColor: 'var(--color-primary-container)' }, focus: { outline: '2px solid var(--color-primary)' } });
+    expect(compileStateCSS(doc.getNodes())).toBe(
+      [
+        `[data-gf-id="${button}"]:hover { background-color: var(--color-primary-container) !important; }`,
+        `[data-gf-id="${button}"]:focus-visible { outline: 2px solid var(--color-primary) !important; }`,
+      ].join('\n'),
+    );
+    // The canvas scopes real states to interact mode and adds a preview selector.
+    expect(compileStateCSS(doc.getNodes(), { scope: ':host([data-interact])', preview: (s) => `[data-gf-preview="${s}"]` })).toContain(
+      `:host([data-interact]) [data-gf-id="${button}"]:hover, [data-gf-id="${button}"][data-gf-preview="hover"] {`,
+    );
+    expect(() => doc.updateNode(button, { states: { disabled: {} } as never })).toThrow(/Unknown state "disabled"/);
+    expect(treeIssues([{ type: 'frame', states: { hover: { colr: 'red' } } }])[0]).toContain('hover:');
+    // Duplicates and exports carry them.
+    const copy = doc.duplicateNode(button);
+    expect(doc.getNode(copy)?.states?.hover).toEqual({ backgroundColor: 'var(--color-primary-container)' });
+    expect(exportArtboardHTML(doc, root)).toContain(':focus-visible { outline: 2px solid var(--color-primary) !important; }');
+    doc.updateNode(button, { states: { hover: null, focus: null } });
+    expect(doc.getNode(button)?.states).toBeUndefined();
   });
 
   it('emits wider breakpoints first so narrower ones win the cascade', () => {
@@ -636,7 +670,8 @@ describe('validation', () => {
     ).toEqual([]);
     expect(styleIssues({ clipPath: 'url(#shape)' })[0]).toContain("can't load external resources");
     expect(styleIssues({ float: 'left' })[0]).toContain('use flex or grid');
-    expect(styleIssues({ transition: 'all 0.2s' })[0]).toContain('no hover states');
+    expect(styleIssues({ transition: 'all 0.2s' })).toEqual([]);
+    expect(styleIssues({ animation: 'spin 1s' })[0]).toContain('use states');
     expect(styleIssues({ borderTopLeftRadious: '4px' })[0]).toContain('did you mean "borderTopLeftRadius"?');
     expect(styleIssues({ textDecorationColor: 'linear-gradient(red, blue)' })[0]).toContain('takes a color, not a gradient');
   });

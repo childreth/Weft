@@ -1,4 +1,4 @@
-import { compileBreakpointCSS, GridError, type GridDocument } from './document';
+import { compileBreakpointCSS, compileStateCSS, GridError, type GridDocument } from './document';
 import { ARTBOARD_RESET_CSS } from './defaults';
 import { VOID_TAGS, type SceneNode, type SceneTree } from './schema';
 import { compileTokensCSS, type TokenSet } from './tokens';
@@ -89,6 +89,7 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
     ARTBOARD_RESET_CSS.trim(),
     `.weft-artboard { width: ${width}px; height: ${height}; overflow: hidden; }`,
     compileBreakpointCSS(subtree),
+    compileStateCSS(subtree),
   ]
     .filter(Boolean)
     .join('\n');

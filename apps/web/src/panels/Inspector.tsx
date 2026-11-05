@@ -1,7 +1,8 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
   ARTBOARD_PRESETS,
   BREAKPOINTS,
+  STATES,
   GridError,
   IMAGE_TYPES,
   STYLE_PROPS,
@@ -18,6 +19,8 @@ import {
   textRoleStyles,
   type ArtboardFrame,
   type BreakpointId,
+  type SceneNode,
+  type StateId,
   type SemanticTag,
   type StyleMap,
   type StyleProp,
@@ -296,7 +299,61 @@ function NodeInspector({ id }: { id: string }) {
           initialFor={(prop) => node.styles[prop]}
         />
       ))}
+
+      <StatesSection id={id} node={node} />
     </>
+  );
+}
+
+/**
+ * Hover, focus and pressed overrides, one state at a time. Preview shows the
+ * layer in that state on the canvas; the real states work in interact mode.
+ */
+function StatesSection({ id, node }: { id: string; node: SceneNode }) {
+  const [state, setState] = useState<StateId>('hover');
+  const preview = useEditor((s) => (s.statePreview?.id === id ? s.statePreview.state : null));
+  const shown = preview ?? state;
+  const pick = (next: StateId) => {
+    setState(next);
+    if (preview) useEditor.getState().setStatePreview({ id, state: next });
+  };
+  return (
+    <StyleSection
+      title="States"
+      state={shown}
+      styles={node.states?.[shown] ?? {}}
+      set={(prop, v) => run(() => doc.updateNode(id, { states: { [shown]: { [prop]: v } } }))}
+      initialFor={(prop) => node.styles[prop]}
+      before={
+        <div className="gf-state-tabs" role="tablist" aria-label="State">
+          {STATES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              role="tab"
+              aria-selected={shown === s.id}
+              className="gf-state-tab"
+              data-testid={`state-tab-${s.id}`}
+              title={`${s.label} (${s.selector})`}
+              onClick={() => pick(s.id)}
+            >
+              {s.label}
+              {node.states?.[s.id] && <span className="gf-state-dot" aria-label="has styles" />}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="gf-state-preview"
+            aria-pressed={preview !== null}
+            data-testid="state-preview"
+            title="Show this layer in the state on the canvas. Interact on the artboard to try the real thing."
+            onClick={() => useEditor.getState().setStatePreview(preview ? null : { id, state: shown })}
+          >
+            Preview
+          </button>
+        </div>
+      }
+    />
   );
 }
 
@@ -354,12 +411,17 @@ function StyleSection({
   styles,
   set,
   breakpoint,
+  state,
+  before,
   initialFor,
 }: {
   title: string;
   styles: Partial<Record<StyleProp, string>>;
   set: SetStyle;
   breakpoint?: BreakpointId;
+  state?: StateId;
+  /** Above the rows (the state tabs). */
+  before?: ReactNode;
   /** Starting value for a newly added property (breakpoints start from the base style). */
   initialFor?: (prop: StyleProp) => string | undefined;
 }) {
@@ -372,7 +434,7 @@ function StyleSection({
       actions={
         <StylePicker
           props={missing}
-          label={breakpoint ? `Add ${breakpoint} override` : 'Add style property'}
+          label={breakpoint ? `Add ${breakpoint} override` : state ? `Add ${state} style` : 'Add style property'}
           onPick={(prop) => {
             const meta = getStyleMeta(prop);
             const initial =
@@ -384,8 +446,9 @@ function StyleSection({
         />
       }
     >
-      <div data-breakpoint={breakpoint ?? 'base'}>
-        {present.length === 0 && <p className="gf-empty">{breakpoint ? 'No overrides' : 'No styles'}</p>}
+      {before}
+      <div {...(state ? { 'data-state': state } : { 'data-breakpoint': breakpoint ?? 'base' })}>
+        {present.length === 0 && <p className="gf-empty">{breakpoint || state ? 'No overrides' : 'No styles'}</p>}
         {present.map((prop) => (
           <StyleRow key={prop} prop={prop} value={styles[prop]!} set={(v) => set(prop, v)} />
         ))}
