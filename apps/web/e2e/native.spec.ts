@@ -25,6 +25,7 @@ async function open(page: Page) {
     const dialog = doc.createNode({ type: 'frame', tag: 'dialog', parentId: board, name: 'Confirm', attributes: { id: 'confirm' }, styles: { ...panel, width: '320px' } });
     doc.createNode({ type: 'text', tag: 'p', parentId: dialog, text: 'Delete this project?' });
     const close = doc.createNode({ type: 'text', tag: 'button', parentId: dialog, name: 'Cancel', text: 'Cancel', attributes: { commandfor: 'confirm', command: 'close' } });
+    doc.createNode({ type: 'text', tag: 'button', parentId: dialog, name: 'Delete', text: 'Delete', attributes: { commandfor: 'confirm', command: 'close', autofocus: '' } });
     editor.getState().setCamera({ x: 200, y: 120, zoom: 0.75 });
     return { board, details, answer, menuButton, menu, openDialog, select, notes, disabled, dialog, close };
   });
@@ -87,7 +88,8 @@ test('native behaviors: edit mode reveals and stays inert; interact mode runs th
   await el(ids.openDialog).click();
   await expect(el(ids.dialog)).toBeVisible();
   await expect(el(ids.dialog)).toHaveAttribute('data-gf-open', 'modal');
-  await expect(el(ids.close)).toBeFocused();
+  // autofocus picks the button to focus (not the first one), without React focusing it while editing.
+  await expect(page.locator(`[data-testid="artboard-${ids.board}"]`).getByRole('button', { name: 'Delete', exact: true })).toBeFocused();
   const dialog = (await el(ids.dialog).boundingBox())!;
   expect(dialog.x).toBeGreaterThan(board.x);
   await page.screenshot({ path: 'test-results/m4-native.png' });

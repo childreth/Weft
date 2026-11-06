@@ -13,7 +13,7 @@ import { nodeElements } from './elements';
  */
 const BOOLEAN_PROPS: Readonly<Record<string, string>> = {
   open: 'open', disabled: 'disabled', required: 'required', multiple: 'multiple', hidden: 'hidden', inert: 'inert',
-  checked: 'defaultChecked', selected: 'selected', readonly: 'readOnly', autofocus: 'autoFocus',
+  checked: 'defaultChecked', selected: 'selected', readonly: 'readOnly',
   novalidate: 'noValidate', formnovalidate: 'formNoValidate', playsinline: 'playsInline',
 };
 const RENAMED_PROPS: Readonly<Record<string, string>> = {
@@ -26,7 +26,9 @@ export function reactAttributes(attributes: Readonly<Record<string, string>>): R
   const out: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(attributes)) {
     const lower = name.toLowerCase();
-    if (lower in BOOLEAN_PROPS) {
+    // React turns autoFocus into a focus on mount, which would steal focus while editing; an opened dialog reads this instead.
+    if (lower === 'autofocus') out['data-gf-autofocus'] = '';
+    else if (lower in BOOLEAN_PROPS) {
       if (value !== 'false') out[BOOLEAN_PROPS[lower]!] = true;
     } else out[RENAMED_PROPS[lower] ?? name] = value;
   }
@@ -96,7 +98,7 @@ export function installBehaviors(root: ShadowRoot, artboardId: string): () => vo
     el.setAttribute('data-gf-open', modal ? 'modal' : '');
     open.push(el);
     invoker?.setAttribute('aria-expanded', 'true');
-    if (modal) (el.querySelector<HTMLElement>('[autofocus]') ?? el.querySelector<HTMLElement>(FOCUSABLE))?.focus();
+    if (modal) (el.querySelector<HTMLElement>('[data-gf-autofocus]') ?? el.querySelector<HTMLElement>(FOCUSABLE))?.focus();
   };
   const hide = (el: HTMLElement) => {
     if (!el.hasAttribute('data-gf-open')) return;

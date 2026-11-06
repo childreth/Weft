@@ -241,6 +241,7 @@ export const STYLE_PROP_META = {
   accentColor: { group: 'forms', tokenGroups: COLOR },
   caretColor: { group: 'forms', tokenGroups: COLOR },
   appearance: { group: 'forms', options: ['auto', 'none'] },
+  resize: { group: 'forms', options: ['none', 'vertical', 'horizontal', 'both'] },
   borderCollapse: { group: 'forms', options: ['separate', 'collapse'] },
   borderSpacing: { group: 'forms' },
   tableLayout: { group: 'forms', options: ['auto', 'fixed'] },
