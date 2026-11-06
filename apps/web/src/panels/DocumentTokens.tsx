@@ -6,7 +6,12 @@ import { useDocTokens } from '../editor/fonts';
 type Source = 'theme' | 'document' | 'default';
 
 const ROLE_ORDER = new Map<string, number>(COLOR_ROLES.map((role, i) => [role, i]));
-const SOURCE_ORDER: Record<Source, number> = { theme: 0, document: 1, default: 2 };
+
+/** A length in px (`px` or `rem`), or null: lets a scale list in size order wherever its tokens come from. */
+function lengthPx(value: string): number | null {
+  const m = /^(-?[\d.]+)(px|rem)$/.exec(value.trim());
+  return m ? Number(m[1]) * (m[2] === 'rem' ? 16 : 1) : null;
+}
 
 interface TokenRow {
   token: FlatToken;
@@ -26,8 +31,8 @@ function rawLabel(value: string): string {
 /**
  * Every token for the document or one theme, like a stylesheet's
  * `[data-theme]` block: what each resolves to there, and where it comes from.
- * What that level sets is marked and listed first in each group. `theme` is
- * the Inspector's theme menu.
+ * Each group keeps its own order (colors in Material's, scales by size), with
+ * what that level sets marked in place. `theme` is the Inspector's theme menu.
  */
 export function DocumentTokens({ theme }: { theme: string }) {
   const tokens = useDocTokens();
@@ -52,9 +57,13 @@ export function DocumentTokens({ theme }: { theme: string }) {
       const group = row.token.path[0]!;
       out.set(group, [...(out.get(group) ?? []), row]);
     }
-    // By where each comes from (the theme, the document, Weft's defaults); colors list the Material roles (in Material's order) first.
-    const rank = (r: TokenRow) => SOURCE_ORDER[r.source] * 1000 + (ROLE_ORDER.get(r.label) ?? 500);
-    for (const [group, list] of out) out.set(group, [...list].sort((a, b) => rank(a) - rank(b) || (group === 'color' ? 0 : list.indexOf(a) - list.indexOf(b))));
+    // One structure whatever the source: colors in Material's role order, scales by size, the rest as declared.
+    for (const [group, list] of out) {
+      const sizes = list.map((r) => lengthPx(r.resolved));
+      const bySize = group !== 'color' && sizes.every((n) => n !== null);
+      const rank = (r: TokenRow, i: number) => (group === 'color' ? ROLE_ORDER.get(r.label) ?? 500 : bySize ? sizes[i]! : i);
+      out.set(group, list.map((r, i) => [r, rank(r, i), i] as const).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(([r]) => r));
+    }
     return out;
   }, [tokens, active]);
 
@@ -88,23 +97,9 @@ export function DocumentTokens({ theme }: { theme: string }) {
               </span>
             </summary>
             <ul className="gf-token-list" aria-label={`${group} tokens`}>
-              {shown.map((r, i) => {
+              {shown.map((r) => {
                 const where = r.source === 'theme' ? `set in ${active}` : r.source === 'document' ? 'set in the document' : 'default';
-                // A heading where the source changes: what's set here, then what's inherited.
-                const heading =
-                  i === 0 || shown[i - 1]!.source !== r.source
-                    ? r.source === 'theme'
-                      ? `Set in ${active}`
-                      : r.source === 'document'
-                        ? active ? 'From the document (same in every theme)' : "The document's own"
-                        : active ? "Weft's defaults (same in every theme)" : "Weft's defaults"
-                    : null;
-                return [
-                  heading && (
-                    <li key={`${r.source}-heading`} className="gf-token-source" role="presentation">
-                      {heading}
-                    </li>
-                  ),
+                return (
                   <li
                     key={r.token.name}
                     className={`gf-token-item${r.source === level ? ' is-set' : ''}`}
@@ -114,8 +109,8 @@ export function DocumentTokens({ theme }: { theme: string }) {
                     {group === 'color' && <span className="gf-swatch" style={{ background: r.resolved }} />}
                     <span className="gf-token-name">{r.label}</span>
                     <span className="gf-token-value">{r.raw}</span>
-                  </li>,
-                ];
+                  </li>
+                );
               })}
             </ul>
           </details>
