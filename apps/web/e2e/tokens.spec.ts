@@ -169,7 +169,7 @@ test('the token picker never scrolls the Inspector or its list sideways', async 
   await page.keyboard.press('Escape');
 });
 
-test('the Tokens section lists every token for the document or a theme, with what that level sets first', async ({ page }) => {
+test('the Tokens section lists every token for the document or a theme, with what that level sets marked in place', async ({ page }) => {
   await page.goto('/?ephemeral');
   await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
   await page.evaluate(() => {
@@ -183,15 +183,19 @@ test('the Tokens section lists every token for the document or a theme, with wha
   await expect(colors.locator('[data-token="color.primary"]')).not.toHaveClass(/is-set/);
   await expect(colors.locator('[data-token="color.text"]')).toHaveCount(0);
 
-  // A theme: its overrides come first and are marked; the rest resolve through it.
+  // A theme: its overrides are marked where they sit; the rest resolve through it.
   await page.getByLabel('Document theme').selectOption('ember');
   // One menu drives every document section: the Colors swatches resolve in it too.
   await expect(page.getByTestId('inspector')).toHaveAttribute('data-theme', 'ember');
   await expect(page.getByLabel('Text roles for')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/m4-document-theme.png' });
   await expect(colors.locator('.gf-token-item').first()).toHaveAttribute('data-token', 'color.primary');
-  // Headings say where each part comes from.
-  await expect(colors.locator('.gf-token-source')).toHaveText(['Set in ember', "Weft's defaults (same in every theme)"]);
+  // No source headings: what a theme sets stays in the group's own order (Material's roles, scales by size).
+  await expect(panel.locator('.gf-token-source')).toHaveCount(0);
+  await expect(colors.locator('.gf-token-item').nth(1)).not.toHaveAttribute('data-token', 'color.surface');
+  const spaces = await panel.getByRole('list', { name: 'space tokens' }).locator('.gf-token-value').allTextContents();
+  const px = spaces.map((v) => parseFloat(v) * (v.endsWith('rem') ? 16 : 1));
+  expect(px).toEqual([...px].sort((a, b) => a - b));
   await expect(colors.locator('[data-token="color.primary"]')).toHaveClass(/is-set/);
   await expect(colors.locator('[data-token="color.primary"] .gf-token-value')).toHaveText('#c2410c');
   await expect(colors.locator('[data-token="color.on-surface"]')).not.toHaveClass(/is-set/);
