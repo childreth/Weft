@@ -3,6 +3,7 @@ import { VOID_TAGS, type SceneNode } from '@weft/core';
 import { displaySrc } from '../editor/assets';
 import { doc, history, run, useChildren, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
+import { holdsSelection, isRevealable, reactAttributes } from './behaviors';
 import { nodeElements } from './elements';
 
 function registerRef(id: string) {
@@ -82,10 +83,13 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
   const childIds = useChildren(id);
   const editing = useEditor((s) => s.editingTextId === id);
   const preview = useEditor((s) => (s.statePreview?.id === id ? s.statePreview.state : undefined));
+  // A popover, dialog or details shows its content while it or a layer inside is selected, so it can be edited.
+  const revealable = !!node && isRevealable(node.tag, node.attributes);
+  const revealed = useEditor((s) => revealable && holdsSelection(id, s.selection));
   if (!node) return null;
 
   const props: Record<string, unknown> = {
-    ...node.attributes,
+    ...reactAttributes(node.attributes),
     'data-gf-id': id,
     ...(node.theme && { 'data-theme': node.theme }),
     ...(preview && { 'data-gf-preview': preview }),
@@ -93,10 +97,16 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
     style: toStyle(node, isRoot),
   };
   if (node.attributes.src !== undefined) props.src = displaySrc(node.attributes.src);
+  if (revealed) {
+    if (node.tag === 'details') props.open = true;
+    else props['data-gf-open'] = '';
+  }
   // The canvas handles drags itself; a dragged image would start the browser's own.
   if (node.tag === 'img') props.draggable = false;
 
   if (node.type === 'text') {
+    // A textarea's text is its starting value; it's edited in the Inspector.
+    if (node.tag === 'textarea') return createElement(node.tag, { ...props, defaultValue: node.text ?? '' });
     if (editing) return <EditableText node={node} props={props} />;
     return createElement(node.tag, props, node.text);
   }

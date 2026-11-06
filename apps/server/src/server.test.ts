@@ -343,6 +343,26 @@ describe('MCP tools', () => {
     expect(bad.isError).toBe(true);
   });
 
+  it('warns about invokers that point at a missing id or the wrong layer', async () => {
+    const res = await call('create_nodes', {
+      doc: 'invokers',
+      nodes: [
+        {
+          type: 'frame',
+          name: 'Page',
+          frame: { width: 600, height: 300 },
+          children: [
+            { tag: 'button', text: 'Menu', attributes: { popovertarget: 'menu' } },
+            { tag: 'button', text: 'Delete', attributes: { commandfor: 'confirm', command: 'show-modal' } },
+            { type: 'frame', tag: 'dialog', attributes: { id: 'confirm' }, children: [{ tag: 'p', text: 'Sure?' }] },
+          ],
+        },
+      ],
+    });
+    expect(res.isError).toBe(false);
+    expect(res.data.warnings).toEqual([expect.stringContaining('no layer in this artboard has attributes.id "menu"')]);
+  });
+
   it('rolls back a batch that fails validation partway', async () => {
     const room = server.rooms.get('atomic');
     const before = room.doc.nodes.size;

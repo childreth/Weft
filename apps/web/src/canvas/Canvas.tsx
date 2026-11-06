@@ -466,7 +466,8 @@ export function Canvas() {
       const { id, label } = hitTest(e);
       if (!id || label) return;
       const node = scene.nodes.get(id);
-      if (node?.type === 'text' && !node.locked) {
+      // A textarea's text is its starting value, edited in the Inspector: it can't be typed into on the canvas.
+      if (node?.type === 'text' && !node.locked && node.tag !== 'textarea') {
         history.beginGesture();
         useEditor.getState().select([id]);
         useEditor.getState().setEditingText(id);

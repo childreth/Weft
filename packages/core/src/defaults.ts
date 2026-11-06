@@ -32,7 +32,10 @@ export const DEFAULT_TEXT_STYLES: StyleMap = {};
 export const ARTBOARD_RESET_CSS = `
 *, *::before, *::after { box-sizing: border-box; }
 * { margin: 0; }
-button, input { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
+[popover], dialog { margin: auto; }
+[popover]:not(:popover-open):not([data-gf-open]), dialog:not([open]):not([data-gf-open]) { display: none !important; }
+::backdrop { background: rgb(0 0 0 / 0.4); }
 img, svg { display: block; max-width: 100%; }
 [data-theme] { color: var(--color-on-surface); font-family: var(--font-family-body); }
 `;
