@@ -3,6 +3,8 @@ export type NodeType = 'frame' | 'text';
 export const CONTAINER_TAGS = [
   'div', 'section', 'header', 'footer', 'main', 'nav', 'aside', 'article',
   'form', 'ul', 'ol', 'li', 'button', 'a', 'label', 'dialog', 'figure',
+  // Native behavior without scripts: disclosure, popovers (any frame with "popover"), menus.
+  'details', 'summary', 'select',
   // Text blocks as containers, for mixed inline styles: an h1 frame holding span text nodes.
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'blockquote', 'figcaption',
   'dl', 'dt', 'dd',
@@ -13,6 +15,7 @@ export const TEXT_TAGS = [
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'a', 'button', 'label',
   'li', 'strong', 'em', 'small', 'blockquote', 'figcaption',
   'dt', 'dd', 'caption', 'th', 'td',
+  'summary', 'option', 'textarea',
 ] as const;
 
 export const VOID_TAGS: ReadonlySet<string> = new Set(['input', 'img', 'hr']);

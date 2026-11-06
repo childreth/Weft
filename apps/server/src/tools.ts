@@ -17,6 +17,7 @@ import {
   UNSUPPORTED_STYLES,
   attributeIssues,
   breakpointIssues,
+  invokerIssues,
   stateIssues,
   defaultTokens,
   exportArtboardHTML,
@@ -69,6 +70,7 @@ Model:
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), or change roles in one with "tokens" and "theme".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 - States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
+- Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
 - Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
@@ -326,6 +328,17 @@ function iconWarnings(room: Room, ids: Iterable<string>): string[] {
   return warnings;
 }
 
+/** Invokers (popovertarget, commandfor) in the touched artboards that can't work: a missing id, a wrong command or target. */
+function invokerWarnings(room: Room, ids: Iterable<string>): string[] {
+  const artboards = new Set<string>();
+  for (const id of ids) {
+    let node = room.doc.getNode(id);
+    while (node?.parentId) node = room.doc.getNode(node.parentId);
+    if (node) artboards.add(node.id);
+  }
+  return [...artboards].flatMap((a) => invokerIssues([a, ...room.doc.getDescendantIds(a)].map((d) => room.doc.getNode(d)!)));
+}
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function nextArtboardPosition(room: Room): { x: number; y: number } {
@@ -546,7 +559,7 @@ export function createMcpServer(
             ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, parentId)}`
             : `Creating ${created.map((c) => c.name).join(', ')}`,
         });
-        const warnings = [...themeWarnings(room, touched), ...iconWarnings(room, touched)];
+        const warnings = [...themeWarnings(room, touched), ...iconWarnings(room, touched), ...invokerWarnings(room, touched)];
         return {
           created,
           ...(warnings.length && { warnings }),
@@ -620,6 +633,7 @@ export function createMcpServer(
           ...backgroundWarnings(room, updates),
           ...themeWarnings(room, updates.filter((u) => u.theme).map((u) => u.id)),
           ...iconWarnings(room, touched),
+          ...invokerWarnings(room, touched),
         ];
         const restyled = updates.some((u) => u.styles || u.breakpoints || u.states);
         return {

@@ -47,6 +47,17 @@ Use `header`, `nav`, `section`, `article`, `aside` and `footer` for what they ar
 - **Label and value pairs** (specs, profile details): `dl` with `dt`/`dd` children, as a grid (`gridTemplateColumns: auto 1fr`).
 - **Data tables:** `table` → `thead`/`tbody` → `tr` → `th`/`td` text nodes. Use a table only for real tabular data, not for layout.
 
+## Things that open (no scripts)
+
+These work in the exported page as they are, and on the canvas when the user turns on the artboard's Interact toggle.
+
+- **Disclosure / FAQ:** frame `details` holding a `summary` (text, or a frame with an icon and text) and the content. Give each `details` in a group the same `name` attribute and only one stays open (an accordion). `open: ""` starts it open.
+- **Menu or tooltip-like panel:** a frame with `popover: ""` and an `id`, plus a `button` with `popovertarget` set to that id. It opens centered over the page; clicking outside or Escape closes it. Style it fully (background, padding, radius, shadow): the browser's default is a plain bordered box.
+- **Dialog:** frame `dialog` with an `id`, opened by a `button` with `commandfor: "<id>"` and `command: "show-modal"`; inside, a `button` with the same `commandfor` and `command: "close"`. The page behind dims. Put the dialog at the end of the artboard.
+- **Select:** frame `select` with text `option` children (`value` attribute, `selected: ""` for the default), labeled by a `label`.
+- **Multi-line field:** text `textarea` (its text is the starting value; usually empty with a `placeholder`), `rows` attribute for height.
+- Closed parts don't show in `get_screenshot`. To check one, open it for the screenshot (`open: ""` on a details or dialog; for a popover, remove `popover`), then put it back.
+
 ## Responsive
 
 Design desktop first, then check `get_screenshot` with `width: 390`. Typical mobile overrides: grids to `1fr`, rows to `flexDirection: column`, smaller `padding` and `gap`, smaller heading `fontSize`. Put them on the node that needs them, in `breakpoints.mobile` (or `tablet`). If you hide the nav links on mobile, add a menu `button` with `aria-label: "Menu"` that's hidden on desktop and shown in `breakpoints.mobile`, so the links stay reachable.

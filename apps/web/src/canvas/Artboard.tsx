@@ -3,15 +3,19 @@ import { createPortal } from 'react-dom';
 import { ARTBOARD_RESET_CSS, compileBreakpointCSS, compileStateCSS, compileTokensCSS, type SceneNode } from '@weft/core';
 import { scene, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
-import { zoomTo } from '../editor/viewport';
-import { linkedArtboard, startInteracting } from './interact';
+import { installBehaviors } from './behaviors';
+import { startInteracting } from './interact';
 import { useDocTokens } from '../editor/fonts';
 import { NodeView } from './NodeView';
 
 // color-scheme: the editor's own (dark) would inherit into artboards and restyle default controls, unlike an exported page.
 const ARTBOARD_BASE_CSS = `
-:host { display: block; width: 100%; height: 100%; overflow: hidden; user-select: none; container: artboard / inline-size; color-scheme: normal; }
+:host { display: block; width: 100%; height: 100%; overflow: hidden; user-select: none; container: artboard / inline-size; color-scheme: normal; contain: layout; }
 :host([data-interact]) { user-select: auto; }
+/* Popovers and dialogs open inside the artboard (layout containment makes the host their containing block), not in the browser's top layer. */
+[data-gf-open] { display: block; z-index: 1000; }
+dialog[data-gf-open] { position: fixed; inset: 0; max-width: calc(100% - 2em); max-height: calc(100% - 2em); overflow: auto; }
+dialog[data-gf-open='modal'], [popover][data-gf-open='modal'] { box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.4); }
 ${ARTBOARD_RESET_CSS}
 [contenteditable] { user-select: text; cursor: text; outline: none; min-height: 1lh; min-width: 1ch; }
 `;
@@ -37,28 +41,16 @@ export const Artboard = memo(function Artboard({ id }: { id: string }) {
     setRoot(host.shadowRoot ?? host.attachShadow({ mode: 'open' }));
   }, []);
 
-  // Links and forms never navigate the editor. In interact mode a link to another
-  // artboard (#<id> or #<name>) pans to it and turns interact on there too.
+  // Links, forms, popovers and dialogs: see installBehaviors.
+  useLayoutEffect(() => (root ? installBehaviors(root, id) : undefined), [root, id]);
+
+  // Turning interact off puts the page back as the document has it (inputs, open details, scroll).
+  const [epoch, setEpoch] = useState(0);
+  const wasInteracting = useRef(interacting);
   useLayoutEffect(() => {
-    if (!root) return;
-    const onClick = (e: Event) => {
-      const link = e.composedPath().find((t): t is HTMLAnchorElement => t instanceof HTMLAnchorElement && t.hasAttribute('href'));
-      if (!link) return;
-      e.preventDefault();
-      if (!useEditor.getState().interacting.has(id)) return;
-      const target = linkedArtboard(link.getAttribute('href')!);
-      if (!target || target === id) return;
-      startInteracting(target);
-      zoomTo(useEditor.getState().camera.zoom, [target]);
-    };
-    const onSubmit = (e: Event) => e.preventDefault();
-    root.addEventListener('click', onClick);
-    root.addEventListener('submit', onSubmit);
-    return () => {
-      root.removeEventListener('click', onClick);
-      root.removeEventListener('submit', onSubmit);
-    };
-  }, [root, id]);
+    if (wasInteracting.current && !interacting) setEpoch((n) => n + 1);
+    wasInteracting.current = interacting;
+  }, [interacting]);
 
   if (!node?.frame) return null;
   const { x, y, width, height, heightMode } = node.frame;
@@ -93,7 +85,7 @@ export const Artboard = memo(function Artboard({ id }: { id: string }) {
           <>
             <ArtboardStyles />
             <BreakpointStyles rootId={id} />
-            <NodeView id={id} isRoot />
+            <NodeView key={epoch} id={id} isRoot />
           </>,
           root,
         )}
