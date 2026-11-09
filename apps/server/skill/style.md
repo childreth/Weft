@@ -8,12 +8,16 @@ This file is Weft's default taste: strong opinions, loosely held. Apply it fully
 
 Removing generic devices isn't enough: a page with every tell taken out and nothing put in their place is just an empty page. Before styling, decide in one sentence what this design is about and what makes it specific to its subject (the object, the place, the numbers, the people). Then let that choose the type, the color and the one moment that breaks the pattern. If you could swap the product name and the page would still work for a competitor, there's no idea yet.
 
+In an app screen the idea lives in the domain's own details more than in a headline: the parts only this subject has, drawn the way its people already read them (a running pace split by kilometre, a pending card payment shown apart from settled ones, a ring for a daily goal, a seat map for a cinema). Look for those before reaching for generic cards. `screens.md` covers app screens.
+
 ## Use the tokens
 
 - Colors, spacing, radii, font sizes and shadows come from tokens: `var(--color-…)`, `var(--space-…)`, `var(--radius-…)`, `var(--font-size-…)`, `var(--shadow-…)`. Call `list_tokens` for the real names.
 - If the document already has a design system (its own tokens, or existing artboards with a clear look), use it before inventing anything.
 - Colors are Material 3's color roles. Weft calls `md.sys.color.<role>` `color.<role>`, so everything Material says about a role holds here. Every document has all of them: {{COLOR_ROLES}}.
 - For a palette (a brand, a reference), `set_tokens` with `seed`: one hex color generates every role, light and dark, with contrast built in. `variant` sets the character ({{SCHEME_VARIANTS}}): `tonal-spot` is Material's calm default, `fidelity` keeps the brand color itself recognizable (as `primary-container`), `vibrant` and `expressive` push color, `neutral` and `monochrome` hold it back. Adjust single roles afterwards with `tokens` only if the result misses (a brand's exact primary).
+- Every variant except `monochrome` tints the surfaces and containers with the seed's hue: with `tonal-spot`, a blue seed gives pale blue-lavender panels everywhere. That's the recognizable Material look; choose it, don't land in it. For a near-neutral ground with one strong accent, use `variant: "neutral"` (or `monochrome`) and then set `primary`, `on-primary`, `primary-container` and `on-primary-container` with `tokens` to the accent, checking contrast. Do it with `theme` for each theme of a pair.
+- That recipe is one option, not the answer. Others: a tinted Material scheme, a full field of one color, a dark ground, two strong colors. Pick from the subject and where it's used, and choose light or dark on purpose; light isn't the safe default. A warm off-white ground with one deep green or ink accent is becoming the generated look: use it only when the subject asks for it.
 - Style layers with roles only, never with a shade or a hex. Every new color token on a layer is a second palette starting, and a theme can't reach it.
 - Themes: another version of a design (dark, a seasonal palette, a second brand) is a theme, not a restyle. `set_tokens` with `seed` and `theme` makes a pair (`ember` and `ember-dark`); with `tokens` and `theme` it overrides single roles, colors and the font roles. The built-in `dark` is the document's own colors in dark. `update_nodes` with `"theme"` applies one to an artboard or a section. For a light and dark pair, duplicate the artboard and give the copy the theme. This is why colors and fonts go through the roles: a raw hex or a font named directly stays the same in every theme.
 
@@ -61,6 +65,8 @@ Removing generic devices isn't enough: a page with every tell taken out and noth
 
 These read as generated because tools produce them by default. Avoid them unless the user's direction calls for them: then they're the brand, not a tell.
 
+They're tells when they're decoration. One can stay when it carries the content or follows the domain's own convention, and you can say which in one line: stat tiles for a set of metrics that really are equal, a dark ground for a cinema's seat map. Say that line in your reply. A mood is not a reason: "feels premium", "feels energetic" or "looks modern" never qualifies. When the request is vague, these defaults hold.
+
 | Tell | Do instead |
 | --- | --- |
 | Violet, indigo or purple-to-blue gradients; gradient text; glowing buttons | Flat color from the palette; solid text color |
@@ -72,7 +78,7 @@ These read as generated because tools produce them by default. Avoid them unless
 | Tiny tracked uppercase label (eyebrow) above every heading | Fold it into the heading or delete it |
 | A pill badge above the headline ("New", "Beta", "↑ 6 vs avg") | Say it in the supporting sentence or next to the data it describes |
 | One word of a headline in italic serif, color or underline | One face and one color per headline |
-| A display serif as the shortcut to "premium" | A type pairing chosen for the subject |
+| A display serif as the shortcut to "premium" | A type pairing chosen for the subject; a display face that is the subject's own convention (an inscriptional serif for fantasy, a slab for a sports program, blackletter for a tattoo studio) is the subject choosing it |
 | Floating pill navigation with blur | A plain bar |
 | Decorative 01 / 02 / 03 numbering, hairline rules everywhere, design-tool ornaments (crosshairs, dashed guides) | Order by position and size; separate with space and tone |
 | Monospace labels, dates and captions as a "technical" voice; meta strings joined by middle dots ("Blood panel · drawn 14 Oct") | The text face in sentence case; a plain sentence or two separate pieces of text. Monospace only for code |

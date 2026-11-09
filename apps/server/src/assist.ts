@@ -98,6 +98,8 @@ interface Session {
   client: Client;
   /** Every MCP tool; each turn offers the ones its model can use (`toolsFor`). */
   tools: OllamaTool[];
+  /** Per tool, the injected arguments it takes (tools refuse keys they don't know). */
+  injects: Map<string, string[]>;
   history: ChatMessage[];
   lastSeen: number;
   busy: boolean;
@@ -128,6 +130,14 @@ function toOllamaTool(tool: { name: string; description?: string; inputSchema: R
   for (const key of INJECTED_ARGS) delete schema.properties?.[key];
   if (schema.required) schema.required = schema.required.filter((k) => !INJECTED_ARGS.includes(k));
   return { type: 'function', function: { name: tool.name, description: tool.description ?? '', parameters: schema } };
+}
+
+/** The model's arguments plus the injected ones the tool takes (`doc`, `model`): tools refuse keys they don't know. */
+export function injectArgs(args: Record<string, unknown>, takes: readonly string[], req: Pick<ChatRequest, 'doc' | 'model'>): Record<string, unknown> {
+  const out = { ...args };
+  if (takes.includes('doc')) out.doc = req.doc;
+  if (takes.includes('model')) out.model = req.model;
+  return out;
 }
 
 /** Cloud models get the design skill; models that can see images get screenshots. */
@@ -227,6 +237,7 @@ export class Assistant {
       mcp,
       client,
       tools: tools.map((t) => toOllamaTool(t as Parameters<typeof toOllamaTool>[0])),
+      injects: new Map(tools.map((t) => [t.name, INJECTED_ARGS.filter((k) => k in (t.inputSchema.properties ?? {}))])),
       history: [],
       lastSeen: Date.now(),
       busy: false,
@@ -308,7 +319,7 @@ ${selection}`;
           if (seen.has(key)) repeats++;
           const text = seen.has(key)
             ? { text: 'You already made this exact call in this turn; its result is above. Use it, try something different, or answer the user.', isError: true, images: [] }
-            : await this.callTool(session, tools, name, { ...args, doc: req.doc, model: req.model });
+            : await this.callTool(session, tools, name, injectArgs(args, session.injects.get(name) ?? [], req));
           seen.add(key);
           emit({ type: 'tool_result', name, ok: !text.isError, text: text.text.slice(0, 400) });
           session.history.push({

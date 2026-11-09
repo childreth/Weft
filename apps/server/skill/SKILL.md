@@ -14,6 +14,7 @@ Weft artboards are real web pages rendered by the browser. You build a tree of s
 | File | What's in it |
 | --- | --- |
 | `layout.md` | Layout recipes: pages, grids, headings with spans, buttons, cards, responsive |
+| `screens.md` | App screens: framing, the parts apps are made of, density and type for screens people use |
 | `style.md` | Style and taste: the idea, color, type, composition, generic tells to avoid, words, accessibility, matching a reference |
 | `verify.md` | The checklist to run after each section, and the critique to run when it's built |
 
@@ -21,7 +22,7 @@ Weft artboards are real web pages rendered by the browser. You build a tree of s
 
 1. Lay out with flex or grid and `gap`. Every wrapper needs a job (a layout, a background or a semantic tag).
 2. Take values from tokens (`list_tokens`). Use raw values only to match a reference, and then the same value every time.
-3. Have taste by default, and drop it when told. With no design direction from the user, decide what the design is about first and avoid the generic tells in `style.md` (violet gradients, cream and terracotta, eyebrow labels, bento tiles, …). An explicit design system, brand, reference or request from the user overrides any of Weft's style defaults.
+3. Have taste by default, and drop it when told. With no design direction from the user, decide what the design is about first and avoid the generic tells in `style.md` (violet gradients, cream and terracotta, eyebrow labels, bento tiles, …). A tell can stay only when it carries the content (say which in one line), never for a mood. An explicit design system, brand, reference or request from the user overrides any of Weft's style defaults.
 4. Screenshot after every section (`get_screenshot`) and fix what you see before moving on.
 5. Check at least two widths: the artboard's own and the other end (390 for a desktop design, 1440 or 768 for a mobile one). Fix what breaks at the other width before you finish.
 

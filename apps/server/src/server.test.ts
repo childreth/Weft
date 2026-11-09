@@ -119,6 +119,19 @@ describe('MCP tools', () => {
     expect((await call('get_screenshot', { doc: 'shot', id: 'nope' })).text).toContain('not found');
   });
 
+  it('refuses unknown argument keys and names the one meant', async () => {
+    const before = server.rooms.get('strict').doc.getChildren(null).length;
+    const create = await call('create_nodes', { doc: 'strict', parent: 'f_x', nodes: [{ type: 'text', text: 'Hi' }] });
+    expect(create.isError).toBe(true);
+    expect(create.text).toContain('"parent" (did you mean "parentId"?)');
+    // Nothing was made at the top level instead.
+    expect(server.rooms.get('strict').doc.getChildren(null).length).toBe(before);
+    expect((await call('get_canvas', { doc: 'strict', id: 'f_x' })).text).toContain('did you mean "rootId"');
+    // Nested objects too: a node spec and an update.
+    expect((await call('create_nodes', { doc: 'strict', nodes: [{ type: 'text', text: 'Hi', stlyes: {} }] })).text).toContain('did you mean "styles"');
+    expect((await call('update_nodes', { doc: 'strict', updates: [{ id: 'f_x', children: null }] })).text).toContain('Unknown key "children"');
+  });
+
   it('tests a flow through an artboard: dialogs, details, fields, links to other artboards', async () => {
     const room = server.rooms.get('flow');
     const d = room.doc;
@@ -884,7 +897,7 @@ describe('sync relay', () => {
   });
 
   it('teaches agents the text roles', async () => {
-    const skill = (await call('read_skill', { topic: 'style' })).text;
+    const skill = (await call('read_skill', {})).text;
     expect(skill).toContain('`h1`, `h2`');
     expect(skill).toContain('`body-lg`, `body-md`, `body-sm`, `label`, `caption`');
     expect(skill).not.toContain('{{');
