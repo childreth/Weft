@@ -1,4 +1,10 @@
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { googleFontsCSSUrl } from '@weft/core';
+import { FontCache } from './fonts';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -18,6 +24,8 @@ beforeAll(async () => {
     if (!googleUp) return req.socket.destroy();
     const base = `http://127.0.0.1:${(google.address() as AddressInfo).port}`;
     if (req.url!.startsWith('/css2')) {
+      const family = /family=([^:&]+)/.exec(req.url!)![1]!.replace(/\+/g, ' ');
+      if (family !== 'Lora') return res.end(`@font-face { font-family: '${family}'; src: url(${base}/files/s/x/v1/${family.replace(/ /g, '')}.woff2) format('woff2'); }`);
       return res.end(`@font-face { font-family: 'Lora'; font-weight: 400; src: url(${base}/files/s/lora/v35/lora-400.woff2) format('woff2'); }`);
     }
     if (req.url === '/files/s/lora/v35/lora-400.woff2') return res.end(Buffer.from('wOF2fake'));
@@ -82,6 +90,41 @@ describe('Google Fonts', () => {
     expect(hits.length).toBe(before);
     // Not cached and offline: an empty sheet, so text falls back to the stack.
     expect(await (await fetch(`${server.httpUrl}/fonts.css?q=Inter:400`)).text()).toMatch(/^\/\* Fonts unavailable offline/);
+    googleUp = true;
+  });
+
+  it('caches each family on its own, asks icon fonts for their FILL axis, and keeps older combined sheets offline', async () => {
+    const base = `http://127.0.0.1:${(google.address() as AddressInfo).port}`;
+    const dir = mkdtempSync(join(tmpdir(), 'weft-fonts-'));
+    const cache = new FontCache(dir, { css: base, files: `${base}/files/` });
+    const lora = { family: 'Lora', weights: [400] };
+    const icons = { family: 'Material Symbols Outlined', weights: [400] };
+    const before = hits.length;
+    const css = await cache.css([lora, icons], '/f');
+    expect(css).toContain("font-family: 'Lora'");
+    expect(css).toContain("font-family: 'Material Symbols Outlined'");
+    const asked = hits.slice(before);
+    expect(asked).toHaveLength(2);
+    expect(asked.some((u) => u.includes('Material+Symbols+Outlined:wght,FILL@400,0..1'))).toBe(true);
+
+    // Adding a family fetches only that one.
+    const inter = { family: 'Inter', weights: [400] };
+    const mark = hits.length;
+    await cache.css([lora, icons, inter], '/f');
+    expect(hits.slice(mark)).toHaveLength(1);
+
+    // A document cached under the old scheme (every family in one URL, icons without FILL) still loads offline.
+    const old = new FontCache(dir, { css: base, files: `${base}/files/` });
+    const roboto = { family: 'Roboto', weights: [400] };
+    const legacyUrl = googleFontsCSSUrl([roboto, icons], base, { iconFill: false })!;
+    mkdirSync(join(dir, 'css'), { recursive: true });
+    writeFileSync(join(dir, `css/${createHash('sha256').update(legacyUrl).digest('hex').slice(0, 24)}.css`), '/* legacy sheet */');
+    googleUp = false;
+    expect(await old.css([roboto, icons], '/f')).toBe('/* legacy sheet */');
+    // Offline with neither: the cached families, and a note naming the missing one.
+    const partial = await old.css([lora, { family: 'Lato', weights: [400] }], '/f');
+    expect(partial).toContain('unavailable offline until first loaded online: Lato');
+    expect(partial).toContain("font-family: 'Lora'");
     googleUp = true;
   });
 
