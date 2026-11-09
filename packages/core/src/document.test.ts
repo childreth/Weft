@@ -769,6 +769,10 @@ describe('fonts', () => {
     expect(tokens.find((t) => t.cssVar === '--font-family-playfair-display')!.value).toBe('"Playfair Display", Georgia, serif');
     expect(tokens.find((t) => t.cssVar === '--font-family-sans')).toBeDefined();
     expect(googleFontsCSSUrl(fonts)).toBe('https://fonts.googleapis.com/css2?family=Inter:wght@400&family=Playfair+Display:wght@400;700&display=swap');
+    // Icon fonts load their FILL axis, so fontVariationSettings "'FILL' 1" draws filled icons.
+    const icons = [{ family: 'Material Symbols Rounded', weights: [400] }];
+    expect(googleFontsCSSUrl(icons)).toBe('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:wght,FILL@400,0..1&display=swap');
+    expect(googleFontsCSSUrl(icons, undefined, { iconFill: false })).toBe('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:wght@400&display=swap');
     expect(decodeFontQuery(encodeFontQuery(fonts))).toEqual([{ family: 'Inter', weights: [400] }, { family: 'Playfair Display', weights: [400, 700] }]);
     expect(decodeFontQuery('Nope:400|Inter:999|<x>')).toEqual([{ family: 'Inter', weights: [400, 500, 600, 700] }]);
   });

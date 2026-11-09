@@ -113,12 +113,26 @@ export function withFontTokens(base: TokenSet, fonts: readonly DocumentFont[]): 
 }
 
 /** Google Fonts CSS API URL for the fonts, or null when there are none. */
-export function googleFontsCSSUrl(fonts: readonly DocumentFont[], origin = 'https://fonts.googleapis.com'): string | null {
+export function googleFontsCSSUrl(
+  fonts: readonly DocumentFont[],
+  origin = 'https://fonts.googleapis.com',
+  { iconFill = true }: { iconFill?: boolean } = {},
+): string | null {
   if (fonts.length === 0) return null;
-  const families = [...fonts]
-    .sort((a, b) => a.family.localeCompare(b.family))
-    .map((f) => `family=${encodeURIComponent(f.family).replace(/%20/g, '+')}:wght@${[...f.weights].sort((a, b) => a - b).join(';')}`);
+  const families = [...fonts].sort((a, b) => a.family.localeCompare(b.family)).map((f) => fontFamilyParam(f, iconFill));
   return `${origin}/css2?${families.join('&')}&display=swap`;
+}
+
+/**
+ * One family's part of a Google Fonts URL. Icon fonts also load their FILL
+ * axis (0..1), so `fontVariationSettings: "'FILL' 1"` draws filled icons; a
+ * static instance has no axes and ignores it.
+ */
+function fontFamilyParam(f: DocumentFont, iconFill: boolean): string {
+  const name = encodeURIComponent(f.family).replace(/%20/g, '+');
+  const weights = [...f.weights].sort((a, b) => a - b);
+  if (iconFill && (ICON_FONTS as readonly string[]).includes(f.family)) return `family=${name}:wght,FILL@${weights.map((w) => `${w},0..1`).join(';')}`;
+  return `family=${name}:wght@${weights.join(';')}`;
 }
 
 /** Compact query form used by Weft's own font route: `Inter:400,700|Lora:400`. */

@@ -31,26 +31,45 @@ export class FontCache {
   ) {}
 
   /**
-   * The stylesheet for `fonts`, with font URLs under `fileBase`. Without a
-   * network and nothing cached it returns an empty sheet, so text falls back
-   * to each token's fallback stack.
+   * The stylesheet for `fonts`, with font URLs under `fileBase`. Each family is
+   * fetched and cached on its own, so adding a font (or a change to one
+   * family's URL, like icon fonts gaining their FILL axis) never refetches the
+   * others. Offline, a family that isn't cached is left out, and text falls
+   * back to each token's fallback stack.
    */
   async css(fonts: readonly DocumentFont[], fileBase: string): Promise<string> {
-    const url = googleFontsCSSUrl(fonts, this.origins.css);
-    if (!url) return '';
-    const key = `css/${createHash('sha256').update(url).digest('hex').slice(0, 24)}.css`;
-    let css = this.read(key)?.toString('utf8');
-    if (css === undefined) {
-      try {
-        const res = await fetch(url, { headers: { 'user-agent': BROWSER_UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-        if (!res.ok) throw new Error(`Google Fonts responded ${res.status}`);
-        css = await res.text();
-        this.write(key, Buffer.from(css));
-      } catch (err) {
-        return `/* Fonts unavailable offline until first loaded online: ${(err as Error).message.replace(/\*\//g, '')} */\n`;
-      }
+    if (fonts.length === 0) return '';
+    const sheets = await Promise.all(fonts.map((font) => this.sheet(googleFontsCSSUrl([font], this.origins.css)!)));
+    let css: string;
+    if (sheets.every((sheet) => sheet !== null)) {
+      css = sheets.join('\n');
+    } else {
+      // Sheets cached before each family had its own (all fonts in one URL, icons without FILL) still work offline.
+      const legacy = this.read(this.key(googleFontsCSSUrl(fonts, this.origins.css, { iconFill: false })!))?.toString('utf8');
+      const missing = fonts.filter((_, i) => sheets[i] === null).map((f) => f.family);
+      css = legacy ?? [`/* Fonts unavailable offline until first loaded online: ${missing.join(', ').replace(/\*\//g, '')} */`, ...sheets.filter((s) => s !== null)].join('\n');
     }
     return css.replaceAll(this.origins.files, `${fileBase.replace(/\/$/, '')}/`);
+  }
+
+  /** One family's stylesheet from the cache, else from Google (then cached); null if neither. */
+  private async sheet(url: string): Promise<string | null> {
+    const key = this.key(url);
+    const cached = this.read(key)?.toString('utf8');
+    if (cached !== undefined) return cached;
+    try {
+      const res = await fetch(url, { headers: { 'user-agent': BROWSER_UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (!res.ok) throw new Error(`Google Fonts responded ${res.status}`);
+      const css = await res.text();
+      this.write(key, Buffer.from(css));
+      return css;
+    } catch {
+      return null;
+    }
+  }
+
+  private key(url: string): string {
+    return `css/${createHash('sha256').update(url).digest('hex').slice(0, 24)}.css`;
   }
 
   /** A font file by its fonts.gstatic.com path, cached on first use. Null if it can't be had. */
