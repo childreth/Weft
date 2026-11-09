@@ -63,3 +63,19 @@ export function invokerIssues(nodes: Iterable<SceneNode>): string[] {
   }
   return issues;
 }
+
+/**
+ * The artboard a link's `#fragment` names: its id, or its name (any case,
+ * spaces or dashes). Interact mode pans to it; flow tests open it.
+ */
+export function linkedArtboard(href: string, artboards: readonly { id: string; name: string }[]): string | null {
+  if (!href.startsWith('#') || href.length < 2) return null;
+  let key: string;
+  try {
+    key = decodeURIComponent(href.slice(1));
+  } catch {
+    return null;
+  }
+  const slug = (s: string) => s.trim().toLowerCase().replace(/[\s_]+/g, '-');
+  return artboards.find((a) => a.id === key)?.id ?? artboards.find((a) => slug(a.name) === slug(key))?.id ?? null;
+}

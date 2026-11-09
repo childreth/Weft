@@ -27,8 +27,8 @@ const HISTORY_TURNS = 6;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
 /** Filled in by the assistant, so small models never have to get them right. */
 const INJECTED_ARGS = ['doc', 'model'];
-/** Not offered to local models: the skill would fill a small context, and most can't see images. */
-const LOCAL_EXCLUDED_TOOLS = new Set(['read_skill', 'get_screenshot']);
+/** Not offered to local models: the skill and flow tests' schema would fill a small context, and most can't see images. */
+const LOCAL_EXCLUDED_TOOLS = new Set(['read_skill', 'get_screenshot', 'test_flow']);
 
 export const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/;
 

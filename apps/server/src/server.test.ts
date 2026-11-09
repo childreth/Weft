@@ -57,7 +57,7 @@ describe('MCP tools', () => {
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
         'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'export_html', 'import_file',
-        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens',
+        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens', 'test_flow',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');
@@ -117,6 +117,74 @@ describe('MCP tools', () => {
     expect(info(boxesOnly).boxes[0]).toMatchObject({ id: features.id });
 
     expect((await call('get_screenshot', { doc: 'shot', id: 'nope' })).text).toContain('not found');
+  });
+
+  it('tests a flow through an artboard: dialogs, details, fields, links to other artboards', async () => {
+    const room = server.rooms.get('flow');
+    const d = room.doc;
+    const sheet = d.createNode({ type: 'frame', name: 'Sheet', frame: { x: 0, y: 3000, width: 600, height: 500, heightMode: 'hug' }, styles: { display: 'flex', flexDirection: 'column', gap: '12px', padding: '24px' } });
+    d.createNode({ type: 'frame', name: 'Spells', frame: { x: 700, y: 3000, width: 600, height: 400 } });
+    const spells = d.getChildren(null).find((n) => n.name === 'Spells')!.id;
+    d.createNode({ type: 'text', tag: 'h2', parentId: spells, text: 'Spellbook' });
+    d.createNode({ type: 'text', tag: 'button', parentId: sheet, text: 'Rest', attributes: { commandfor: 'rest', command: 'show-modal' } });
+    const dialog = d.createNode({ type: 'frame', tag: 'dialog', name: 'Rest dialog', parentId: sheet, attributes: { id: 'rest', 'aria-label': 'Take a rest' } });
+    d.createNode({ type: 'text', tag: 'p', parentId: dialog, text: 'Short or long rest?' });
+    d.createNode({ type: 'text', tag: 'button', parentId: dialog, text: 'Done', attributes: { commandfor: 'rest', command: 'close' } });
+    const details = d.createNode({ type: 'frame', tag: 'details', parentId: sheet });
+    d.createNode({ type: 'text', tag: 'summary', parentId: details, text: 'Inventory' });
+    d.createNode({ type: 'text', tag: 'p', parentId: details, text: 'Rope, 50 ft' });
+    const label = d.createNode({ type: 'frame', tag: 'label', parentId: sheet });
+    d.createNode({ type: 'text', tag: 'span', parentId: label, text: 'Character name' });
+    d.createNode({ type: 'frame', tag: 'input', parentId: label, attributes: { type: 'text' } });
+    d.createNode({ type: 'text', tag: 'a', parentId: sheet, text: 'Spells', attributes: { href: '#spells' } });
+
+    const run = async (steps: unknown[], extra: Record<string, unknown> = {}) => {
+      const res = (await client.callTool({ name: 'test_flow', arguments: { doc: 'flow', id: sheet, steps, ...extra } })) as {
+        content: Array<{ type: string; text?: string; data?: string }>;
+        isError?: boolean;
+      };
+      return { res, info: res.isError ? null : JSON.parse(res.content[0]!.text!) };
+    };
+
+    const { res, info } = await run([
+      { action: 'expect', target: { role: 'dialog' }, state: 'closed' },
+      { action: 'click', target: { role: 'button', name: 'Rest' } },
+      { action: 'expect', target: { role: 'dialog', name: 'Take a rest' }, state: 'open', text: 'long rest', screenshot: true },
+      { action: 'press', key: 'Escape' },
+      { action: 'expect', target: { id: dialog }, state: 'closed' },
+      { action: 'expect', target: { role: 'button', name: 'Rest' }, state: 'focused' },
+      { action: 'expect', target: { text: 'Rope' }, state: 'hidden' },
+      { action: 'click', target: { text: 'Inventory' } },
+      { action: 'expect', target: { text: 'Rope' }, state: 'visible' },
+      { action: 'fill', target: { label: 'Character name' }, text: 'Thorn' },
+      { action: 'expect', target: { role: 'textbox', name: 'Character name' }, value: 'Thorn' },
+      { action: 'click', target: { role: 'link', name: 'Spells' } },
+      { action: 'expect', target: { role: 'heading', name: 'Spellbook' }, state: 'visible' },
+    ]);
+    expect(info.failedAt).toBeUndefined();
+    expect(info.passed).toBe(true);
+    expect(info.steps[11].note).toContain('Went to artboard "Spells"');
+    expect(info.endedOn).toEqual({ id: spells, name: 'Spells' });
+    expect(info.snapshot).toContain('heading "Spellbook"');
+    expect(res.content.filter((c) => c.type === 'image')).toHaveLength(1);
+
+    // A failure stops the flow, says why and where, and lists what didn't run.
+    const failing = await run([
+      { action: 'click', target: { role: 'button', name: 'Done' } },
+      { action: 'expect', target: { role: 'dialog' }, state: 'open' },
+    ]);
+    expect(failing.info.passed).toBe(false);
+    expect(failing.info.failedAt).toContain('is hidden');
+    expect(failing.info.skipped).toHaveLength(1);
+    expect(failing.info.snapshot).toContain('button "Rest"');
+    const wrong = await run([{ action: 'expect', target: { role: 'button', name: 'Rest' }, state: 'disabled' }]);
+    expect(wrong.info.failedAt).toContain('is enabled');
+
+    // Bad steps are refused before anything runs.
+    const bad = await run([{ action: 'click' }, { action: 'fill', target: { label: 'x' } }]);
+    expect(bad.res.isError).toBe(true);
+    expect(bad.res.content[0]!.text).toContain('steps[0] (click): needs a target');
+    expect(bad.res.content[0]!.text).toContain('steps[1] (fill): needs text');
   });
 
   it('flags clipped or spilling content, not glyphs past a tight line height', async () => {

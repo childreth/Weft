@@ -1,4 +1,13 @@
-import { chromium, type Browser } from 'playwright-core';
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
+
+/** Answers a request from the page (fonts, images), or null to block it. */
+export type Resource = (url: string) => Promise<{ body: Buffer | string; type: string } | null>;
+
+/** Shows `html` in `page` once its fonts are ready. */
+export async function setPage(page: Page, html: string): Promise<void> {
+  await page.setContent(html, { waitUntil: 'load' });
+  await page.evaluate('document.fonts.ready.then(() => 0)');
+}
 
 /**
  * Screenshots artboard HTML in a local headless Chromium (the one Playwright
@@ -77,23 +86,14 @@ export class Renderer {
   }
 
   /**
-   * Renders `html` at `width` CSS px and screenshots the artboard, or the
-   * element `[data-gf-id=target]` when given. Boxes cover that element's
-   * subtree to `depth` levels, relative to the screenshot's top-left.
+   * A page showing `html` at `width` × `height` CSS px, with JavaScript off and
+   * every request blocked except what `resource` answers (e.g. the document's
+   * fonts from the local cache). Close its context when done.
    */
-  /**
-   * `resource` may answer requests (e.g. the document's fonts from the local
-   * cache); everything else is blocked.
-   */
-  async screenshot(
-    html: string,
-    opts: { width: number; target?: string; depth?: number; scale?: number; resource?: (url: string) => Promise<{ body: Buffer | string; type: string } | null> },
-  ): Promise<RenderResult> {
+  async open(html: string, opts: { width: number; height: number; scale?: number; resource?: Resource }): Promise<{ context: BrowserContext; page: Page }> {
     const browser = await this.launch();
-    const selector = opts.target ? `[data-gf-id="${opts.target.replace(/["\\]/g, '')}"]` : '.weft-artboard';
-    const width = Math.round(opts.width);
-    const load = async (deviceScaleFactor: number, height: number) => {
-      const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor, javaScriptEnabled: false });
+    const context = await browser.newContext({ viewport: { width: Math.round(opts.width), height: Math.round(opts.height) }, deviceScaleFactor: opts.scale ?? 1, javaScriptEnabled: false });
+    try {
       await context.route('**/*', async (route) => {
         const found = await opts.resource?.(route.request().url()).catch(() => null);
         // The page's origin is opaque (setContent), and fonts are CORS requests.
@@ -101,10 +101,23 @@ export class Renderer {
         return route.abort();
       });
       const page = await context.newPage();
-      await page.setContent(html, { waitUntil: 'load' });
-      await page.evaluate('document.fonts.ready.then(() => 0)');
+      await setPage(page, html);
       return { context, page };
-    };
+    } catch (err) {
+      await context.close();
+      throw err;
+    }
+  }
+
+  /**
+   * Renders `html` at `width` CSS px and screenshots the artboard, or the
+   * element `[data-gf-id=target]` when given. Boxes cover that element's
+   * subtree to `depth` levels, relative to the screenshot's top-left.
+   */
+  async screenshot(html: string, opts: { width: number; target?: string; depth?: number; scale?: number; resource?: Resource }): Promise<RenderResult> {
+    const selector = opts.target ? `[data-gf-id="${opts.target.replace(/["\\]/g, '')}"]` : '.weft-artboard';
+    const width = Math.round(opts.width);
+    const load = (scale: number, height: number) => this.open(html, { width, height, scale, resource: opts.resource });
 
     // Measure at 1x, then shoot with a viewport tall enough for the clip, scaled down if it's big.
     let { context, page } = await load(1, 800);

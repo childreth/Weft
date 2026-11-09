@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { invokerAction, invokerIssues } from './behaviors';
+import { invokerAction, invokerIssues, linkedArtboard } from './behaviors';
 import { GridDocument } from './document';
 import { exportArtboardHTML } from './export';
 import { ARTBOARD_RESET_CSS } from './defaults';
 
 describe('native behaviors', () => {
+  it('finds the artboard a link names, by id or name', () => {
+    const boards = [{ id: 'a1', name: 'Character Sheet' }, { id: 'b2', name: 'Spells' }];
+    expect(linkedArtboard('#b2', boards)).toBe('b2');
+    expect(linkedArtboard('#character-sheet', boards)).toBe('a1');
+    expect(linkedArtboard('#SPELLS', boards)).toBe('b2');
+    expect(linkedArtboard('#nope', boards)).toBeNull();
+    expect(linkedArtboard('https://example.com', boards)).toBeNull();
+    expect(linkedArtboard('#%E0%A4%A', boards)).toBeNull();
+  });
+
   it('reads what an invoker does', () => {
     expect(invokerAction({ popovertarget: 'menu' })).toEqual({ target: 'menu', action: 'toggle-popover' });
     expect(invokerAction({ popovertarget: 'menu', popovertargetaction: 'hide' })).toEqual({ target: 'menu', action: 'hide-popover' });
