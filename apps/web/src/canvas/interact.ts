@@ -1,3 +1,4 @@
+import { linkedArtboard as linkedArtboardIn } from '@weft/core';
 import { scene } from '../editor/editor';
 import { useEditor } from '../editor/store';
 
@@ -41,11 +42,7 @@ export function canScrollInside(event: WheelEvent): boolean {
 
 /** The artboard a link's `#fragment` names: its id, or its name (any case, spaces or dashes). */
 export function linkedArtboard(href: string): string | null {
-  if (!href.startsWith('#') || href.length < 2) return null;
-  const key = decodeURIComponent(href.slice(1));
-  const slug = (s: string) => s.trim().toLowerCase().replace(/[\s_]+/g, '-');
-  const ids = scene.children(null);
-  return ids.find((id) => id === key) ?? ids.find((id) => slug(scene.nodes.get(id)?.name ?? '') === slug(key)) ?? null;
+  return linkedArtboardIn(href, scene.children(null).map((id) => ({ id, name: scene.nodes.get(id)?.name ?? '' })));
 }
 
 /** Turns interact on for an artboard; a selection inside it moves up to the artboard, whose chrome would cover the page. */

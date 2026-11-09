@@ -56,7 +56,7 @@ These work in the exported page as they are, and on the canvas when the user tur
 - **Dialog:** frame `dialog` with an `id`, opened by a `button` with `commandfor: "<id>"` and `command: "show-modal"`; inside, a `button` with the same `commandfor` and `command: "close"`. The page behind dims. Put the dialog at the end of the artboard.
 - **Select:** frame `select` with text `option` children (`value` attribute, `selected: ""` for the default), labeled by a `label`.
 - **Multi-line field:** text `textarea` (its text is the starting value; usually empty with a `placeholder`), `rows` attribute for height.
-- Closed parts don't show in `get_screenshot`. To check one, open it for the screenshot (`open: ""` on a details or dialog; for a popover, remove `popover`), then put it back.
+- Check that they work with `test_flow` (`verify.md`): click the button, expect the dialog `open`, press Escape, expect it `closed`. Add `screenshot: true` to a step to see what's open, instead of editing the design to open it.
 
 ## Responsive
 

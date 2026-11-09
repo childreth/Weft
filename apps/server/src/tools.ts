@@ -18,6 +18,7 @@ import {
   attributeIssues,
   breakpointIssues,
   invokerIssues,
+  linkedArtboard,
   stateIssues,
   defaultTokens,
   exportArtboardHTML,
@@ -48,7 +49,8 @@ import {
 import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
 import { AssetError, type AssetStore } from './assets';
 import type { FontCache } from './fonts';
-import type { Renderer } from './render';
+import { describeTarget, FLOW_ACTIONS, FLOW_STATES, flowStepIssues, runFlow, type FlowPage } from './flow';
+import type { Renderer, Resource } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
 import { readSkill, skillFiles } from './skill';
 
@@ -70,7 +72,7 @@ Model:
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), or change roles in one with "tokens" and "theme".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 - States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
-- Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle.
+- Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
 - Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
@@ -79,7 +81,7 @@ Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B
 
 Before designing or restyling anything, call read_skill with no path: it returns Weft's whole design guide (layout recipes, style and taste rules, how to check your work). Once per session is enough; read it again only when it's no longer in your context.
 
-Workflow: get_selection or get_canvas (detail "outline" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile; image false for just the boxes) → select_nodes to show the user what you changed.
+Workflow: get_selection or get_canvas (detail "outline" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile; image false for just the boxes), and test_flow for anything interactive → select_nodes to show the user what you changed.
 
 Sessions end after ${SESSION_IDLE_MINUTES} minutes without a call, and when the Weft server restarts. On HTTP 404 "Session not found", initialize again: documents are saved, so nothing is lost.`;
 
@@ -422,6 +424,24 @@ export interface McpServerOptions {
 
 const SKILL_REMINDER =
   "You haven't read Weft's style guide this session. Call read_skill (no path) before styling further: it covers color, type, composition and the generic looks to avoid.";
+
+/** An artboard as the page the renderer loads: fonts and images come from the server's caches. */
+function renderHTML(room: Room, artboardId: string, width?: number): string {
+  return exportArtboardHTML(room.doc, artboardId, {
+    width,
+    fontCSSUrl: room.doc.getFonts().length ? `${RENDER_FONTS}/fonts.css` : null,
+    assetUrl: (name) => `${RENDER_ASSETS}/${name}`,
+  });
+}
+
+function renderResource(room: Room, services: ToolServices): Resource {
+  return async (url) => {
+    if (url === `${RENDER_FONTS}/fonts.css`) return { body: await services.fonts.css(room.doc.getFonts(), `${RENDER_FONTS}/files`), type: 'text/css' };
+    if (url.startsWith(`${RENDER_FONTS}/files/`)) return services.fonts.file(url.slice(`${RENDER_FONTS}/files/`.length));
+    if (url.startsWith(`${RENDER_ASSETS}/`)) return services.assets.get(url.slice(`${RENDER_ASSETS}/`.length));
+    return null;
+  };
+}
 
 export function createMcpServer(
   rooms: RoomRegistry,
@@ -1092,20 +1112,9 @@ export function createMcpServer(
         while (artboard.parentId) artboard = room.doc.getNode(artboard.parentId)!;
         agent.look([targetId], `Looking at ${nameOf(room, targetId)}`);
         const renderWidth = width ?? artboard.frame!.width;
-        const fonts = room.doc.getFonts();
-        const html = exportArtboardHTML(room.doc, artboard.id, {
+        const shot = await services.renderer.screenshot(renderHTML(room, artboard.id, renderWidth), {
           width: renderWidth,
-          fontCSSUrl: fonts.length ? `${RENDER_FONTS}/fonts.css` : null,
-          assetUrl: (name) => `${RENDER_ASSETS}/${name}`,
-        });
-        const shot = await services.renderer.screenshot(html, {
-          width: renderWidth,
-          resource: async (url) => {
-            if (url === `${RENDER_FONTS}/fonts.css`) return { body: await services.fonts.css(fonts, `${RENDER_FONTS}/files`), type: 'text/css' };
-            if (url.startsWith(`${RENDER_FONTS}/files/`)) return services.fonts.file(url.slice(`${RENDER_FONTS}/files/`.length));
-            if (url.startsWith(`${RENDER_ASSETS}/`)) return services.assets.get(url.slice(`${RENDER_ASSETS}/`.length));
-            return null;
-          },
+          resource: renderResource(room, services),
           target: targetId === artboard.id ? undefined : targetId,
           depth,
         });
@@ -1123,6 +1132,90 @@ export function createMcpServer(
         const text = { type: 'text' as const, text: JSON.stringify(summary, null, 2) };
         if (!image) return { content: [text] };
         return { content: [{ type: 'image' as const, data: shot.png.toString('base64'), mimeType: 'image/png' }, text] };
+      } catch (err) {
+        return fail((err as Error).message);
+      }
+    },
+  );
+
+  const flowTarget = z
+    .object({
+      id: z.string().optional().describe('Node id'),
+      role: z.string().optional().describe('ARIA role: button, link, textbox, checkbox, combobox, dialog, heading, group…'),
+      name: z.string().optional().describe('Accessible name, with role (a button\'s text, a field\'s label, a dialog\'s aria-label)'),
+      label: z.string().optional().describe("A form field's label text"),
+      text: z.string().optional().describe('Visible text'),
+      exact: z.boolean().optional().describe('Match name, label or text exactly (default: case-insensitive substring)'),
+    })
+    .describe('What to act on: a node id, or how a person finds it (role + name is best)');
+
+  server.registerTool(
+    'test_flow',
+    {
+      title: 'Test a flow through an artboard',
+      description:
+        "Clicks, types and checks through an artboard's exported page in headless Chromium, the way a person would, with no editor open. Popovers, dialogs, details, selects and forms work natively; a link to another artboard (#id or #artboard-name) opens it. Returns each step's result (stops at the first failure), the ARIA snapshot where it ended, console errors and resources that didn't load, and screenshots of steps marked screenshot. Use it after building something interactive: open it, check what appears, close it, check focus.",
+      inputSchema: {
+        doc: docParam,
+        id: z.string().optional().describe('Artboard to start on; defaults to the first artboard'),
+        width: z.coerce.number().int().min(200).max(3840).optional().describe("Viewport width in CSS px; defaults to the artboard's width"),
+        steps: z
+          .array(
+            z.object({
+              action: z
+                .enum(FLOW_ACTIONS)
+                .describe('click, hover, focus, fill (replace a field\'s text), press (a key, on the target or the page), select (an option), check, uncheck, expect'),
+              target: flowTarget.optional(),
+              text: z.string().optional().describe('fill: the text to enter; expect: text the target should contain'),
+              key: z.string().optional().describe('press: Enter, Escape, Tab, Shift+Tab, ArrowDown, Space…'),
+              value: z.string().optional().describe("select: an option's label or value; expect: a field's value"),
+              state: z.enum(FLOW_STATES).optional().describe('expect: open/closed for dialogs, popovers and details; hidden also passes when nothing matches'),
+              screenshot: z.boolean().optional().describe('Capture the page after this step (up to 4 per call)'),
+            }),
+          )
+          .min(1)
+          .max(40),
+        model: modelParam,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ doc, id, width, steps, model }) => {
+      try {
+        const issues = flowStepIssues(steps);
+        if (issues.length) return fail(issues.join('\n'));
+        const { room, agent } = open(doc, model);
+        const artboards = room.doc.getChildren(null).filter((n) => n.frame);
+        const startId = id ?? artboards[0]?.id;
+        if (!startId) return fail('This document has no artboards');
+        const start = artboards.find((a) => a.id === startId);
+        if (!start) return fail(room.doc.has(startId) ? `${startId} isn't an artboard; pass the artboard it's in` : `Node ${startId} not found`);
+        agent.look([start.id], `Testing ${start.name}`);
+        const page = (board: { id: string; name: string }): FlowPage => ({ id: board.id, name: board.name, html: renderHTML(room, board.id, width) });
+        const viewportWidth = width ?? start.frame!.width;
+        const result = await runFlow(services.renderer, page(start), steps, {
+          width: viewportWidth,
+          height: Math.max(800, start.frame!.heightMode === 'fixed' ? start.frame!.height : 0),
+          resource: renderResource(room, services),
+          link: (href) => {
+            const target = linkedArtboard(href, artboards);
+            return target ? page(artboards.find((a) => a.id === target)!) : null;
+          },
+        });
+        const failed = result.steps.find((s) => !s.ok);
+        const summary = {
+          passed: result.passed,
+          ...(failed && { failedAt: `steps[${failed.step}] (${failed.action}${failed.target ? ` ${failed.target}` : ''}): ${failed.error}` }),
+          ...(result.steps.length < steps.length && { skipped: steps.slice(result.steps.length).map((s, i) => `steps[${result.steps.length + i}] ${s.action}${s.target ? ` ${describeTarget(s.target)}` : ''}`) }),
+          steps: result.steps,
+          endedOn: result.artboard,
+          ...(result.errors.length && { errors: result.errors }),
+          snapshot: result.snapshot,
+        };
+        const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [{ type: 'text', text: JSON.stringify(summary, null, 2) }];
+        for (const shot of result.screenshots) {
+          content.push({ type: 'text', text: `After steps[${shot.step}]:` }, { type: 'image', data: shot.png.toString('base64'), mimeType: 'image/png' });
+        }
+        return { content };
       } catch (err) {
         return fail((err as Error).message);
       }

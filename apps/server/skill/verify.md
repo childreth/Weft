@@ -6,6 +6,19 @@ Look at what you built after every section, not only at the end. `get_screenshot
 
 - `get_screenshot({ id })`: a PNG of an artboard or any node, plus the boxes of its children (position, size, `overflows`). Pass `width: 390` (or 768) to render the artboard at another width and check the breakpoints. Pass `depth` for more levels of boxes.
 - `get_layout`: exact computed boxes and styles, but only when the user has the editor open.
+- `test_flow({ id, steps })`: clicks and types through the artboard's page in headless Chromium, with popovers, dialogs, details, selects and forms working natively, and returns each step's result, the ARIA snapshot where it ended and any console errors. Steps find things the way a person does: `{ "role": "button", "name": "Rest" }`, `{ "label": "Email" }`, `{ "text": "Inventory" }`, or a node `id`.
+
+## Anything interactive
+
+Run `test_flow` once it's built, before telling the user it works:
+
+- Each button opens what it should: `click`, then `expect` the dialog or popover `open` and its content (`text`).
+- It closes: the close button, and `press` Escape for dialogs and popovers; then `expect` it `closed`.
+- Focus comes back: after closing, `expect` the button that opened it `focused`.
+- Fields have labels: `fill` each by `label`. If a field can only be found by id, it has no label.
+- Links between artboards (`#artboard-name`) land on the right one.
+
+A step that fails says why (`is hidden`, `matches 3 elements`, `No element matches`). Fix the design, not the step: a button that can't be found by role and name is unnamed for screen readers too. The snapshot is what assistive technology reads, so check it for unnamed buttons and missing headings.
 
 ## Checklist after each section
 
