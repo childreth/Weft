@@ -49,6 +49,7 @@ import {
 import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
 import { AssetError, type AssetStore } from './assets';
 import type { FontCache } from './fonts';
+import { strictObject } from './strict';
 import { describeTarget, FLOW_ACTIONS, FLOW_STATES, flowStepIssues, runFlow, type FlowPage } from './flow';
 import type { Renderer, Resource } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
@@ -89,6 +90,7 @@ Sessions end after ${SESSION_IDLE_MINUTES} minutes without a call, and when the 
 const AUTHORED_STYLES = `Standard CSS properties in camelCase (gridTemplateColumns, backgroundColor, textWrap, WebkitLineClamp), values as CSS strings. Not supported: ${Object.keys(UNSUPPORTED_STYLES).join(', ')}. No url() or other external resources. An unknown property is rejected with the closest match.`;
 
 const docParam = z.string().regex(ROOM_NAME).default('default').describe('Document name; omit for the default document');
+const ignoredDoc = z.string().optional().describe('Not used by this tool');
 const modelParam = z
   .string()
   .max(60)
@@ -121,17 +123,15 @@ const breakpointKey = z.enum(BREAKPOINT_IDS as [string, ...string[]]);
 const STATE_STYLES = `Style overrides per interaction state (${STATES.map((s) => `${s.id} = ${s.selector}`).join(', ')}), layered over styles and breakpoints`;
 const stateKey = z.enum(STATE_IDS as [string, ...string[]]);
 
-const frameSchema = z
-  .object({
-    x: z.coerce.number(),
-    y: z.coerce.number(),
-    width: z.coerce.number().positive(),
-    height: z.coerce.number().positive().describe('Fixed height; setting it without heightMode makes the artboard fixed'),
-    heightMode: z
-      .enum(['fixed', 'hug'])
-      .describe('"hug" sizes the artboard to its content (height is then the last measured value); "fixed" clips overflow'),
-  })
-  .partial();
+const frameSchema = strictObject({
+  x: z.coerce.number(),
+  y: z.coerce.number(),
+  width: z.coerce.number().positive(),
+  height: z.coerce.number().positive().describe('Fixed height; setting it without heightMode makes the artboard fixed'),
+  heightMode: z
+    .enum(['fixed', 'hug'])
+    .describe('"hug" sizes the artboard to its content (height is then the last measured value); "fixed" clips overflow'),
+}).partial();
 
 interface NodeSpec {
   type: 'frame' | 'text';
@@ -157,7 +157,7 @@ const withTypes = ({ children, ...spec }: NodeSpecInput): NodeSpec => ({
 });
 
 const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
-  z.object({
+  strictObject({
     type: z
       .enum(['frame', 'text'])
       .optional()
@@ -451,8 +451,12 @@ export function createMcpServer(
 ): McpServer {
   const server = new McpServer({ name: 'weft', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS });
   const register = server.registerTool.bind(server);
-  server.registerTool = ((name, config, callback) =>
-    register(name, { ...config, inputSchema: config.inputSchema && (nullAsMissing(config.inputSchema as z.ZodRawShape) as typeof config.inputSchema) }, callback)) as typeof server.registerTool;
+  // Arguments are strict (unknown keys are refused, naming the closest), except `doc` and `model`, which every tool takes:
+  // agents are told to pass their model on every call, and many pass the document everywhere too.
+  server.registerTool = ((name, config, callback) => {
+    const shape = { doc: ignoredDoc, model: modelParam, ...(config.inputSchema as z.ZodRawShape | undefined) };
+    return register(name, { ...config, inputSchema: strictObject(nullAsMissing(shape)) as unknown as typeof config.inputSchema }, callback);
+  }) as typeof server.registerTool;
   /** Reading the whole skill, or style.md, counts as reading the style guide. */
   const markRead = (path?: string) => {
     if (path === undefined || path.replace(/^\.\//, '') === 'style.md') identity.readStyleGuide = true;
@@ -599,7 +603,7 @@ export function createMcpServer(
         doc: docParam,
         updates: z
           .array(
-            z.object({
+            strictObject({
               id: z.string(),
               name: z.string().optional(),
               tag: z.string().optional(),
@@ -997,7 +1001,7 @@ export function createMcpServer(
         'Adds Google Fonts to the document (or more weights to one it has). Each becomes a token, e.g. "Playfair Display" → {font-family.playfair-display}: point a role at it with set_tokens {"font-family.heading": "{font-family.playfair-display}"} and style with var(--font-family-heading) (or font-family.body / var(--font-family-body)), so themes can swap it. Weights default to the usual 400–700 the family has. Fonts are cached locally after first use, so they keep working offline.',
       inputSchema: {
         doc: docParam,
-        fonts: z.array(z.object({ family: z.string(), weights: z.array(z.coerce.number().int()).optional() })).min(1).max(10),
+        fonts: z.array(strictObject({ family: z.string(), weights: z.array(z.coerce.number().int()).optional() })).min(1).max(10),
         model: modelParam,
       },
     },
@@ -1138,16 +1142,14 @@ export function createMcpServer(
     },
   );
 
-  const flowTarget = z
-    .object({
-      id: z.string().optional().describe('Node id'),
-      role: z.string().optional().describe('ARIA role: button, link, textbox, checkbox, combobox, dialog, heading, group…'),
-      name: z.string().optional().describe('Accessible name, with role (a button\'s text, a field\'s label, a dialog\'s aria-label)'),
-      label: z.string().optional().describe("A form field's label text"),
-      text: z.string().optional().describe('Visible text'),
-      exact: z.boolean().optional().describe('Match name, label or text exactly (default: case-insensitive substring)'),
-    })
-    .describe('What to act on: a node id, or how a person finds it (role + name is best)');
+  const flowTarget = strictObject({
+    id: z.string().optional().describe('Node id'),
+    role: z.string().optional().describe('ARIA role: button, link, textbox, checkbox, combobox, dialog, heading, group…'),
+    name: z.string().optional().describe('Accessible name, with role (a button\'s text, a field\'s label, a dialog\'s aria-label)'),
+    label: z.string().optional().describe("A form field's label text"),
+    text: z.string().optional().describe('Visible text'),
+    exact: z.boolean().optional().describe('Match name, label or text exactly (default: case-insensitive substring)'),
+  }).describe('What to act on: a node id, or how a person finds it (role + name is best)');
 
   server.registerTool(
     'test_flow',
@@ -1161,7 +1163,7 @@ export function createMcpServer(
         width: z.coerce.number().int().min(200).max(3840).optional().describe("Viewport width in CSS px; defaults to the artboard's width"),
         steps: z
           .array(
-            z.object({
+            strictObject({
               action: z
                 .enum(FLOW_ACTIONS)
                 .describe('click, hover, focus, fill (replace a field\'s text), press (a key, on the target or the page), select (an option), check, uncheck, expect'),

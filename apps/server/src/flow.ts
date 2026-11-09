@@ -86,6 +86,7 @@ const ACTIVE_ELEMENT = `(() => {
   const text = (a.textContent || '').trim().slice(0, 40);
   return a.tagName.toLowerCase() + (text ? ' "' + text + '"' : '');
 })()`;
+const HAS_OVERLAY = `!!document.querySelector('dialog:modal, :popover-open')`;
 const PAGE_HEIGHT = 'document.documentElement.scrollHeight';
 const NEEDS_TARGET: ReadonlySet<FlowAction> = new Set(['click', 'hover', 'focus', 'fill', 'select', 'check', 'uncheck', 'expect']);
 
@@ -291,7 +292,9 @@ export async function runFlow(
         result.note = [result.note, 'The page navigated away (a form submit or a link); the flow test reloaded the artboard, so its state was reset'].filter(Boolean).join('. ');
       }
       if (step.screenshot && screenshots.length < MAX_SCREENSHOTS) {
-        const height = Math.min(MAX_SHOT_HEIGHT, Math.max(opts.height, ((await page.evaluate(PAGE_HEIGHT)) as number)));
+        // With a modal or popover open, show the screen as a person sees it: the backdrop covers the viewport, not the whole page.
+        const overlay = (await page.evaluate(HAS_OVERLAY)) as boolean;
+        const height = overlay ? opts.height : Math.min(MAX_SHOT_HEIGHT, Math.max(opts.height, (await page.evaluate(PAGE_HEIGHT)) as number));
         screenshots.push({ step: i, png: await page.screenshot({ type: 'png', fullPage: height > opts.height, clip: { x: 0, y: 0, width: opts.width, height } }) });
       }
       if (!result.ok) break;

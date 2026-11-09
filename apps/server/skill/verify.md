@@ -12,6 +12,15 @@ Look at what you built after every section, not only at the end. `get_screenshot
 
 Run `test_flow` once it's built, before telling the user it works:
 
+```json
+{ "id": "<artboard id>", "steps": [
+  { "action": "click", "target": { "role": "button", "name": "Rest" } },
+  { "action": "expect", "target": { "role": "dialog" }, "state": "open", "text": "long rest", "screenshot": true },
+  { "action": "press", "key": "Escape" },
+  { "action": "expect", "target": { "role": "button", "name": "Rest" }, "state": "focused" }
+] }
+```
+
 - Each button opens what it should: `click`, then `expect` the dialog or popover `open` and its content (`text`).
 - It closes: the close button, and `press` Escape for dialogs and popovers; then `expect` it `closed`.
 - Focus comes back: after closing, `expect` the button that opened it `focused`.
