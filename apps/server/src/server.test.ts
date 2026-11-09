@@ -789,10 +789,43 @@ describe('sync relay', () => {
     expect(room.doc.getThemeNames()).toEqual(['dark', 'forest', 'forest-dark']);
 
     expect((await call('set_tokens', { doc: 'seeds', seed: 'green' })).text).toContain('expected a hex color');
-    expect((await call('set_tokens', { doc: 'seeds', seed: '#3f7d4e', tokens: { 'color.primary': '#000' } })).text).toContain('not both');
     expect((await call('set_tokens', { doc: 'seeds' })).text).toContain('Pass "tokens"');
     // One step each: undo takes the theme pair back off.
     await call('undo_agent_change', { doc: 'seeds' });
+    expect(room.doc.getThemeNames()).toEqual(['dark']);
+  });
+
+  it('sets a theme pair from a seed with its fonts and accent in one call; non-colors reach the dark partner', async () => {
+    const room = server.rooms.get('seed-tokens');
+    await call('add_fonts', { doc: 'seed-tokens', fonts: [{ family: 'Cinzel', weights: [600] }] });
+    const res = await call('set_tokens', {
+      doc: 'seed-tokens',
+      seed: '#7a1f2b',
+      variant: 'neutral',
+      theme: 'oxblood',
+      tokens: { 'color.primary': '#7a1f2b', 'font-family.heading': '{font-family.cinzel}', 'radius.md': '4px' },
+    });
+    expect(res.isError).toBe(false);
+    expect(res.data).toMatchObject({ seed: '#7a1f2b', themes: ['oxblood', 'oxblood-dark'], theme: 'oxblood', alsoIn: { theme: 'oxblood-dark', tokens: ['font-family.heading', 'radius.md'] } });
+    const themes = room.doc.getThemes();
+    // The tokens win over what the seed generated, in the theme the call named.
+    expect(themes.oxblood!['color.primary']).toBe('#7a1f2b');
+    expect(themes.oxblood!['font-family.heading']).toBe('{font-family.cinzel}');
+    // The dark partner gets the fonts and radius, but keeps its own generated accent.
+    expect(themes['oxblood-dark']!['font-family.heading']).toBe('{font-family.cinzel}');
+    expect(themes['oxblood-dark']!['radius.md']).toBe('4px');
+    expect(themes['oxblood-dark']!['color.primary']).not.toBe('#7a1f2b');
+
+    // Its own accent, set on the dark theme alone, doesn't touch the light one.
+    await call('set_tokens', { doc: 'seed-tokens', theme: 'oxblood-dark', tokens: { 'color.primary': '#ffb3b5' } });
+    expect(room.doc.getThemes().oxblood!['color.primary']).toBe('#7a1f2b');
+
+    // The seed and its tokens are one step: undo takes both back.
+    await call('undo_agent_change', { doc: 'seed-tokens' });
+    await call('undo_agent_change', { doc: 'seed-tokens' });
+    expect(room.doc.getThemeNames()).toEqual(['dark']);
+    // A bad token rolls the seed back too.
+    expect((await call('set_tokens', { doc: 'seed-tokens', seed: '#7a1f2b', theme: 'oxblood', tokens: { 'color.nope': '#000' } })).isError).toBe(true);
     expect(room.doc.getThemeNames()).toEqual(['dark']);
   });
 

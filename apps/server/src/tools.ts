@@ -70,7 +70,7 @@ Model:
 - Text roles work like the color roles: ${TEXT_ROLES.join(', ')}. A role is its tokens: var(--font-size-<role>), var(--font-weight-<role>), var(--line-height-<role>), var(--letter-spacing-<role>), with var(--font-family-heading) on headings and var(--font-family-body) otherwise. body-lg is lead text, body-md the default, body-sm secondary text, label for buttons and form labels, caption for what explains something else. A node with a heading tag, button, label, figcaption or small starts with its role; styles you pass win. For other text, set the role's styles. Change a role with set_tokens ("font-size.h1": "64px"), for the document or a theme, not layer by layer.\n- Prefer design tokens over raw values: var(--space-4), var(--color-primary), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). For a brand palette, set_tokens with "seed" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
-- Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), or change roles in one with "tokens" and "theme".
+- Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), with "tokens" in the same call for its fonts, type and accent; "tokens" that aren't colors also reach <theme>-dark, so set them once. Set the dark accent with theme "<theme>-dark".
 - Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
 - States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
@@ -852,7 +852,7 @@ export function createMcpServer(
     'set_tokens',
     {
       title: 'Set design tokens',
-      description: `Sets this document's design tokens. Colors are the Material 3 color roles (${COLOR_ROLES.length}: color.primary, color.on-surface, color.surface-container-high…; Material's md.sys.color.<role>), which every document has. For a brand palette, pass "seed" (one hex color): it generates every role from it, light (the document's colors) and dark (the built-in "dark" theme), with contrast built in, like Material Theme Builder; "variant" picks how (${SCHEME_VARIANT_NAMES.join(', ')}; "fidelity" keeps the seed's own color for primary-container). With "seed" and "theme" ("ember"), it makes the theme pair "ember" and "ember-dark" instead. "tokens" changes single tokens: {"color.primary": "#c2410c"}. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')}; font-family only for the roles font-family.heading and font-family.body, pointed at a font add_fonts added ({"font-family.heading": "{font-family.fraunces}"}). An existing name overrides it everywhere it's used; a new name adds a token (style layers with roles, not new color tokens). "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. With "theme", "tokens" override existing tokens only inside frames with that theme (creating it if new, or changing the built-in "dark"). "theme" with tokens null removes that theme. One atomic, undoable step.`,
+      description: `Sets this document's design tokens. Colors are the Material 3 color roles (${COLOR_ROLES.length}: color.primary, color.on-surface, color.surface-container-high…; Material's md.sys.color.<role>), which every document has. For a brand palette, pass "seed" (one hex color): it generates every role from it, light (the document's colors) and dark (the built-in "dark" theme), with contrast built in, like Material Theme Builder; "variant" picks how (${SCHEME_VARIANT_NAMES.join(', ')}; "fidelity" keeps the seed's own color for primary-container). With "seed" and "theme" ("ember"), it makes the theme pair "ember" and "ember-dark" instead. "tokens" changes single tokens: {"color.primary": "#c2410c"}; with "seed" in the same call they apply after it, so they override what it generated. Groups: ${DOCUMENT_TOKEN_GROUPS.join(', ')}; font-family only for the roles font-family.heading and font-family.body, pointed at a font add_fonts added ({"font-family.heading": "{font-family.fraunces}"}). An existing name overrides it everywhere it's used; a new name adds a token (style layers with roles, not new color tokens). "{group.name}" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. With "theme", "tokens" override existing tokens only inside frames with that theme (creating it if new, or changing the built-in "dark"). For a pair, tokens set on "ember" that aren't colors (fonts, type, radius, spacing) also go to "ember-dark"; colors stay per theme, so set the dark accent with theme "ember-dark". "theme" with tokens null removes that theme. One atomic, undoable step.`,
       inputSchema: {
         doc: docParam,
         tokens: z
@@ -869,38 +869,51 @@ export function createMcpServer(
     async ({ doc, tokens, seed, variant, theme, model }) => {
       const { room, agent } = open(doc, model);
       return mutate(room, agent, 'set_tokens', (_touched, report) => {
+        if (tokens === null) {
+          if (theme === undefined) throw new GridError('Pass the tokens to set, or a theme with tokens null to remove it');
+          if (seed !== undefined) throw new GridError('tokens null removes a theme; leave out "seed"');
+          report.action = `Removing the ${theme} theme`;
+          room.doc.removeTheme(theme, agent.identity.origin);
+          return { removedTheme: theme, themes: room.doc.getThemeNames() };
+        }
+        if (seed === undefined && tokens === undefined) throw new GridError('Pass "tokens" to set, a "seed" color, or both');
+        const result: Record<string, unknown> = {};
         if (seed !== undefined) {
-          if (tokens) throw new GridError('Pass "seed" or "tokens", not both: set single tokens in a second call');
-          report.action = theme === undefined ? `Coloring from ${seed}` : `Theming from ${seed} (${theme})`;
           const themes = room.doc.setSeedColor(seed, { theme, variant }, agent.identity.origin);
           const set = room.doc.tokenSet();
           // The light values of the roles most designs use; list_tokens has them all.
           const light = new Map(flattenTokens(theme === undefined ? set.tokens : set.modes![theme]!).map((t) => [t.name, t.value]));
           const KEY_ROLES = ['primary', 'on-primary', 'primary-container', 'surface', 'on-surface', 'on-surface-variant', 'surface-container', 'outline-variant'];
-          return {
-            seed,
-            ...(theme === undefined ? { colors: 'document', themes } : { themes }),
-            roles: Object.fromEntries(KEY_ROLES.map((role) => [`color.${role}`, light.get(`color.${role}`)])),
-          };
+          Object.assign(result, { seed, ...(theme === undefined && { colors: 'document' }), themes });
+          result.roles = Object.fromEntries(KEY_ROLES.map((role) => [`color.${role}`, light.get(`color.${role}`)]));
         }
-        if (tokens === undefined) throw new GridError('Pass "tokens" to set, or a "seed" color');
-        if (tokens === null) {
-          if (theme === undefined) throw new GridError('Pass the tokens to set, or a theme with tokens null to remove it');
-          report.action = `Removing the ${theme} theme`;
-          room.doc.removeTheme(theme, agent.identity.origin);
-          return { removedTheme: theme, themes: room.doc.getThemeNames() };
+        if (tokens) {
+          // After the seed, so single tokens override what it generated.
+          if (theme === undefined) room.doc.setTokens(tokens, agent.identity.origin);
+          else room.doc.setTheme(theme, tokens, agent.identity.origin);
+          // A theme's dark partner shares everything but colors, as the document's own tokens reach its dark theme:
+          // fonts, type, radius and spacing are set once. Colors stay per theme (a light accent seldom passes on dark).
+          const partner = theme !== undefined && theme !== 'dark' && !theme.endsWith('-dark') ? `${theme}-dark` : null;
+          const shared = Object.fromEntries(Object.entries(tokens).filter(([path]) => !path.startsWith('color.')));
+          if (partner && room.doc.getThemeNames().includes(partner) && Object.keys(shared).length) {
+            room.doc.setTheme(partner, shared, agent.identity.origin);
+            result.alsoIn = { theme: partner, tokens: Object.keys(shared) };
+          }
+          const paths = Object.keys(tokens);
+          const set = room.doc.tokenSet();
+          const flat = new Map(flattenTokens(theme === undefined ? set.tokens : set.modes![theme]!).map((t) => [t.name, t]));
+          if (theme !== undefined) result.theme = theme;
+          result.set = paths.filter((p) => tokens[p] !== null).map((p) => ({ name: p, use: `var(${flat.get(p)!.cssVar})`, value: flat.get(p)!.value }));
+          if (paths.some((p) => tokens[p] === null)) result.removed = paths.filter((p) => tokens[p] === null);
         }
-        if (theme === undefined) room.doc.setTokens(tokens, agent.identity.origin);
-        else room.doc.setTheme(theme, tokens, agent.identity.origin);
-        const paths = Object.keys(tokens);
-        report.action = theme === undefined ? `Setting ${plural(paths.length, 'token')}` : `Theming ${plural(paths.length, 'token')} (${theme})`;
-        const set = room.doc.tokenSet();
-        const flat = new Map(flattenTokens(theme === undefined ? set.tokens : set.modes![theme]!).map((t) => [t.name, t]));
-        return {
-          ...(theme !== undefined && { theme }),
-          set: paths.filter((p) => tokens[p] !== null).map((p) => ({ name: p, use: `var(${flat.get(p)!.cssVar})`, value: flat.get(p)!.value })),
-          ...(paths.some((p) => tokens[p] === null) && { removed: paths.filter((p) => tokens[p] === null) }),
-        };
+        const what = tokens ? plural(Object.keys(tokens).length, 'token') : '';
+        report.action =
+          seed !== undefined
+            ? `${theme === undefined ? 'Coloring' : 'Theming'} from ${seed}${tokens ? ` and ${what}` : ''}${theme === undefined ? '' : ` (${theme})`}`
+            : theme === undefined
+              ? `Setting ${what}`
+              : `Theming ${what} (${theme})`;
+        return result;
       });
     },
   );
