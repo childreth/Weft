@@ -962,6 +962,22 @@ describe('sync relay', () => {
     expect(JSON.parse(created.result.content[0]!.text).note).toBeUndefined();
   });
 
+  it('refuses MCP calls from a web page on another site, and takes them from local pages and plain clients', async () => {
+    const post = (headers: Record<string, string>) =>
+      fetch(`${server.httpUrl}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      });
+    expect((await post({ origin: 'https://evil.example' })).status).toBe(403);
+    // The preflight a browser sends first is refused too, with nothing that would let the real request through.
+    const preflight = await fetch(`${server.httpUrl}/mcp`, { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } });
+    expect(preflight.status).toBe(403);
+    expect(preflight.headers.get('access-control-allow-origin')).toBeNull();
+    expect((await post({ origin: 'http://localhost:5173' })).status).toBe(200);
+    expect((await post({})).status).toBe(200);
+  });
+
   it('gives each agent session its own cursor, model label and undo stack', async () => {
     const ydoc = new Y.Doc();
     const provider = new WebsocketProvider(server.wsUrl, 'multi', ydoc);
