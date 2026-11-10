@@ -45,6 +45,60 @@ export function sniffImage(bytes: Uint8Array): ImageExt | null {
   return null;
 }
 
+/**
+ * An image's pixel size from its header, without decoding it (the server has
+ * no image decoder; the editor measures with the browser instead). Null when
+ * the header can't be read. A JPEG rotated by its EXIF orientation reports the
+ * stored size, and an AVIF its first declared size.
+ */
+export function imageSize(bytes: Uint8Array): { width: number; height: number } | null {
+  const u16 = (o: number) => (bytes[o]! << 8) | bytes[o + 1]!;
+  const u16le = (o: number) => bytes[o]! | (bytes[o + 1]! << 8);
+  const u24le = (o: number) => u16le(o) | (bytes[o + 2]! << 16);
+  const u32 = (o: number) => u16(o) * 0x10000 + u16(o + 2);
+  const tag = (o: number) => String.fromCharCode(...bytes.subarray(o, o + 4));
+  const size = (width: number, height: number) => (width > 0 && height > 0 ? { width, height } : null);
+
+  switch (sniffImage(bytes)) {
+    case 'png':
+      return bytes.length >= 24 ? size(u32(16), u32(20)) : null;
+    case 'gif':
+      return bytes.length >= 10 ? size(u16le(6), u16le(8)) : null;
+    case 'jpg': {
+      // Segments are FF <marker> <length>; the frame header (SOF) holds the size.
+      let i = 2;
+      while (i + 9 < bytes.length) {
+        if (bytes[i] !== 0xff) return null;
+        const marker = bytes[i + 1]!;
+        if (marker === 0xff) i += 1;
+        else if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) i += 2;
+        else if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return size(u16(i + 7), u16(i + 5));
+        else i += 2 + u16(i + 2);
+      }
+      return null;
+    }
+    case 'webp': {
+      if (bytes.length < 30) return null;
+      const kind = tag(12);
+      if (kind === 'VP8 ') return size(u16le(26) & 0x3fff, u16le(28) & 0x3fff);
+      if (kind === 'VP8X') return size(1 + u24le(24), 1 + u24le(27));
+      if (kind === 'VP8L') {
+        const [b0, b1, b2, b3] = [bytes[21]!, bytes[22]!, bytes[23]!, bytes[24]!];
+        return size(1 + (((b1 & 0x3f) << 8) | b0), 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | (b1 >> 6)));
+      }
+      return null;
+    }
+    case 'avif': {
+      // The "ispe" property: 4 bytes of version and flags, then width and height.
+      const end = Math.min(bytes.length, 65536) - 16;
+      for (let i = 4; i < end; i++) if (bytes[i] === 0x69 && tag(i) === 'ispe') return size(u32(i + 8), u32(i + 12));
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
 /** Why `src` can't be an image source, or null when it can. */
 export function imageSrcIssue(src: string): string | null {
   if (ASSET_REF.test(src)) return null;
