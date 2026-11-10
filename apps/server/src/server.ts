@@ -374,6 +374,9 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     }
 
     if (pathname === '/mcp') {
+      // MCP clients aren't web pages and send no Origin. A page on another site that posts here is refused outright,
+      // rather than relying on its browser's preflight failing.
+      if (!originAllowed(req)) return json(res, 403, { error: 'Forbidden origin' });
       try {
         await handleMcp(req, res, agent);
       } catch (err) {
