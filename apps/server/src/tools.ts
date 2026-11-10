@@ -4,6 +4,7 @@ import {
   ALIGNMENTS,
   AXES,
   BREAKPOINTS,
+  breakpointRange,
   STATES,
   STATE_IDS,
   BREAKPOINT_IDS,
@@ -72,7 +73,7 @@ Model:
 - Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). For a brand palette, set_tokens with "seed" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.
 - Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), with "tokens" in the same call for its fonts, type and accent; "tokens" that aren't colors also reach <theme>-dark, so set them once. Set the dark accent with theme "<theme>-dark".
-- Responsive: "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ≤ ${b.maxWidth}px`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it.
+- Responsive: "styles" apply at every width; "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ${breakpointRange(b)}`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it. Build the layout in styles and adapt it with tablet and mobile (both apply on a phone; mobile wins). Use desktop only for a rule that shouldn't reach smaller screens, so nothing has to undo it there.
 - States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 

@@ -147,7 +147,7 @@ function BreakpointStyles({ rootId }: { rootId: string }) {
           stack.push(...scene.children(id));
         }
         css = [
-          compileBreakpointCSS(subtree, (w) => `@container artboard (max-width: ${w}px)`),
+          compileBreakpointCSS(subtree, (condition) => `@container artboard (${condition})`),
           compileStateCSS(subtree, { scope: ':host([data-interact])', preview: (state) => `[data-gf-preview="${state}"]` }),
         ]
           .filter(Boolean)

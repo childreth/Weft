@@ -10,6 +10,7 @@ import { flattenTokens, mergeTokenGroups, resolvedTokenValues, type TokenGroup, 
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
 import {
   BREAKPOINTS,
+  breakpointCondition,
   STATES,
   STATE_IDS,
   isStateId,
@@ -462,7 +463,7 @@ export function styleIssues(styles: Partial<Record<string, string | null>>): str
 
 export function breakpointIssues(breakpoints: Record<string, Partial<Record<string, string | null>> | null | undefined>): string[] {
   return Object.entries(breakpoints).flatMap(([bp, styles]) =>
-    !isBreakpointId(bp) ? [`Unknown breakpoint "${bp}" (use ${BREAKPOINT_IDS.join(' or ')})`] : styles ? styleIssues(styles).map((m) => `${bp}: ${m}`) : [],
+    !isBreakpointId(bp) ? [`Unknown breakpoint "${bp}" (use ${BREAKPOINT_IDS.join(', ')})`] : styles ? styleIssues(styles).map((m) => `${bp}: ${m}`) : [],
   );
 }
 
@@ -549,12 +550,13 @@ export function throwIssues(issues: readonly string[]): void {
 
 /**
  * CSS for breakpoint overrides, keyed by `[data-gf-id]`. `!important` is
- * needed on the canvas, where base styles are inline. `at` wraps each block:
- * the canvas uses an artboard container query, export uses a media query.
+ * needed on the canvas, where base styles are inline. `at` wraps each block
+ * in its width condition (`max-width: 600px`, `width > 1024px`): the canvas
+ * uses an artboard container query, export uses a media query.
  */
 export function compileBreakpointCSS(
   nodes: Iterable<SceneNode>,
-  at: (maxWidth: number) => string = (w) => `@media (max-width: ${w}px)`,
+  at: (condition: string) => string = (condition) => `@media (${condition})`,
 ): string {
   const blocks: string[] = [];
   const list = [...nodes];
@@ -570,7 +572,7 @@ export function compileBreakpointCSS(
         .map(([prop, value]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${value} !important;`);
       if (decls.length) rules.push(`  [data-gf-id="${node.id}"] { ${decls.join(' ')} }`);
     }
-    if (rules.length) blocks.push(`${at(bp.maxWidth)} {\n${rules.join('\n')}\n}`);
+    if (rules.length) blocks.push(`${at(breakpointCondition(bp))} {\n${rules.join('\n')}\n}`);
   }
   return blocks.join('\n');
 }

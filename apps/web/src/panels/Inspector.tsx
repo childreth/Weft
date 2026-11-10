@@ -2,6 +2,7 @@ import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
   ARTBOARD_PRESETS,
   BREAKPOINTS,
+  breakpointRange,
   STATES,
   GridError,
   IMAGE_TYPES,
@@ -292,7 +293,7 @@ function NodeInspector({ id }: { id: string }) {
       {BREAKPOINTS.map((bp) => (
         <StyleSection
           key={bp.id}
-          title={`${bp.label} ≤ ${bp.maxWidth}px`}
+          title={`${bp.label} ${breakpointRange(bp)}`}
           breakpoint={bp.id}
           styles={node.breakpoints?.[bp.id] ?? {}}
           set={(prop, v) => run(() => doc.updateNode(id, { breakpoints: { [bp.id]: { [prop]: v } } }))}

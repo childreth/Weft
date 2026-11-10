@@ -60,7 +60,7 @@ These work in the exported page as they are, and on the canvas when the user tur
 
 ## Responsive
 
-Design desktop first, then check `get_screenshot` with `width: 390`. Typical mobile overrides: grids to `1fr`, rows to `flexDirection: column`, smaller `padding` and `gap`, smaller heading `fontSize`. Put them on the node that needs them, in `breakpoints.mobile` (or `tablet`). If you hide the nav links on mobile, add a menu `button` with `aria-label: "Menu"` that's hidden on desktop and shown in `breakpoints.mobile`, so the links stay reachable.
+Design desktop first, then check `get_screenshot` with `width: 390`. Typical mobile overrides: grids to `1fr`, rows to `flexDirection: column`, smaller `padding` and `gap`, smaller heading `fontSize`. Put them on the node that needs them, in `breakpoints.mobile` (or `tablet`). For something only wide screens have, use `breakpoints.desktop`, which never reaches tablet or mobile. If you hide the nav links on mobile, add a menu `button` with `aria-label: "Menu"` that's hidden on desktop and shown in `breakpoints.mobile`, so the links stay reachable.
 
 ## Avoid
 

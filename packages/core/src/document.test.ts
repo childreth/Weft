@@ -96,6 +96,22 @@ describe('GridDocument', () => {
     expect(doc.getNode(button)?.states).toBeUndefined();
   });
 
+  it('compiles a desktop override for widths above tablet only, so the two never apply together', () => {
+    const doc = new GridDocument();
+    const root = artboard(doc);
+    const photo = doc.createNode({ type: 'frame', parentId: root, breakpoints: { tablet: { gap: '2px' }, desktop: { borderWidth: '16px' } } });
+    expect(compileBreakpointCSS(doc.getNodes())).toBe(
+      [
+        `@media (width > 1024px) {\n  [data-gf-id="${photo}"] { border-width: 16px !important; }\n}`,
+        `@media (max-width: 1024px) {\n  [data-gf-id="${photo}"] { gap: 2px !important; }\n}`,
+      ].join('\n'),
+    );
+    // The canvas asks the same question of the artboard instead of the viewport.
+    expect(compileBreakpointCSS(doc.getNodes(), (condition) => `@container artboard (${condition})`)).toContain('@container artboard (width > 1024px) {');
+    expect(exportArtboardHTML(doc, root)).toContain('@media (width > 1024px) {');
+    expect(treeIssues([{ type: 'frame', breakpoints: { desktop: { colr: 'red' } } }])[0]).toContain('desktop:');
+  });
+
   it('emits wider breakpoints first so narrower ones win the cascade', () => {
     const doc = new GridDocument();
     const root = artboard(doc);

@@ -260,15 +260,27 @@ export function getStyleMeta(prop: StyleProp): StylePropMeta {
 }
 
 /**
- * Responsive breakpoints (desktop-first). A node's override styles for a
- * breakpoint apply when the artboard (canvas) or viewport (export) is at most
- * `maxWidth` wide. Keep this widest-first: later blocks win the cascade, so a
- * narrower breakpoint overrides a wider one.
+ * Responsive breakpoints. A node's base styles apply at every width; its
+ * override styles for a breakpoint apply when the artboard (canvas) or
+ * viewport (export) is wider than `above`, or at most `maxWidth` wide.
+ *
+ * Desktop is everything wider than tablet, so a desktop override never reaches
+ * a smaller screen and nothing has to undo it there. Tablet and mobile are
+ * "this width and narrower", so both hold on a phone: keep those widest-first,
+ * because later blocks win the cascade and the narrower one must override.
  */
 export const BREAKPOINTS = [
+  { id: 'desktop', label: 'Desktop', above: 1024 },
   { id: 'tablet', label: 'Tablet', maxWidth: 1024 },
   { id: 'mobile', label: 'Mobile', maxWidth: 600 },
 ] as const;
+export type Breakpoint = (typeof BREAKPOINTS)[number];
+
+/** A breakpoint's width condition for a media or container query: `max-width: 600px`, `width > 1024px`. */
+export const breakpointCondition = (bp: Breakpoint): string => ('above' in bp ? `width > ${bp.above}px` : `max-width: ${bp.maxWidth}px`);
+
+/** The widths a breakpoint covers, for labels and instructions: "≤ 600px", "> 1024px". */
+export const breakpointRange = (bp: Breakpoint): string => ('above' in bp ? `> ${bp.above}px` : `≤ ${bp.maxWidth}px`);
 
 /** Artboard widths that preview each layout, for quick resizing. */
 export const ARTBOARD_PRESETS = [
