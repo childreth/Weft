@@ -282,6 +282,26 @@ describe('MCP tools', () => {
     expect(own.text).toContain('private network');
   });
 
+  it('takes a desktop override from an agent and renders it only above tablet width', async () => {
+    const made = await call('create_nodes', {
+      doc: 'desktop-bp',
+      nodes: [{ type: 'frame', tag: 'main', name: 'Wide', frame: { width: 1200 }, children: [{ type: 'frame', name: 'Bar', styles: { height: '10px' }, breakpoints: { desktop: { height: '40px' } } }] }],
+    });
+    expect(made.isError).toBe(false);
+    const room = server.rooms.get('desktop-bp');
+    const wide = room.doc.getChildren(null).find((n) => n.name === 'Wide')!;
+    const barHeight = async (width?: number) => {
+      const shot = await call('get_screenshot', { doc: 'desktop-bp', id: wide.id, image: false, ...(width && { width }) });
+      return (shot.data.boxes as { name: string; height: number }[]).find((b) => b.name === 'Bar')!.height;
+    };
+    expect(await barHeight()).toBe(40);
+    expect(await barHeight(1025)).toBe(40);
+    expect(await barHeight(1024)).toBe(10);
+    expect(await barHeight(390)).toBe(10);
+    expect(client.getInstructions()).toContain('"desktop" applies at > 1024px; "tablet" applies at ≤ 1024px; "mobile" applies at ≤ 600px');
+    expect((await call('read_skill', { path: 'SKILL.md' })).text).toContain('`desktop` (> 1024px), `tablet` (≤ 1024px), `mobile` (≤ 600px)');
+  });
+
   it('reads the canvas as a compact outline', async () => {
     const full = await call('get_canvas', { doc: 'outline' });
     const brief = await call('get_canvas', { doc: 'outline', detail: 'outline' });

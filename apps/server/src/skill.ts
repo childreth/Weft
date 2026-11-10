@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BREAKPOINTS,
+  breakpointRange,
   COLOR_ROLES,
   TEXT_ROLES,
   CONTAINER_TAGS,
@@ -33,7 +34,7 @@ const FILLS: Record<string, string> = {
     .join(', '),
   CONTAINER_TAGS: CONTAINER_TAGS.join(', '),
   TEXT_TAGS: TEXT_TAGS.join(', '),
-  BREAKPOINTS: BREAKPOINTS.map((b) => `\`${b.id}\` (≤ ${b.maxWidth}px)`).join(', '),
+  BREAKPOINTS: BREAKPOINTS.map((b) => `\`${b.id}\` (${breakpointRange(b)})`).join(', '),
   // Material 3's color roles, as Weft names them (md.sys.color.primary → color.primary).
   TEXT_ROLES: TEXT_ROLES.map((role) => `\`${role}\``).join(', '),
   COLOR_ROLES: COLOR_ROLES.map((role) => `\`color.${role}\``).join(', '),
