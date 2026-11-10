@@ -49,6 +49,7 @@ import {
 import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
 import { AssetError, type AssetStore } from './assets';
 import type { FontCache } from './fonts';
+import { ImportError, type ImageImporter } from './import-image';
 import { strictObject } from './strict';
 import { describeTarget, FLOW_ACTIONS, FLOW_STATES, flowStepIssues, runFlow, type FlowPage } from './flow';
 import type { Renderer, Resource } from './render';
@@ -65,7 +66,7 @@ Model:
 - Artboard height: heightMode "hug" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; "fixed" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.
 - Node types: "frame" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and "text" (tag p/h1–h6/span/a/button/label/li/…; has "text").
 - Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.
-- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required ("" if decorative); remote URLs aren't loaded, and agents can't add image files yet. Fonts: any Google Font via search_fonts → add_fonts, then point a role at it with set_tokens {"font-family.heading": "{font-family.<slug>}"} (and font-family.body) and set fontFamily var(--font-family-heading) / var(--font-family-body). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
+- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except ${Object.keys(UNSUPPORTED_STYLES).join(', ')}; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required ("" if decorative); remote URLs aren't loaded: import_image fetches one into the store and returns its src. Fonts: any Google Font via search_fonts → add_fonts, then point a role at it with set_tokens {"font-family.heading": "{font-family.<slug>}"} (and font-family.body) and set fontFamily var(--font-family-heading) / var(--font-family-body). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).
 - A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.
 - Text roles work like the color roles: ${TEXT_ROLES.join(', ')}. A role is its tokens: var(--font-size-<role>), var(--font-weight-<role>), var(--line-height-<role>), var(--letter-spacing-<role>), with var(--font-family-heading) on headings and var(--font-family-body) otherwise. body-lg is lead text, body-md the default, body-sm secondary text, label for buttons and form labels, caption for what explains something else. A node with a heading tag, button, label, figcaption or small starts with its role; styles you pass win. For other text, set the role's styles. Change a role with set_tokens ("font-size.h1": "64px"), for the document or a theme, not layer by layer.\n- Prefer design tokens over raw values: var(--space-4), var(--color-primary), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.
 - Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). For a brand palette, set_tokens with "seed" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.
@@ -411,6 +412,7 @@ export interface ToolServices {
   renderer: Renderer;
   fonts: FontCache;
   assets: AssetStore;
+  images: ImageImporter;
 }
 
 /** Where rendered pages fetch fonts and images from; the renderer answers these itself from the caches. */
@@ -958,6 +960,42 @@ export function createMcpServer(
       agent.look(ids, 'Showing you the result');
       const editors = room.notifyEditors('select', { ids, focus });
       return ok({ selected: ids, editors });
+    },
+  );
+
+  server.registerTool(
+    'import_image',
+    {
+      title: 'Import an image from a URL',
+      description:
+        "Fetches an image from a public http(s) URL into Weft's image store. From then on it's local: it works offline and is saved and exported with the document. Returns its src (asset:…) and pixel size, with an img node to copy into create_nodes (or set the src with update_nodes). Only use a URL the user gave you or that you have seen in a page or search result; a guessed URL fails or returns the wrong picture. PNG, JPEG, WebP, GIF or AVIF up to 10 MB; not SVG. Needs a network.",
+      inputSchema: {
+        doc: docParam,
+        url: z.string().max(2000).describe('Address of the image file itself (https://…), not of a page that shows it'),
+        model: modelParam,
+      },
+    },
+    async ({ doc, url, model }) => {
+      const { agent } = open(doc, model);
+      agent.look([], 'Importing an image');
+      try {
+        const image = await services.images.import(url);
+        const size = image.width && image.height ? { width: String(image.width), height: String(image.height) } : {};
+        return ok({
+          ...image,
+          node: {
+            type: 'frame',
+            tag: 'img',
+            name: 'Image',
+            styles: { display: 'block', maxWidth: '100%', height: 'auto' },
+            attributes: { src: image.src, alt: '<what the image shows, or "" if decorative>', ...size },
+          },
+          howTo: 'Keep width and height in attributes so the layout holds the image\'s shape. To crop into a fixed box, set width, height or aspectRatio in styles with objectFit "cover".',
+        });
+      } catch (err) {
+        if (err instanceof ImportError) return fail(err.message);
+        throw err;
+      }
     },
   );
 

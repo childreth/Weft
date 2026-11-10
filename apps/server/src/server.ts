@@ -12,6 +12,7 @@ import { MAX_SPOKEN_CHARS, Speech } from './speech';
 import { RemoteAccess } from './remote';
 import { AssetError, AssetStore } from './assets';
 import { FontCache, type FontOrigins } from './fonts';
+import { ImageImporter } from './import-image';
 import { Renderer } from './render';
 import { ROOM_NAME, RoomRegistry } from './room';
 import { MAX_IMAGE_BYTES, decodeFontQuery } from '@weft/core';
@@ -26,6 +27,8 @@ export interface GridServerOptions {
   ollamaUrl?: string;
   /** Where fonts are fetched from on a cache miss (Google by default; tests point it at a fake). */
   fontOrigins?: FontOrigins;
+  /** Which resolved addresses import_image may fetch from; public ones only by default (tests allow a local fake). */
+  imageAddressAllowed?: (address: string) => boolean;
 }
 
 export interface GridServer {
@@ -116,10 +119,12 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
   const rooms = new RoomRegistry(options.dataDir ?? null);
   const roster = new AgentRoster();
   const remote = new RemoteAccess(options.dataDir ?? null);
+  const assets = new AssetStore(options.dataDir ? join(options.dataDir, 'assets') : null);
   const services = {
     renderer: new Renderer(),
     fonts: new FontCache(options.dataDir ? join(options.dataDir, 'fonts') : null, options.fontOrigins),
-    assets: new AssetStore(options.dataDir ? join(options.dataDir, 'assets') : null),
+    assets,
+    images: new ImageImporter(assets, options.imageAddressAllowed),
   };
   const sessions = new Map<string, AgentSession>();
   const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST), services);

@@ -57,7 +57,7 @@ describe('MCP tools', () => {
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
         'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'export_html', 'import_file',
-        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens', 'test_flow',
+        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens', 'test_flow', 'import_image',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');
@@ -274,6 +274,12 @@ describe('MCP tools', () => {
     const boxes = shot.data.boxes as { name: string; width: number; height: number }[];
     expect(boxes.find((b) => b.name === 'Upload')).toMatchObject({ width: 40, height: 20 });
     expect(boxes.find((b) => b.name === 'Img')).toMatchObject({ width: 8, height: 8 });
+  });
+
+  it('import_image refuses to fetch from this machine, such as the server\'s own routes', async () => {
+    const own = await call('import_image', { url: `${server.httpUrl}/health` });
+    expect(own.isError).toBe(true);
+    expect(own.text).toContain('private network');
   });
 
   it('reads the canvas as a compact outline', async () => {
