@@ -56,6 +56,10 @@ test('instances draw their component, follow its edits, and select as one layer'
   expect(await page.evaluate(() => window.weft.editor.getState().selection)).toEqual([ids.pro]);
   await expect(page.locator('.gf-layer-icon', { hasText: '◆' })).toHaveCount(1);
   await expect(page.locator('.gf-layer-icon', { hasText: '◇' })).toHaveCount(2);
+  // An instance is the component's element: Layers and the Inspector say so, in place of a tag to pick.
+  await expect(page.locator('.gf-layer').filter({ has: page.locator('.gf-layer-name', { hasText: /^Pro$/ }) }).locator('.gf-layer-tag')).toHaveText('article');
+  await expect(page.getByLabel('Instance of')).toHaveValue('Plan card <article>');
+  await expect(page.getByLabel('Tag', { exact: true })).toHaveCount(0);
   await page.evaluate(() => window.weft.editor.getState().setCamera({ x: 40, y: -260, zoom: 0.7 }));
   await page.screenshot({ path: 'test-results/m5-components.png' });
 

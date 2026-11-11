@@ -151,6 +151,8 @@ function RenameInput({ node, onDone }: { node: SceneNode; onDone: () => void }) 
 
 const LayerRow = memo(function LayerRow({ id, depth }: { id: string; depth: number }) {
   const node = useNode(id);
+  // An instance is drawn as its component's element, whatever tag it stores itself.
+  const component = useNode(node?.instance?.component ?? '');
   const childIds = useChildren(id);
   const selected = useEditor((s) => s.selection.includes(id));
   const hovered = useEditor((s) => s.hoveredId === id);
@@ -238,7 +240,9 @@ const LayerRow = memo(function LayerRow({ id, depth }: { id: string; depth: numb
         ) : (
           <span className="gf-layer-name">{label}</span>
         )}
-        <span className="gf-layer-tag">{node.tag}</span>
+        <span className="gf-layer-tag" title={node.instance ? (component ? `Instance of ${component.name}` : 'Its component is missing') : undefined}>
+          {node.instance ? (component?.tag ?? '?') : node.tag}
+        </span>
         <button
           className={`gf-layer-toggle${node.locked ? ' is-on' : ''}`}
           title={node.locked ? 'Unlock' : 'Lock'}
