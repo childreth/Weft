@@ -75,6 +75,7 @@ Model:
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), with "tokens" in the same call for its fonts, type and accent; "tokens" that aren't colors also reach <theme>-dark, so set them once. Set the dark accent with theme "<theme>-dark".
 - Responsive: "styles" apply at every width; "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ${breakpointRange(b)}`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it. Build the layout in styles and adapt it with tablet and mobile (both apply on a phone; mobile wins). Use desktop only for a rule that shouldn't reach smaller screens, so nothing has to undo it there.
 - States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
+- Components: when the same thing repeats (cards, list rows, buttons, nav items), build it once and reuse it. Mark the layer {"component": true} and, on each text layer inside whose text differs per use, {"bind": {"text": "title"}} (an icon's name is text too). Create the others as {"instance": {"component": "<its name or id>", "props": {"title": "…"}}}. An instance draws the component's layers and follows every change to them, so you restyle all of them by editing the component. Nothing inside an instance can be edited: set its props, style its root (width, gridColumn, alignSelf), or detach it into ordinary layers with update_nodes {"instance": null}. get_canvas lists the components with their props. A copy of a component is an instance of it.
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
@@ -146,6 +147,9 @@ interface NodeSpec {
   attributes?: Record<string, string>;
   frame?: Partial<ArtboardFrame>;
   theme?: string;
+  component?: boolean;
+  bind?: { text?: string };
+  instance?: { component: string; props?: Record<string, string> };
   children?: NodeSpec[];
 }
 
@@ -154,7 +158,7 @@ type NodeSpecInput = Omit<NodeSpec, 'type' | 'children'> & { type?: NodeSpec['ty
 /** Small models often leave `type` out: a node with text and no children is text, anything else a frame. */
 const withTypes = ({ children, ...spec }: NodeSpecInput): NodeSpec => ({
   ...spec,
-  type: spec.type ?? (spec.text !== undefined && !children?.length ? 'text' : 'frame'),
+  type: spec.type ?? (spec.text !== undefined && !children?.length && !spec.instance ? 'text' : 'frame'),
   ...(children && { children: children.map(withTypes) }),
 });
 
@@ -173,6 +177,16 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     attributes: z.record(z.string(), z.string()).optional().describe('HTML attributes such as aria-label, href, type, alt'),
     frame: frameSchema.optional().describe('Canvas placement; only for new artboards (parentId null)'),
     theme: z.string().optional().describe(THEME_PARAM),
+    component: z.boolean().optional().describe('true makes this layer a component, to place instances of. Not an artboard, and not inside another component'),
+    bind: strictObject({ text: z.string().optional() })
+      .optional()
+      .describe('Inside a component: {"text": "label"} lets each instance set this text layer\'s text through its prop "label"'),
+    instance: strictObject({
+      component: z.string().describe("The component's id, or its name"),
+      props: z.record(z.string(), z.string()).optional().describe("Values for its props; one left out shows the component's own text"),
+    })
+      .optional()
+      .describe("Makes this node an instance: it draws that component's layers and follows its changes. No tag, text or children; styles apply to its root (width, gridColumn, alignSelf)"),
     children: z.array(nodeSpec).optional().describe('Child nodes (frames only)'),
   }),
 );
@@ -184,6 +198,13 @@ const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text:
 
 const OUTLINE_TEXT = 60;
 
+/** What makes a node a component, a bound layer or an instance. */
+const componentFields = (tree: SceneTree): Record<string, unknown> => ({
+  ...(tree.component && { component: true }),
+  ...(tree.bind && { bind: tree.bind }),
+  ...(tree.instance && { instance: tree.instance }),
+});
+
 /** Structure only: what each node is and says, for finding ids cheaply. */
 export function outline(tree: SceneTree, depth: number): Record<string, unknown> {
   const out: Record<string, unknown> = { id: tree.id, tag: tree.tag };
@@ -193,6 +214,7 @@ export function outline(tree: SceneTree, depth: number): Record<string, unknown>
   if (tree.frame) out.frame = { x: tree.frame.x, y: tree.frame.y, width: tree.frame.width, heightMode: tree.frame.heightMode ?? 'fixed' };
   if (tree.theme) out.theme = tree.theme;
   if (tree.hidden) out.hidden = true;
+  Object.assign(out, componentFields(tree));
   if (tree.children.length) {
     if (depth > 0) out.children = tree.children.map((c) => outline(c, depth - 1));
     else out.childCount = tree.children.length;
@@ -212,6 +234,7 @@ export function compact(tree: SceneTree, depth: number): Record<string, unknown>
   if (Object.keys(tree.attributes).length) out.attributes = tree.attributes;
   if (tree.hidden) out.hidden = true;
   if (tree.locked) out.locked = true;
+  Object.assign(out, componentFields(tree));
   if (tree.children.length) {
     if (depth > 0) out.children = tree.children.map((c) => compact(c, depth - 1));
     else out.childCount = tree.children.length;
@@ -351,6 +374,20 @@ function nextArtboardPosition(room: Room): { x: number; y: number } {
   return { x: Math.max(...frames.map((f) => f.x + f.width)) + 120, y: Math.min(...frames.map((f) => f.y)) };
 }
 
+/** A component by id, or by name when only one has that name. */
+function resolveComponent(room: Room, ref: string): string {
+  if (room.doc.has(ref)) return ref;
+  const components = room.doc.getComponents();
+  const named = components.filter((c) => c.name.toLowerCase() === ref.toLowerCase());
+  if (named.length === 1) return named[0]!.id;
+  if (named.length > 1) throw new GridError(`${named.length} components are named "${ref}": pass the id of the one you mean (${named.map((c) => c.id).join(', ')})`);
+  throw new GridError(
+    components.length
+      ? `No component "${ref}". This document has: ${components.map((c) => `${c.name} (${c.id})`).join(', ')}`
+      : `No component "${ref}": this document has none yet. Make one by creating a layer with component: true`,
+  );
+}
+
 interface CreatedNode {
   id: string;
   name: string;
@@ -376,6 +413,8 @@ function createTree(
   }
   if (spec.type === 'text' && spec.children?.length) throw new GridError('Text nodes cannot have children');
   styles = withTagTextRole(spec.tag ?? undefined, styles);
+  // Resolved here, in creation order, so an instance can name a component made earlier in the same call.
+  const instance = spec.instance && { ...spec.instance, component: resolveComponent(room, spec.instance.component) };
   const id = room.doc.createNode(
     {
       type: spec.type,
@@ -388,6 +427,9 @@ function createTree(
       attributes: spec.attributes,
       frame,
       theme: spec.theme,
+      component: spec.component,
+      bind: spec.bind,
+      instance,
       parentId,
       beforeId,
     },
@@ -524,12 +566,15 @@ export function createMcpServer(
       try {
         const { room, agent } = open(doc, model);
         agent.look(rootId ? [rootId] : [], rootId ? `Looking at ${nameOf(room, rootId)}` : 'Reading the canvas');
+        // What can be placed as an instance, with each one's props and what it shows by default.
+        const all = room.doc.getComponents();
+        const components = all.length ? { components: all } : {};
         if (detail === 'outline') {
           // Unindented: the outline exists to be small.
           const nodes = room.doc.getTree(rootId).map((t) => outline(t, maxDepth));
-          return { content: [{ type: 'text', text: JSON.stringify({ document: doc, nodes }) }] };
+          return { content: [{ type: 'text', text: JSON.stringify({ document: doc, ...components, nodes }) }] };
         }
-        return ok({ document: doc, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth)) });
+        return ok({ document: doc, ...components, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth)) });
       } catch (err) {
         return fail((err as Error).message);
       }
@@ -625,6 +670,13 @@ export function createMcpServer(
                 .optional()
                 .describe(`${STATE_STYLES}; merged like styles, null clears a whole state`),
               attributes: z.record(z.string(), z.string().nullable()).optional(),
+              component: z.boolean().optional().describe('true makes this layer a component; false unmarks one that has no instances'),
+              bind: strictObject({ text: z.string().nullable().optional() })
+                .nullable()
+                .optional()
+                .describe('Inside a component: {"text": "label"} exposes this text layer\'s text as the prop "label"; null removes it'),
+              props: z.record(z.string(), z.string().nullable()).optional().describe("An instance's prop values, merged; null goes back to the component's own"),
+              instance: z.null().optional().describe('null detaches an instance into ordinary layers under the same id; send it with only the id'),
             }),
           )
           .min(1),
@@ -701,7 +753,7 @@ export function createMcpServer(
     {
       title: 'Duplicate node',
       description:
-        'Deep-copies a node and its subtree with fresh ids, and returns ids: a map from every original node id to its copy, so you can edit the copy without reading it again. A copied artboard lands to the right of the artboards on its row; pass frame (e.g. {"width": 390}) to clone it at another width, which previews its breakpoint overrides. Other nodes are inserted right after the original.',
+        'Deep-copies a node and its subtree with fresh ids, and returns ids: a map from every original node id to its copy, so you can edit the copy without reading it again. A copy of a component is an instance of it. A copied artboard lands to the right of the artboards on its row; pass frame (e.g. {"width": 390}) to clone it at another width, which previews its breakpoint overrides. Other nodes are inserted right after the original.',
       inputSchema: {
         doc: docParam,
         id: z.string(),
@@ -718,10 +770,11 @@ export function createMcpServer(
         for (const d of room.doc.getDescendantIds(copy)) touched.add(d);
         Object.assign(report, { kind: 'create', roots: [copy], flash: [copy], action: `Duplicating ${nameOf(room, id)}` });
         // The copy has the original's shape, so walking both trees pairs every node with its copy.
+        // A component's copy is an instance of it, with no layers of its own to pair.
         const ids: Record<string, string> = {};
         const pair = (from: SceneTree, to: SceneTree) => {
           ids[from.id] = to.id;
-          from.children.forEach((child, i) => pair(child, to.children[i]!));
+          if (to.children.length === from.children.length) from.children.forEach((child, i) => pair(child, to.children[i]!));
         };
         pair(room.doc.getTree(id)[0]!, room.doc.getTree(copy)[0]!);
         return { id: copy, ids };

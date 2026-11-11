@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { ARTBOARD_RESET_CSS, compileBreakpointCSS, compileStateCSS, compileTokensCSS, type SceneNode } from '@weft/core';
+import { ARTBOARD_RESET_CSS, compileBreakpointCSS, compileStateCSS, compileTokensCSS, expandTree, flattenTree, type SceneNode } from '@weft/core';
 import { scene, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { installBehaviors } from './behaviors';
@@ -138,14 +138,9 @@ function BreakpointStyles({ rootId }: { rootId: string }) {
     return () => {
       if (scene.nodes !== nodes) {
         nodes = scene.nodes;
-        const subtree: SceneNode[] = [];
-        const stack = [rootId];
-        while (stack.length) {
-          const id = stack.pop()!;
-          const node = scene.nodes.get(id);
-          if (node) subtree.push(node);
-          stack.push(...scene.children(id));
-        }
+        // As drawn: an instance's layers take their rules from its component, which may be on another artboard.
+        const tree = expandTree(rootId, { node: (id) => scene.nodes.get(id), children: (id) => scene.children(id) });
+        const subtree: SceneNode[] = tree ? flattenTree(tree) : [];
         css = [
           compileBreakpointCSS(subtree, (condition) => `@container artboard (${condition})`),
           compileStateCSS(subtree, { scope: ':host([data-interact])', preview: (state) => `[data-gf-preview="${state}"]` }),

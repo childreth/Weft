@@ -15,3 +15,4 @@ export * from './fonts';
 export * from './icons';
 export * from './assets';
 export * from './behaviors';
+export * from './components';

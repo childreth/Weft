@@ -17,7 +17,7 @@ const useLayerDrag = create<{ dragging: string[]; target: DropTarget | null }>()
 /** Last plainly clicked layer: the anchor for shift-click range selection. */
 let anchorId: string | null = null;
 
-const canContain = (node: SceneNode) => node.type === 'frame' && !VOID_TAGS.has(node.tag);
+const canContain = (node: SceneNode) => node.type === 'frame' && !VOID_TAGS.has(node.tag) && !node.instance;
 
 /** Layer ids top to bottom as the panel shows them, skipping collapsed subtrees. */
 function visibleLayerIds(): string[] {
@@ -151,6 +151,8 @@ function RenameInput({ node, onDone }: { node: SceneNode; onDone: () => void }) 
 
 const LayerRow = memo(function LayerRow({ id, depth }: { id: string; depth: number }) {
   const node = useNode(id);
+  // An instance is drawn as its component's element, whatever tag it stores itself.
+  const component = useNode(node?.instance?.component ?? '');
   const childIds = useChildren(id);
   const selected = useEditor((s) => s.selection.includes(id));
   const hovered = useEditor((s) => s.hoveredId === id);
@@ -165,7 +167,7 @@ const LayerRow = memo(function LayerRow({ id, depth }: { id: string; depth: numb
 
   if (!node) return null;
 
-  const icon = node.parentId === null ? '▣' : node.type === 'text' ? 'T' : node.tag === 'img' ? '◪' : node.styles.display === 'grid' ? '▦' : '▢';
+  const icon = node.component ? '◆' : node.instance ? '◇' : node.parentId === null ? '▣' : node.type === 'text' ? 'T' : node.tag === 'img' ? '◪' : node.styles.display === 'grid' ? '▦' : '▢';
   // Text layers created on the canvas keep the default name; show their text instead.
   const label = node.type === 'text' && node.text && node.name === 'Text' ? node.text : node.name;
   const toggle = (flag: 'hidden' | 'locked') => (e: MouseEvent) => {
@@ -238,7 +240,9 @@ const LayerRow = memo(function LayerRow({ id, depth }: { id: string; depth: numb
         ) : (
           <span className="gf-layer-name">{label}</span>
         )}
-        <span className="gf-layer-tag">{node.tag}</span>
+        <span className="gf-layer-tag" title={node.instance ? (component ? `Instance of ${component.name}` : 'Its component is missing') : undefined}>
+          {node.instance ? (component?.tag ?? '?') : node.tag}
+        </span>
         <button
           className={`gf-layer-toggle${node.locked ? ' is-on' : ''}`}
           title={node.locked ? 'Unlock' : 'Lock'}

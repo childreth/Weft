@@ -1,4 +1,4 @@
-import { GridError, IMAGE_TYPES, exportArtboardHTML, readWeftFile, type ImageExt } from '@weft/core';
+import { GridError, IMAGE_TYPES, exportArtboardHTML, flattenTree, readWeftFile, type ImageExt } from '@weft/core';
 import { collectAssets, imageFiles, insertImages, storeAssets } from './assets';
 import { imageTarget } from './clipboard';
 import { doc, docName, run } from './editor';
@@ -74,8 +74,8 @@ export function pickImages() {
 
 /** Downloads an artboard as a standalone HTML page (breakpoints as `@media`, Google Fonts linked, images inline). */
 export async function exportArtboard(id: string) {
-  const ids = [id, ...doc.getDescendantIds(id)];
-  const assets = await collectAssets(ids.flatMap((i) => doc.getNode(i) ?? []));
+  // As drawn: an instance's images are in its component, which may be on another artboard.
+  const assets = await collectAssets(flattenTree(doc.getExpandedTree(id)));
   const assetUrl = (name: string) => {
     const data = assets[name];
     return data && `data:${IMAGE_TYPES[name.split('.')[1] as ImageExt]};base64,${data}`;

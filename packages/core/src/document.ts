@@ -9,6 +9,19 @@ import { defaultWeights, findFont, fontSlug, withFontTokens, type DocumentFont }
 import { flattenTokens, mergeTokenGroups, resolvedTokenValues, type TokenGroup, type TokenSet } from './tokens';
 import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
 import {
+  MAX_PROP_VALUE_LENGTH,
+  PROP_NAME,
+  bindIssues,
+  cleanBindings,
+  componentProps,
+  enclosingComponent,
+  expandTree,
+  instanceTree,
+  propIssues,
+  reachesComponent,
+  type SceneLookup,
+} from './components';
+import {
   BREAKPOINTS,
   breakpointCondition,
   STATES,
@@ -25,10 +38,12 @@ import {
   type Alignment,
   type ArtboardFrame,
   type Axis,
+  type BindField,
   type BreakpointId,
   type BreakpointStyles,
   type StateId,
   type StateStyles,
+  type NodeBindings,
   type NodeType,
   type SceneNode,
   type SceneTree,
@@ -64,6 +79,12 @@ export interface CreateNodeInput {
   frame?: ArtboardFrame;
   /** A theme (`getThemeNames`) for this frame and everything in it. */
   theme?: string;
+  /** Marks the new layer as a main component. */
+  component?: boolean;
+  /** Which of its fields take a prop of the component it's in: `{ text: 'label' }`. */
+  bind?: NodeBindings;
+  /** Makes the new frame an instance of a component; props left out show the component's own values. */
+  instance?: { component: string; props?: Record<string, string> };
 }
 
 export interface NodePatch {
@@ -82,6 +103,14 @@ export interface NodePatch {
   attributes?: Record<string, string | null>;
   /** null removes the frame's theme. */
   theme?: string | null;
+  /** true marks a main component; false or null unmarks one that nothing uses. */
+  component?: boolean | null;
+  /** Merged by field; a null field, or null for all of them, removes the binding. */
+  bind?: Partial<Record<BindField, string | null>> | null;
+  /** An instance's prop values, merged; null goes back to what the component shows. */
+  props?: Record<string, string | null>;
+  /** null detaches an instance: it becomes ordinary layers and stops following its component. */
+  instance?: null;
 }
 
 export interface Snapshot {
@@ -183,12 +212,16 @@ function checkLayerShapes(nodes: readonly unknown[], where: string, maxNodes: nu
       !record(n.attributes) ||
       !record(n.breakpoints) ||
       !record(n.states) ||
-      !record(n.frame)
+      !record(n.frame) ||
+      !record(n.bind) ||
+      (n.component !== undefined && typeof n.component !== 'boolean') ||
+      !(n.instance === undefined || (record(n.instance) && typeof n.instance.component === 'string' && record(n.instance.props)))
     ) {
       throw new GridError(`Malformed layers ${where}`);
     }
     if (++count > maxNodes || depth > CLIPBOARD_MAX_DEPTH) throw new GridError(`Too many layers ${where}`);
     for (const child of n.children) check(child, depth + 1);
+    if (n.expanded !== undefined) check(n.expanded, depth + 1);
   };
   for (const node of nodes) check(node, 0);
 }
@@ -355,7 +388,29 @@ export function readNode(y: YNode): SceneNode {
   if (y.get('locked') === true) node.locked = true;
   const theme = y.get('theme');
   if (typeof theme === 'string') node.theme = theme;
+  if (y.get('component') === true) node.component = true;
+  const bind = cleanBindings(y.get('bind') as Record<string, unknown> | undefined);
+  if (bind) node.bind = bind;
+  const component = y.get('instance');
+  if (typeof component === 'string') {
+    node.instance = { component, props: ((y.get('props') as Y.Map<string> | undefined)?.toJSON() as Record<string, string> | undefined) ?? {} };
+  }
   return node;
+}
+
+/** Makes a frame an instance of `component`. Its prop values merge one by one, so they're a map of their own. */
+function writeInstance(y: YNode, component: string, props: Readonly<Record<string, unknown>>): void {
+  y.set('instance', component);
+  const map = new Y.Map<string>();
+  y.set('props', map);
+  for (const [name, value] of Object.entries(props)) {
+    if (typeof value === 'string' && PROP_NAME.test(name) && value.length <= MAX_PROP_VALUE_LENGTH) map.set(name, value);
+  }
+}
+
+function replaceMap(map: Y.Map<string>, values: Readonly<Record<string, string | undefined>>): void {
+  for (const key of [...map.keys()]) if (values[key] === undefined) map.delete(key);
+  for (const [key, value] of Object.entries(values)) if (value !== undefined && map.get(key) !== value) map.set(key, value);
 }
 
 export function sortSiblings<T extends { index: string; id: string }>(list: readonly T[]): T[] {
@@ -506,6 +561,9 @@ export interface TreeInput {
   breakpoints?: Record<string, Partial<Record<string, string | null>> | null | undefined>;
   states?: Record<string, Partial<Record<string, string | null>> | null | undefined>;
   attributes?: Record<string, string | null>;
+  component?: boolean;
+  bind?: Readonly<Record<string, string | null | undefined>>;
+  instance?: unknown;
   children?: readonly TreeInput[];
 }
 
@@ -527,7 +585,13 @@ export function treeIssues(nodes: readonly TreeInput[], path = 'nodes'): string[
     if (node.states) add(stateIssues(node.states));
     if (node.attributes) add(attributeIssues(node.attributes));
     add([altIssue(tag, node.attributes ?? {}) ?? []].flat());
+    if (node.bind) add(bindIssues(node.type, node.bind));
     const children = node.children ?? [];
+    if (node.instance) {
+      if (node.type !== 'frame' || children.length) add(['An instance has no text or children of its own: they come from its component, and what varies is set through props']);
+      if (node.component) add(["A layer can't be both a component and an instance"]);
+      return;
+    }
     if (children.length && (node.type === 'text' || VOID_TAGS.has(tag))) {
       add([node.type === 'text' ? 'Text nodes cannot have children (make it a frame with the same tag and span text children)' : `<${tag}> cannot contain other layers`]);
     }
@@ -549,6 +613,17 @@ export function throwIssues(issues: readonly string[]): void {
 
 
 /**
+ * The selector a layer's override rules use: its id, or for a layer drawn for
+ * an instance (which has no id of its own) the component layer it comes from.
+ */
+function overrideSelector(node: SceneNode): string | null {
+  const key = node.source ?? node.id;
+  // Ids go into a selector; generated ids are always safe, imported ones may not be.
+  if (!/^[\w-]+$/.test(key)) return null;
+  return node.source !== undefined ? `[data-gf-src="${key}"]` : `[data-gf-id="${key}"]`;
+}
+
+/**
  * CSS for breakpoint overrides, keyed by `[data-gf-id]`. `!important` is
  * needed on the canvas, where base styles are inline. `at` wraps each block
  * in its width condition (`max-width: 600px`, `width > 1024px`): the canvas
@@ -562,15 +637,18 @@ export function compileBreakpointCSS(
   const list = [...nodes];
   for (const bp of BREAKPOINTS) {
     const rules: string[] = [];
+    const seen = new Set<string>();
     for (const node of list) {
       const styles = node.breakpoints?.[bp.id];
-      // Ids go into a selector; generated ids are always safe, imported ones may not be.
-      if (!styles || !/^[\w-]+$/.test(node.id)) continue;
+      const el = overrideSelector(node);
+      // Every instance of a component draws the same layer: one rule covers them.
+      if (!styles || !el || seen.has(el)) continue;
+      seen.add(el);
       const decls = Object.entries(styles)
         // Hidden layers stay hidden whatever the breakpoint says.
         .filter(([prop]) => !(node.hidden && prop === 'display'))
         .map(([prop, value]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${value} !important;`);
-      if (decls.length) rules.push(`  [data-gf-id="${node.id}"] { ${decls.join(' ')} }`);
+      if (decls.length) rules.push(`  ${el} { ${decls.join(' ')} }`);
     }
     if (rules.length) blocks.push(`${at(breakpointCondition(bp))} {\n${rules.join('\n')}\n}`);
   }
@@ -593,14 +671,16 @@ export function compileStateCSS(
   const list = [...nodes];
   const prefix = options.scope ? `${options.scope} ` : '';
   for (const state of STATES) {
+    const seen = new Set<string>();
     for (const node of list) {
       const styles = node.states?.[state.id];
-      if (!styles || !/^[\w-]+$/.test(node.id)) continue;
+      const el = overrideSelector(node);
+      if (!styles || !el || seen.has(el)) continue;
+      seen.add(el);
       const decls = Object.entries(styles)
         .filter(([prop]) => !(node.hidden && prop === 'display'))
         .map(([prop, value]) => `${prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${value} !important;`);
       if (!decls.length) continue;
-      const el = `[data-gf-id="${node.id}"]`;
       const selectors = [`${prefix}${el}${state.selector}`, ...(options.preview ? [`${el}${options.preview(state.id)}`] : [])];
       rules.push(`${selectors.join(', ')} { ${decls.join(' ')} }`);
     }
@@ -1041,6 +1121,55 @@ export class GridDocument {
     return sortSiblings(byParent.get(null) ?? []).map(build);
   }
 
+  /** Read access for code that works on any scene (components, expansion): the nodes as they are now. */
+  scene(): SceneLookup {
+    const nodes = new Map(this.getNodes().map((n) => [n.id, n]));
+    const byParent = new Map<string, SceneNode[]>();
+    for (const n of nodes.values()) {
+      if (n.parentId === null) continue;
+      const list = byParent.get(n.parentId) ?? [];
+      list.push(n);
+      byParent.set(n.parentId, list);
+    }
+    const children = new Map<string, string[]>();
+    return {
+      node: (id) => nodes.get(id),
+      children: (id) => {
+        let ids = children.get(id);
+        if (!ids) children.set(id, (ids = sortSiblings(byParent.get(id) ?? []).map((n) => n.id)));
+        return ids;
+      },
+    };
+  }
+
+  /** A subtree as it's drawn: every instance replaced by its component's layers (`expandTree`). */
+  getExpandedTree(rootId: string): SceneTree {
+    const tree = expandTree(rootId, this.scene());
+    if (!tree) throw new GridError(`Node ${rootId} not found`);
+    return tree;
+  }
+
+  /** The document's components, with their props and what each shows by default. */
+  getComponents(): Array<{ id: string; name: string; props: Record<string, string>; instances: number }> {
+    const scene = this.scene();
+    const nodes = this.getNodes();
+    return sortSiblings(nodes.filter((n) => n.component)).map((n) => ({
+      id: n.id,
+      name: n.name,
+      props: componentProps(n.id, scene),
+      instances: nodes.filter((i) => i.instance?.component === n.id).length,
+    }));
+  }
+
+  isComponent(id: string): boolean {
+    return this.nodes.get(id)?.get('component') === true;
+  }
+
+  /** Ids of the instances of a component. */
+  instancesOf(componentId: string): string[] {
+    return [...this.nodes].flatMap(([id, y]) => (y.get('instance') === componentId ? [id] : []));
+  }
+
   // ── Commands ─────────────────────────────────────────────────────────────
 
   createNode(input: CreateNodeInput, origin: Origin = ORIGIN_LOCAL): string {
@@ -1051,6 +1180,15 @@ export class GridDocument {
       this.assertCanContain(parentId);
     }
     const tag = input.tag ?? (input.type === 'text' ? 'p' : 'div');
+    const componentIssues: string[] = [];
+    if (input.instance || input.component) {
+      const scene = this.scene();
+      if (input.instance && input.component) componentIssues.push("A layer can't be both a component and an instance");
+      if (input.instance) {
+        if (input.type !== 'frame') componentIssues.push('An instance is a frame: its text comes from its component, through props');
+        componentIssues.push(...(parentId === null ? ['An instance goes inside an artboard'] : this.instanceIssues(input.instance, parentId, scene)));
+      } else componentIssues.push(...this.componentPlaceIssues(parentId, scene));
+    }
     throwIssues([
       ...[tagIssue(input.type, tag) ?? []].flat(),
       ...(input.styles ? styleIssues(input.styles) : []),
@@ -1059,6 +1197,8 @@ export class GridDocument {
       ...(input.attributes ? attributeIssues(input.attributes) : []),
       ...[altIssue(tag, input.attributes ?? {}) ?? []].flat(),
       ...(input.theme !== undefined ? [this.themeIssue(input.type, input.theme) ?? []].flat() : []),
+      ...(input.bind ? bindIssues(input.type, input.bind) : []),
+      ...componentIssues,
     ]);
     const id = input.id ?? createId(input.type === 'text' ? 't' : 'f');
     if (this.nodes.has(id)) throw new GridError(`Node ${id} already exists`);
@@ -1084,6 +1224,10 @@ export class GridDocument {
       const attributes = new Y.Map<string>();
       y.set('attributes', attributes);
       for (const [k, v] of Object.entries(input.attributes ?? {})) attributes.set(k, v);
+      if (input.component && !input.instance) y.set('component', true);
+      const bind = cleanBindings(input.bind);
+      if (bind) y.set('bind', bind);
+      if (input.instance) writeInstance(y, input.instance.component, input.instance.props ?? {});
     }, origin);
     return id;
   }
@@ -1091,6 +1235,21 @@ export class GridDocument {
   updateNode(id: string, patch: NodePatch, origin: Origin = ORIGIN_LOCAL): void {
     const y = this.requireY(id);
     const type = y.get('type') as NodeType;
+    const isInstance = typeof y.get('instance') === 'string';
+    if (patch.instance === null) {
+      if (!isInstance) throw new GridError(`${id} isn't an instance, so there's nothing to detach`);
+      if (Object.entries(patch).some(([key, value]) => key !== 'instance' && value !== undefined)) {
+        throw new GridError('Detach an instance (instance: null) on its own, then edit the layers it becomes');
+      }
+      return this.detachInstance(id, origin);
+    }
+    if (isInstance) {
+      if (patch.component) throw new GridError("An instance can't be a component: detach it first (instance: null)");
+      const taken = (['tag', 'text', 'bind'] as const).find((key) => patch[key] !== undefined);
+      if (taken) throw new GridError(`An instance takes its ${taken} from its component: change the component, set a prop, or detach the instance (instance: null)`);
+    } else if (patch.props) {
+      throw new GridError(`${id} isn't an instance, so it has no props to set`);
+    }
     if (patch.tag !== undefined) {
       throwIssues([tagIssue(type, patch.tag) ?? []].flat());
       if (VOID_TAGS.has(patch.tag) && this.getDescendantIds(id).length > 0) {
@@ -1108,9 +1267,27 @@ export class GridDocument {
         ? [altIssue(patch.tag ?? (y.get('tag') as string), { ...(y.get('attributes') as Y.Map<string>).toJSON(), ...patch.attributes }) ?? []].flat()
         : []),
       ...(typeof patch.theme === 'string' ? [this.themeIssue(type, patch.theme) ?? []].flat() : []),
+      ...(patch.bind ? bindIssues(type, patch.bind) : []),
+      ...this.componentPatchIssues(id, y, patch),
     ]);
 
     this.transact(() => {
+      if (patch.component === true) y.set('component', true);
+      else if (patch.component === false || patch.component === null) y.delete('component');
+      if (patch.bind === null) y.delete('bind');
+      else if (patch.bind) {
+        const next = cleanBindings({ ...(y.get('bind') as Record<string, unknown> | undefined), ...patch.bind });
+        if (next) y.set('bind', next);
+        else y.delete('bind');
+      }
+      if (patch.props) {
+        let props = y.get('props') as Y.Map<string> | undefined;
+        if (!props) y.set('props', (props = new Y.Map<string>()));
+        for (const [name, value] of Object.entries(patch.props)) {
+          if (value === null) props.delete(name);
+          else props.set(name, value);
+        }
+      }
       if (patch.name !== undefined) y.set('name', patch.name);
       if (patch.tag !== undefined) y.set('tag', patch.tag);
       if (patch.text !== undefined) y.set('text', patch.text);
@@ -1151,6 +1328,16 @@ export class GridDocument {
       for (const d of this.getDescendantIds(id)) doomed.add(d);
     }
     if (doomed.size === 0) return;
+    // Like a token something refers to: a component in use stays until its instances go.
+    for (const id of doomed) {
+      if (!this.isComponent(id)) continue;
+      const users = this.instancesOf(id).filter((user) => !doomed.has(user));
+      if (users.length) {
+        throw new GridError(
+          `"${this.nodes.get(id)!.get('name')}" is a component with ${users.length === 1 ? 'an instance' : `${users.length} instances`} elsewhere: delete or detach ${users.length === 1 ? 'it' : 'them'} first (${users.slice(0, 5).join(', ')}${users.length > 5 ? '…' : ''})`,
+        );
+      }
+    }
     this.transact(() => {
       for (const id of doomed) this.nodes.delete(id);
     }, origin);
@@ -1164,6 +1351,19 @@ export class GridDocument {
       this.assertCanContain(parentId);
       for (let cur: string | null = parentId; cur !== null; cur = (this.nodes.get(cur)?.get('parentId') as string | null) ?? null) {
         if (cur === id) throw new GridError('Cannot move a node into itself or its descendants');
+      }
+    }
+    if (y.get('component') === true && parentId === null) throw new GridError("A component can't become an artboard");
+    const scene = this.scene();
+    const around = enclosingComponent(parentId, scene);
+    if (around !== null) {
+      const aroundName = scene.node(around)!.name;
+      for (const movedId of [id, ...this.getDescendantIds(id)]) {
+        const moved = scene.node(movedId);
+        if (moved?.component && movedId !== around) throw new GridError(`Components can't be nested: "${moved.name}" is a component and so is "${aroundName}". Place an instance of it there instead`);
+        if (moved?.instance && reachesComponent(moved.instance.component, around, scene)) {
+          throw new GridError(`"${moved.name}" can't go inside "${aroundName}": the component would contain itself`);
+        }
       }
     }
     if (beforeId === id) return;
@@ -1287,7 +1487,14 @@ export class GridDocument {
     }
     // A copy is validated like a create: old layers must not make the original uncopyable.
     repairLayers([tree!]);
-    return this.transact(() => this.copyTree(tree!, source.parentId, beforeId, { name: options.name, frame }, origin), origin);
+    const plan = this.copyPlan([tree!], source.parentId);
+    throwIssues(plan.issues);
+    const copies: CopyContext = { coming: plan.coming, mains: new Map(), links: [] };
+    return this.transact(() => {
+      const copy = this.copyTree(tree!, source.parentId, beforeId, { name: options.name, frame }, origin, copies);
+      this.linkInstances(copies);
+      return copy;
+    }, origin);
   }
 
   /**
@@ -1331,7 +1538,14 @@ export class GridDocument {
       }
     };
     walk(this.getTree());
-    return out;
+    // An instance carries what it draws, for a document that doesn't have its component.
+    const scene = this.scene();
+    const carry = (tree: SceneTree): SceneTree => {
+      if (!tree.instance) return { ...tree, children: tree.children.map(carry) };
+      const expanded = instanceTree(scene.node(tree.id)!, scene);
+      return expanded ? { ...tree, expanded } : tree;
+    };
+    return out.map(carry);
   }
 
   /**
@@ -1348,15 +1562,101 @@ export class GridDocument {
       else if (target.parentId === null) throw new GridError('Select a layer or artboard to paste into');
     }
     if (target.parentId !== null && trees.some((t) => !t.frame)) this.assertCanContain(target.parentId);
-    return this.transact(
-      () =>
-        trees.map((tree) => {
-          if (tree.frame) return this.copyTree(tree, null, null, { frame: this.besideRow(normalizeFrame(tree.frame)) }, origin);
-          if (target.parentId === null) throw new GridError('Select a layer or artboard to paste into');
-          return this.copyTree(tree, target.parentId, target.beforeId ?? null, {}, origin);
-        }),
-      origin,
-    );
+    const plan = this.copyPlan(trees, target.parentId);
+    throwIssues(plan.issues);
+    const copies: CopyContext = { coming: plan.coming, mains: new Map(), links: [] };
+    return this.transact(() => {
+      const ids = trees.map((tree) => {
+        if (tree.frame) return this.copyTree(tree, null, null, { frame: this.besideRow(normalizeFrame(tree.frame)) }, origin, copies);
+        if (target.parentId === null) throw new GridError('Select a layer or artboard to paste into');
+        return this.copyTree(tree, target.parentId, target.beforeId ?? null, {}, origin, copies);
+      });
+      this.linkInstances(copies);
+      return ids;
+    }, origin);
+  }
+
+  /**
+   * What copying `trees` under `parentId` does about components, checked before
+   * anything is written. A copy of a component this document has is an instance
+   * of it (one definition, however often it's copied); one it doesn't have
+   * comes along as a component (`coming`). An instance keeps pointing at its
+   * component when that's here or coming, and otherwise becomes the plain
+   * layers it carries (`expanded`).
+   */
+  private copyPlan(trees: readonly SceneTree[], parentId: string | null): { issues: string[]; coming: Set<string> } {
+    const scene = this.scene();
+    const coming = new Set<string>();
+    const collect = (tree: SceneTree) => {
+      if (tree.instance) return;
+      if (tree.component === true && !this.isComponent(tree.id)) coming.add(tree.id);
+      tree.children.forEach(collect);
+    };
+    trees.forEach(collect);
+    const issues: string[] = [];
+    const visit = (tree: SceneTree, at: string, around: string | null, aroundName: string | null) => {
+      const here = tree.component === true && this.isComponent(tree.id);
+      const component = here ? tree.id : tree.instance?.component;
+      if (component !== undefined) {
+        if (!here && coming.has(component)) return;
+        if (this.isComponent(component)) {
+          if (around !== null && reachesComponent(component, around, scene)) {
+            issues.push(`${at}: "${scene.node(component)!.name}" can't go inside "${aroundName}": the component would contain itself`);
+          }
+        } else if (tree.expanded) issues.push(...treeIssues([asPlainLayers(tree.expanded)], `${at}.expanded`));
+        else issues.push(`${at}: its component isn't in this document`);
+        return;
+      }
+      if (tree.component === true) {
+        if (aroundName !== null) issues.push(`${at}: components can't be nested, and this would land inside the component "${aroundName}"`);
+        aroundName = tree.name;
+      }
+      tree.children.forEach((child, i) => visit(child, `${at}.children[${i}]`, around, aroundName));
+    };
+    const target = enclosingComponent(parentId, scene);
+    trees.forEach((tree, i) => {
+      // Artboards land on the page, whatever is selected.
+      const around = tree.frame ? null : target;
+      visit(tree, `nodes[${i}]`, around, around === null ? null : scene.node(around)!.name);
+    });
+    return { issues, coming };
+  }
+
+  /** Points the copied instances at their components, now that any that came along exist. */
+  private linkInstances(copies: CopyContext): void {
+    for (const link of copies.links) writeInstance(this.requireY(link.id), copies.mains.get(link.component) ?? link.component, link.props);
+    copies.links.length = 0;
+  }
+
+  /**
+   * Turns an instance into the layers it draws, under the same id, so it can be
+   * edited freely and no longer follows its component. An instance inside the
+   * component stays an instance: detaching goes one level down.
+   */
+  private detachInstance(id: string, origin: Origin): void {
+    const scene = this.scene();
+    const tree = instanceTree(scene.node(id)!, scene);
+    if (!tree) throw new GridError(`${id} can't be detached: its component is missing`);
+    const themes = this.getThemeNames();
+    this.transact(() => {
+      const y = this.requireY(id);
+      y.delete('instance');
+      y.delete('props');
+      y.set('type', tree.type);
+      y.set('tag', tree.tag);
+      if (tree.type === 'text') y.set('text', tree.text ?? '');
+      else y.delete('text');
+      replaceMap(y.get('styles') as Y.Map<string>, tree.styles);
+      replaceMap(y.get('attributes') as Y.Map<string>, tree.attributes);
+      y.delete('breakpoints');
+      y.delete('states');
+      if (tree.breakpoints) writeOverrides(y, 'breakpoints', tree.breakpoints);
+      if (tree.states) writeOverrides(y, 'states', tree.states);
+      if (tree.theme !== undefined && tree.type === 'frame' && themes.includes(tree.theme)) y.set('theme', tree.theme);
+      const copies: CopyContext = { coming: new Set(), mains: new Map(), links: [] };
+      for (const child of tree.children) this.copyTree(child, id, null, {}, origin, copies, 'detached');
+      this.linkInstances(copies);
+    }, origin);
   }
 
   /** `frame` moved to the right of the artboards it vertically overlaps. */
@@ -1371,7 +1671,40 @@ export class GridDocument {
     beforeId: string | null,
     root: { name?: string; frame?: ArtboardFrame },
     origin: Origin,
+    copies: CopyContext,
+    /**
+     * 'linked' keeps components and instances as `copyPlan` decided. 'plain'
+     * copies what's drawn as ordinary layers. 'detached' does too, except that
+     * an instance inside (a drawn layer with a `source`) is copied as the
+     * instance it is.
+     */
+    mode: 'linked' | 'plain' | 'detached' = 'linked',
   ): string {
+    if (mode === 'detached' && node.instance && node.source !== undefined) {
+      return this.copyTree(this.getTree(node.source)[0]!, parentId, beforeId, root, origin, copies);
+    }
+    // Layers from another document may name a theme this one lacks.
+    const theme = node.theme && node.type === 'frame' && this.getThemeNames().includes(node.theme) ? { theme: node.theme } : {};
+    const flags = (id: string) => {
+      if (node.hidden || node.locked) this.updateNode(id, { hidden: node.hidden, locked: node.locked }, origin);
+      return id;
+    };
+    if (mode === 'linked') {
+      // A copy of a component that's here is an instance of it: it takes nothing but its name from the copy.
+      const here = node.component === true && this.isComponent(node.id);
+      const ref = here ? { component: node.id, props: {} } : node.instance;
+      if (ref && (here || copies.coming.has(ref.component) || this.isComponent(ref.component))) {
+        const own = here ? {} : { styles: node.styles, breakpoints: node.breakpoints, states: node.states, attributes: node.attributes, ...theme };
+        const newId = this.createNode({ type: 'frame', name: root.name ?? node.name, parentId, beforeId, ...own }, origin);
+        copies.links.push({ id: newId, component: ref.component, props: ref.props });
+        return flags(newId);
+      }
+      if (ref) {
+        if (!node.expanded) throw new GridError(`"${node.name}" can't be copied: its component isn't in this document`);
+        return this.copyTree({ ...node.expanded, name: node.name }, parentId, beforeId, root, origin, copies, 'plain');
+      }
+    }
+    const component = mode === 'linked' && node.component === true;
     const newId = this.createNode(
       {
         type: node.type,
@@ -1385,13 +1718,15 @@ export class GridDocument {
         states: node.states,
         attributes: node.attributes,
         frame: root.frame ?? node.frame,
-        // Layers from another document may name a theme this one lacks.
-        ...(node.theme && node.type === 'frame' && this.getThemeNames().includes(node.theme) && { theme: node.theme }),
+        ...theme,
+        ...(component && { component: true }),
+        ...(mode === 'linked' && node.bind && { bind: node.bind }),
       },
       origin,
     );
-    if (node.hidden || node.locked) this.updateNode(newId, { hidden: node.hidden, locked: node.locked }, origin);
-    for (const child of node.children) this.copyTree(child, newId, null, {}, origin);
+    if (component) copies.mains.set(node.id, newId);
+    flags(newId);
+    for (const child of node.children) this.copyTree(child, newId, null, {}, origin, copies, mode);
     return newId;
   }
 
@@ -1492,13 +1827,23 @@ export class GridDocument {
       const insert = (parentId: string | null) => {
         for (const n of sortSiblings(byParent.get(parentId) ?? [])) {
           // Merged edits can leave a frame naming a theme that was removed.
-          const { theme, ...node } = n;
+          const { theme, component: _component, bind: _bind, instance: _instance, source: _source, ...node } = n;
           this.createNode({ ...node, parentId, ...(theme && themeNames.includes(theme) && { theme }) }, origin);
           if (n.hidden || n.locked) this.updateNode(n.id, { hidden: n.hidden, locked: n.locked }, origin);
           insert(n.id);
         }
       };
       insert(null);
+      // Components and instances go on once every layer exists (an instance may come before its component),
+      // and as they are: merged edits can leave an instance of something that's gone, which draws as an empty frame.
+      for (const n of snapshot.nodes) {
+        const y = this.nodes.get(n.id);
+        if (!y) continue;
+        if (n.component === true && n.parentId !== null && !n.instance) y.set('component', true);
+        const bind = cleanBindings(n.bind);
+        if (bind) y.set('bind', bind);
+        if (n.instance && typeof n.instance.component === 'string' && n.type === 'frame') writeInstance(y, n.instance.component, n.instance.props ?? {});
+      }
     }, origin);
   }
 
@@ -1533,6 +1878,51 @@ export class GridDocument {
     if (parent.get('type') !== 'frame' || VOID_TAGS.has(parent.get('tag') as string)) {
       throw new GridError(`Node ${parentId} cannot contain children`);
     }
+    if (typeof parent.get('instance') === 'string') {
+      throw new GridError(`"${parent.get('name')}" (${parentId}) is an instance: its layers come from its component. Add layers to the component, or detach the instance (instance: null)`);
+    }
+  }
+
+  /** Why an instance described by `ref` can't go into `parentId`. */
+  private instanceIssues(ref: { component: string; props?: Readonly<Record<string, unknown>> }, parentId: string, scene: SceneLookup): string[] {
+    const component = scene.node(ref.component);
+    if (!component) return [`Component ${ref.component} not found`];
+    if (!component.component) return [`"${component.name}" (${component.id}) isn't a component: mark it with component: true first`];
+    const issues = propIssues(ref.props ?? {}, componentProps(component.id, scene), component.name);
+    const around = enclosingComponent(parentId, scene);
+    if (around !== null && reachesComponent(component.id, around, scene)) {
+      issues.push(`"${component.name}" can't go inside "${scene.node(around)!.name}": the component would contain itself`);
+    }
+    return issues;
+  }
+
+  /** Why a layer whose parent is `parentId` can't be a component. */
+  private componentPlaceIssues(parentId: string | null, scene: SceneLookup): string[] {
+    if (parentId === null) return ["An artboard can't be a component: make a frame inside it the component"];
+    const around = enclosingComponent(parentId, scene);
+    return around === null ? [] : [`Components can't be nested: this is inside the component "${scene.node(around)!.name}". Place an instance of another component there instead`];
+  }
+
+  private componentPatchIssues(id: string, y: YNode, patch: NodePatch): string[] {
+    const issues: string[] = [];
+    const isComponent = y.get('component') === true;
+    if (patch.component === true && !isComponent) {
+      issues.push(...this.componentPlaceIssues((y.get('parentId') as string | null | undefined) ?? null, this.scene()));
+      if (this.getDescendantIds(id).some((d) => this.isComponent(d))) issues.push("Components can't be nested: a layer inside this one is already a component");
+    }
+    if ((patch.component === false || patch.component === null) && isComponent) {
+      const users = this.instancesOf(id);
+      if (users.length) {
+        issues.push(`"${y.get('name')}" has ${users.length === 1 ? 'an instance' : `${users.length} instances`}: delete or detach ${users.length === 1 ? 'it' : 'them'} before it stops being a component`);
+      }
+    }
+    if (patch.props) {
+      const scene = this.scene();
+      const component = scene.node(y.get('instance') as string);
+      if (!component?.component) issues.push("Its component is missing, so its props can't be set");
+      else issues.push(...propIssues(patch.props, componentProps(component.id, scene), component.name));
+    }
+    return issues;
   }
 
   private childIdsByParent(): Map<string | null, string[]> {
@@ -1561,6 +1951,22 @@ export class GridDocument {
     // Concurrent inserts can produce equal keys; fall back to appending.
     return prev !== null && prev >= next ? generateKeyBetween(last, null) : generateKeyBetween(prev, next);
   }
+}
+
+/** What an instance draws, as the ordinary layers it's copied as where its component isn't available. */
+function asPlainLayers(tree: SceneTree): SceneTree {
+  const { instance: _instance, component: _component, bind: _bind, source: _source, expanded: _expanded, ...rest } = tree;
+  return { ...rest, children: tree.children.map(asPlainLayers) };
+}
+
+/** What a batch of copies has to settle about components once every layer is copied. */
+interface CopyContext {
+  /** Ids (where the layers came from) of the components that come along, because this document doesn't have them. */
+  coming: ReadonlySet<string>;
+  /** Those components' ids here, by their id where they came from. */
+  mains: Map<string, string>;
+  /** Copied instances and the component each points at, by its id where it came from. */
+  links: Array<{ id: string; component: string; props: Readonly<Record<string, unknown>> }>;
 }
 
 /** How a container lays out its children, for align and distribute. */

@@ -174,6 +174,7 @@ function TextStyleRow({ id, styles }: { id: string; styles: StyleMap }) {
 
 function NodeInspector({ id }: { id: string }) {
   const node = useNode(id);
+  const component = useNode(node?.instance?.component ?? '');
   if (!node) return null;
 
   const setFrame = (key: keyof ArtboardFrame, value: string) => {
@@ -187,6 +188,18 @@ function NodeInspector({ id }: { id: string }) {
         <Row label="Name">
           <CommitInput label="Name" value={node.name} onCommit={(name) => run(() => doc.updateNode(id, { name }))} />
         </Row>
+        {node.instance ? (
+          // Its element is the component's: there's no tag to pick here.
+          <Row label="Instance">
+            <input
+              className="gf-input"
+              aria-label="Instance of"
+              readOnly
+              value={component ? `${component.name} <${component.tag}>` : 'Missing component'}
+              title="An instance takes its tag and layers from its component"
+            />
+          </Row>
+        ) : (
         <Row label="Tag">
           <select
             className="gf-input"
@@ -203,6 +216,7 @@ function NodeInspector({ id }: { id: string }) {
             ))}
           </select>
         </Row>
+        )}
         {(node.type === 'text' || node.frame || textRoleForTag(node.tag)) && <TextStyleRow id={id} styles={node.styles} />}
         {node.type === 'frame' && <ThemeRow id={id} theme={node.theme} isArtboard={!!node.frame} />}
         <p className="gf-meta">{node.id}</p>
