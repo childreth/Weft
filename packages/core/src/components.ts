@@ -29,8 +29,24 @@ export const MAX_PROP_VALUE_LENGTH = 2000;
 /** Instances inside components inside components: deeper than this is treated as a mistake. */
 const MAX_INSTANCE_DEPTH = 8;
 
-const propNameIssue = (name: string): string | null =>
-  PROP_NAME.test(name) ? null : `Prop name "${name}" must start with a lowercase letter and use only letters and digits (label, iconName)`;
+/** `name` rewritten as a prop name when it's one in another style (`date_label`, `date-label`, `Date label` → `dateLabel`); null when it can't be. */
+function asPropName(name: string): string | null {
+  const words = name.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const joined = words
+    .map((word) => (word === word.toUpperCase() ? word.toLowerCase() : word))
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join('');
+  const fixed = joined.slice(0, 1).toLowerCase() + joined.slice(1);
+  return fixed !== name && PROP_NAME.test(fixed) ? fixed : null;
+}
+
+/** Says the fix where there is one: a model that sent `date_label` shouldn't have to work out the convention from the rule. */
+function propNameIssue(name: string): string | null {
+  if (PROP_NAME.test(name)) return null;
+  const fixed = asPropName(name);
+  const rule = `Prop name "${name}" must be camelCase: start with a lowercase letter and use only letters and digits`;
+  return fixed ? `${rule}. Use "${fixed}"` : `${rule} (label, iconName)`;
+}
 
 /** Problems with a layer's bindings. */
 export function bindIssues(type: NodeType, bind: Readonly<Record<string, string | null | undefined>>): string[] {
