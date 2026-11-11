@@ -110,6 +110,7 @@ export function run<T>(fn: () => T): T | undefined {
  */
 export const agentApi = {
   getTree: (rootId?: string) => doc.getTree(rootId),
+  getComponents: () => doc.getComponents(),
   getSelection: () => useEditor.getState().selection,
   createNode: (input: CreateNodeInput) => doc.createNode(input, ORIGIN_AGENT),
   updateNode: (id: string, patch: NodePatch) => doc.updateNode(id, patch, ORIGIN_AGENT),

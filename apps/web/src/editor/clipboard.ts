@@ -53,7 +53,7 @@ export function pasteTarget(copied: ReadonlySet<string> = new Set()): { parentId
   const { selection } = useEditor.getState();
   const node = scene.nodes.get(selection.at(-1) ?? '');
   if (!node) return { parentId: null, beforeId: null };
-  if (node.type === 'frame' && !VOID_TAGS.has(node.tag) && !copied.has(node.id)) return { parentId: node.id, beforeId: null };
+  if (node.type === 'frame' && !VOID_TAGS.has(node.tag) && !node.instance && !copied.has(node.id)) return { parentId: node.id, beforeId: null };
   const siblings = scene.children(node.parentId);
   return { parentId: node.parentId, beforeId: siblings[siblings.indexOf(node.id) + 1] ?? null };
 }

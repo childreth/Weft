@@ -1,7 +1,7 @@
-import { createElement, memo, useLayoutEffect, useRef, type CSSProperties } from 'react';
-import { VOID_TAGS, type SceneNode } from '@weft/core';
+import { createElement, memo, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type CSSProperties, type ReactElement } from 'react';
+import { VOID_TAGS, instanceTree, type SceneLookup, type SceneNode, type SceneTree } from '@weft/core';
 import { displaySrc } from '../editor/assets';
-import { doc, history, run, useChildren, useNode } from '../editor/editor';
+import { doc, history, run, scene, useChildren, useNode } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { holdsSelection, isRevealable, reactAttributes } from './behaviors';
 import { nodeElements } from './elements';
@@ -16,7 +16,7 @@ function registerRef(id: string) {
   };
 }
 
-function toStyle(node: SceneNode, isRoot: boolean): CSSProperties {
+function toStyle(node: Pick<SceneNode, 'styles' | 'hidden'>, isRoot: boolean): CSSProperties {
   const style: CSSProperties = { ...node.styles } as CSSProperties;
   if (isRoot) {
     style.width = '100%';
@@ -78,6 +78,51 @@ function EditableText({ node, props }: { node: SceneNode; props: Record<string, 
   });
 }
 
+const sceneLookup: SceneLookup = { node: (id) => scene.nodes.get(id), children: (id) => scene.children(id) };
+
+/**
+ * A layer drawn for an instance. It has no id of its own: a click lands on the
+ * instance, and its breakpoint and state rules find it by `data-gf-src`, the
+ * component layer it comes from.
+ */
+function drawnLayer(layer: SceneTree): ReactElement {
+  const props: Record<string, unknown> = {
+    ...reactAttributes(layer.attributes),
+    key: layer.id,
+    'data-gf-src': layer.source,
+    ...(layer.theme && { 'data-theme': layer.theme }),
+    style: toStyle(layer, false),
+  };
+  if (layer.attributes.src !== undefined) props.src = displaySrc(layer.attributes.src);
+  if (layer.tag === 'img') props.draggable = false;
+  if (layer.type === 'text') {
+    if (layer.tag === 'textarea') return createElement(layer.tag, { ...props, defaultValue: layer.text ?? '' });
+    return createElement(layer.tag, props, layer.text);
+  }
+  if (VOID_TAGS.has(layer.tag)) return createElement(layer.tag, props);
+  return createElement(layer.tag, props, layer.children.map(drawnLayer));
+}
+
+/**
+ * An instance: its component's layers, worked out from the scene each time it
+ * changes, under the instance's own element. Every instance looks again on any
+ * edit (its component can be anywhere in the document); React then changes
+ * only what differs.
+ */
+function InstanceView({ node, props }: { node: SceneNode; props: Record<string, unknown> }) {
+  const nodes = useSyncExternalStore(scene.subscribe, () => scene.nodes);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const tree = useMemo(() => instanceTree(node, sceneLookup), [node, nodes]);
+  // Its component is gone: an empty frame that can still be selected and fixed.
+  if (!tree) return createElement('div', { ...props, 'data-gf-missing': '' });
+  const own: Record<string, unknown> = { ...props, ...reactAttributes(tree.attributes), style: toStyle(tree, false) };
+  if (tree.theme) own['data-theme'] = tree.theme;
+  if (tree.attributes.src !== undefined) own.src = displaySrc(tree.attributes.src);
+  if (tree.type === 'text') return createElement(tree.tag, own, tree.text);
+  if (VOID_TAGS.has(tree.tag)) return createElement(tree.tag, own);
+  return createElement(tree.tag, own, tree.children.map(drawnLayer));
+}
+
 export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: string; isRoot?: boolean }) {
   const node = useNode(id);
   const childIds = useChildren(id);
@@ -103,6 +148,7 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
   }
   // The canvas handles drags itself; a dragged image would start the browser's own.
   if (node.tag === 'img') props.draggable = false;
+  if (node.instance) return <InstanceView node={node} props={props} />;
 
   if (node.type === 'text') {
     // A textarea's text is its starting value; it's edited in the Inspector.

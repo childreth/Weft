@@ -16,7 +16,7 @@ const EDGE_BAND = 10;
 
 const isLeaf = (id: string) => {
   const node = scene.nodes.get(id);
-  return !node || node.type === 'text' || VOID_TAGS.has(node.tag);
+  return !node || node.type === 'text' || VOID_TAGS.has(node.tag) || !!node.instance;
 };
 
 const rectOf = (id: string): DOMRect | null => {

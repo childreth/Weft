@@ -1,6 +1,7 @@
 import { compileBreakpointCSS, compileStateCSS, GridError, type GridDocument } from './document';
 import { ARTBOARD_RESET_CSS } from './defaults';
-import { VOID_TAGS, type SceneNode, type SceneTree } from './schema';
+import { VOID_TAGS, type SceneTree } from './schema';
+import { flattenTree } from './components';
 import { compileTokensCSS, type TokenSet } from './tokens';
 import { googleFontsCSSUrl } from './fonts';
 import { assetName, loadableSrc } from './assets';
@@ -44,7 +45,9 @@ function renderNode(node: SceneTree, isRoot: boolean, assetUrl: AssetUrl): strin
     .map(([name, value]) => ` ${name}="${escapeAttr(value)}"`)
     .join('');
   const theme = node.theme ? ` data-theme="${escapeAttr(node.theme)}"` : '';
-  const open = `<${node.tag} data-gf-id="${escapeAttr(node.id)}"${theme}${attrs}${styleAttr(node, isRoot)}>`;
+  // A layer drawn for an instance has no id of its own; its override rules find it by the component layer it comes from.
+  const mark = node.source !== undefined ? `data-gf-src="${escapeAttr(node.source)}"` : `data-gf-id="${escapeAttr(node.id)}"`;
+  const open = `<${node.tag} ${mark}${theme}${attrs}${styleAttr(node, isRoot)}>`;
   if (VOID_TAGS.has(node.tag)) return open;
   const inner = node.type === 'text' ? escapeText(node.text ?? '') : node.children.map((c) => renderNode(c, false, assetUrl)).join('');
   return `${open}${inner}</${node.tag}>`;
@@ -66,19 +69,14 @@ export interface ArtboardHTMLOptions {
 }
 
 export function exportArtboardHTML(doc: GridDocument, artboardId: string, options: ArtboardHTMLOptions = {}): string {
-  const [tree] = doc.getTree(artboardId);
-  if (!tree?.frame) throw new GridError(`Node ${artboardId} is not an artboard`);
+  // As drawn: instances are their components' layers here, since the page has no components.
+  const tree = doc.getExpandedTree(artboardId);
+  if (!tree.frame) throw new GridError(`Node ${artboardId} is not an artboard`);
   const width = options.width ?? tree.frame.width;
   const height = tree.frame.heightMode === 'hug' ? 'auto' : `${tree.frame.height}px`;
   const fontCSS = options.fontCSSUrl === undefined ? googleFontsCSSUrl(doc.getFonts()) : options.fontCSSUrl;
   const fontLink = fontCSS ? `\n<link rel="stylesheet" href="${escapeAttr(fontCSS)}">` : '';
-  const subtree: SceneNode[] = [];
-  const walk = (t: SceneTree, parentId: string | null) => {
-    const { children, ...rest } = t;
-    subtree.push({ ...rest, parentId, index: '' });
-    children.forEach((c) => walk(c, t.id));
-  };
-  walk(tree, null);
+  const subtree = flattenTree(tree);
   // Only the themes this artboard uses; each one declares every token.
   const set = doc.tokenSet(options.tokens);
   const used = new Set(subtree.flatMap((n) => n.theme ?? []));

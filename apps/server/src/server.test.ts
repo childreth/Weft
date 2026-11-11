@@ -302,6 +302,83 @@ describe('MCP tools', () => {
     expect((await call('read_skill', { path: 'SKILL.md' })).text).toContain('`desktop` (> 1024px), `tablet` (≤ 1024px), `mobile` (≤ 600px)');
   });
 
+  it('builds a component and its instances in one call, and keeps them in step', async () => {
+    const made = await call('create_nodes', {
+      doc: 'components',
+      nodes: [
+        {
+          tag: 'main',
+          name: 'Plans',
+          frame: { width: 900 },
+          styles: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', padding: '24px' },
+          children: [
+            {
+              tag: 'article',
+              name: 'Plan card',
+              component: true,
+              styles: { display: 'grid', gap: '8px', padding: '16px', height: '120px' },
+              children: [
+                { tag: 'h3', text: 'Starter', bind: { text: 'name' } },
+                { text: '$0', bind: { text: 'price' } },
+              ],
+            },
+            // By name, to a component made earlier in the same call.
+            { name: 'Pro', instance: { component: 'Plan card', props: { name: 'Pro', price: '$12' } } },
+            { name: 'Team', instance: { component: 'plan card', props: { name: 'Team' } }, styles: { height: '200px' } },
+          ],
+        },
+      ],
+    });
+    expect(made.isError).toBe(false);
+    const [page] = made.data.created as Array<{ id: string; children: Array<{ id: string; children?: unknown[] }> }>;
+    const [main, pro, team] = page!.children;
+    expect(pro!.children).toBeUndefined();
+
+    // Agents see what they can place, and an instance as one short node.
+    const canvas = await call('get_canvas', { doc: 'components', rootId: page!.id, detail: 'outline' });
+    expect(canvas.data.components).toEqual([{ id: main!.id, name: 'Plan card', props: { name: 'Starter', price: '$0' }, instances: 2 }]);
+    const outlined = canvas.data.nodes[0].children as Array<Record<string, unknown>>;
+    expect(outlined[0]).toMatchObject({ component: true });
+    expect(outlined[1]).toEqual({ id: pro!.id, tag: 'div', name: 'Pro', instance: { component: main!.id, props: { name: 'Pro', price: '$12' } } });
+
+    // Rendered: each instance is laid out like the component, with its own root styles on top.
+    const boxes = async () => ((await call('get_screenshot', { doc: 'components', id: page!.id, image: false })).data.boxes as Array<{ id: string; height: number; width: number }>);
+    const byId = async (id: string) => (await boxes()).find((b) => b.id === id)!;
+    expect(await byId(pro!.id)).toMatchObject({ height: 120, width: (await byId(main!.id)).width });
+    expect((await byId(team!.id)).height).toBe(200);
+    const html = async () => (await call('export_html', { doc: 'components', id: page!.id })).text;
+    expect(await html()).toContain('>Pro</h3>');
+    expect(await html()).toContain('>$12</p>');
+    expect(await html()).toContain('>Team</h3>');
+
+    // Restyling the component restyles every instance; a prop changes one.
+    await call('update_nodes', { doc: 'components', updates: [{ id: main!.id, styles: { height: '90px' } }, { id: pro!.id, props: { price: '$15' } }] });
+    expect((await byId(pro!.id)).height).toBe(90);
+    expect((await byId(team!.id)).height).toBe(200);
+    expect(await html()).toContain('>$15</p>');
+
+    // What can't be done says what to do instead, and changes nothing.
+    const unknown = await call('update_nodes', { doc: 'components', updates: [{ id: pro!.id, props: { cost: '$1' } }] });
+    expect(unknown.text).toContain('"Plan card" has no prop "cost" (its props: name, price)');
+    expect((await call('create_nodes', { doc: 'components', parentId: pro!.id, nodes: [{ text: 'Inside' }] })).text).toContain('is an instance: its layers come from its component');
+    expect((await call('create_nodes', { doc: 'components', parentId: page!.id, nodes: [{ instance: { component: 'Pricing table' } }] })).text).toContain('No component "Pricing table". This document has: Plan card');
+    expect((await call('delete_nodes', { doc: 'components', ids: [main!.id] })).text).toContain('is a component with 2 instances elsewhere');
+    expect(server.rooms.get('components').doc.getComponents()[0]!.instances).toBe(2);
+
+    // A copy of the component is another instance; detaching one gives its layers back.
+    const copy = await call('duplicate_node', { doc: 'components', id: main!.id });
+    expect(copy.data.ids).toEqual({ [main!.id]: copy.data.id });
+    expect(server.rooms.get('components').doc.getNode(copy.data.id)?.instance?.component).toBe(main!.id);
+    expect((await call('update_nodes', { doc: 'components', updates: [{ id: team!.id, instance: null }] })).isError).toBe(false);
+    const detached = server.rooms.get('components').doc.getTree(team!.id)[0]!;
+    expect(detached).toMatchObject({ tag: 'article', styles: { height: '200px', padding: '16px' } });
+    expect(detached.children.map((c) => c.text)).toEqual(['Team', '$0']);
+    // Undo puts the instance back.
+    await call('undo_agent_change', { doc: 'components' });
+    expect(server.rooms.get('components').doc.getNode(team!.id)?.instance?.props).toEqual({ name: 'Team' });
+    expect(client.getInstructions()).toContain('Components: when the same thing repeats');
+  });
+
   it('reads the canvas as a compact outline', async () => {
     const full = await call('get_canvas', { doc: 'outline' });
     const brief = await call('get_canvas', { doc: 'outline', detail: 'outline' });

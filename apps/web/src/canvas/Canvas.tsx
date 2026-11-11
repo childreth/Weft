@@ -74,7 +74,7 @@ export function hitTest(event: Event): Hit {
 function containerFor(id: string): string | null {
   const node = scene.nodes.get(id);
   if (!node) return null;
-  if (node.type === 'text' || VOID_TAGS.has(node.tag)) return node.parentId;
+  if (node.type === 'text' || VOID_TAGS.has(node.tag) || node.instance) return node.parentId;
   return id;
 }
 

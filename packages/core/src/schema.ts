@@ -352,8 +352,36 @@ export interface SceneNode {
   theme?: string;
   hidden?: boolean;
   locked?: boolean;
+  /** A main component: the definition its instances draw. Never an artboard, an instance, or inside another component. */
+  component?: true;
+  /** Which of this layer's fields take a prop of the component it's in: `{ text: 'label' }`. */
+  bind?: NodeBindings;
+  /** An instance: this frame draws its component's layers with these prop values, and has no children of its own. */
+  instance?: InstanceRef;
+  /**
+   * Only on layers drawn for an instance (`instanceTree`), never stored: the
+   * component layer this one comes from. Such a layer has no id of its own to
+   * select or style by, so renderers mark it `data-gf-src` instead of `data-gf-id`.
+   */
+  source?: string;
 }
 
 export interface SceneTree extends Omit<SceneNode, 'parentId' | 'index'> {
   children: SceneTree[];
+  /**
+   * For an instance leaving its document (the clipboard): what it draws, used
+   * as plain layers where its component isn't available.
+   */
+  expanded?: SceneTree;
+}
+
+/** A layer's fields that a component prop can set. */
+export const BIND_FIELDS = ['text'] as const;
+export type BindField = (typeof BIND_FIELDS)[number];
+export type NodeBindings = Partial<Record<BindField, string>>;
+
+/** The component an instance draws (a node id in this document) and its values for that component's props. */
+export interface InstanceRef {
+  component: string;
+  props: Record<string, string>;
 }

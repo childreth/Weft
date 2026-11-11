@@ -17,7 +17,7 @@ const useLayerDrag = create<{ dragging: string[]; target: DropTarget | null }>()
 /** Last plainly clicked layer: the anchor for shift-click range selection. */
 let anchorId: string | null = null;
 
-const canContain = (node: SceneNode) => node.type === 'frame' && !VOID_TAGS.has(node.tag);
+const canContain = (node: SceneNode) => node.type === 'frame' && !VOID_TAGS.has(node.tag) && !node.instance;
 
 /** Layer ids top to bottom as the panel shows them, skipping collapsed subtrees. */
 function visibleLayerIds(): string[] {
@@ -165,7 +165,7 @@ const LayerRow = memo(function LayerRow({ id, depth }: { id: string; depth: numb
 
   if (!node) return null;
 
-  const icon = node.parentId === null ? '▣' : node.type === 'text' ? 'T' : node.tag === 'img' ? '◪' : node.styles.display === 'grid' ? '▦' : '▢';
+  const icon = node.component ? '◆' : node.instance ? '◇' : node.parentId === null ? '▣' : node.type === 'text' ? 'T' : node.tag === 'img' ? '◪' : node.styles.display === 'grid' ? '▦' : '▢';
   // Text layers created on the canvas keep the default name; show their text instead.
   const label = node.type === 'text' && node.text && node.name === 'Text' ? node.text : node.name;
   const toggle = (flag: 'hidden' | 'locked') => (e: MouseEvent) => {
