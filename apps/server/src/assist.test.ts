@@ -1,10 +1,16 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ollamaUrlFrom, type AssistEvent } from './assist';
+import { assistLimits, ollamaUrlFrom, type AssistEvent } from './assist';
 import { startGridServer, type GridServer } from './server';
 
-/** A scripted stand-in for Ollama: replies are taken in order; requests are recorded. */
+/**
+ * A scripted stand-in for Ollama: replies are taken in order; requests are
+ * recorded. A reply is sent whole, or, as `{ stream: [...] }`, the way Ollama
+ * streams: one line per part, where a part is a piece of the message,
+ * `{ wait: ms }` (the model writing something that never arrives) or
+ * `{ hang: true }` (it never finishes).
+ */
 let fake: Server;
 let replies: Array<Record<string, unknown>> = [];
 const requests: Array<{
@@ -61,7 +67,14 @@ beforeAll(async () => {
       return res.end(JSON.stringify({ error: 'think value "high" is not supported for this model' }));
     }
     requests.push(request);
-    res.end(JSON.stringify({ message: replies.shift() ?? { role: 'assistant', content: 'Done.' } }));
+    const reply = replies.shift() ?? { role: 'assistant', content: 'Done.' };
+    if (!Array.isArray(reply.stream)) return res.end(JSON.stringify({ message: reply }));
+    for (const part of reply.stream as Array<Record<string, unknown>>) {
+      if (typeof part.wait === 'number') await new Promise((r) => setTimeout(r, part.wait as number));
+      else if (part.hang) return void (await new Promise((r) => res.on('close', r)));
+      else res.write(`${JSON.stringify({ message: { role: 'assistant', content: '', ...part }, done: false })}\n`);
+    }
+    res.end(`${JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop' })}\n`);
   });
   await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
   server = await startGridServer({ port: 0, dataDir: null, ollamaUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` });
@@ -163,6 +176,74 @@ describe('assist', () => {
     const answered = await chat({ prompt: 'what color?', model: 'big:27b', think: 'on' });
     expect(answered.map((e) => e.type)).toEqual(['message', 'done']);
     expect(answered[0]).toEqual({ type: 'message', text: 'The button is #004ac6.' });
+  });
+
+  it('reads a streamed reply: reasoning, tool calls and text arrive in pieces', async () => {
+    replies = [
+      { stream: [{ thinking: 'Read the ' }, { thinking: 'tokens first.' }, { tool_calls: [{ function: { name: 'list_tokens', arguments: {} } }] }] },
+      { stream: [{ content: 'Nothing ' }, { content: 'to change.' }] },
+    ];
+    const events = await chat({ prompt: 'look', think: 'on' });
+    expect(events.map((e) => e.type)).toEqual(['thinking', 'tool', 'tool_result', 'message', 'done']);
+    expect(events[0]).toMatchObject({ text: 'Read the tokens first.' });
+    expect(events[3]).toEqual({ type: 'message', text: 'Nothing to change.' });
+    expect((requests.at(-1) as unknown as { stream: boolean }).stream).toBe(true);
+  });
+
+  it("says so when a tool call was lost, and asks the model to write it again", async () => {
+    const saved = { ...assistLimits };
+    assistLimits.swallowedMs = 40;
+    const lastMessage = () => requests.at(-1)!.messages.at(-1)!;
+    try {
+      // The model reasons, writes a call Ollama can't parse (nothing arrives while it does), and stops.
+      const lost = { stream: [{ thinking: 'Build all four components in one call.' }, { wait: 120 }] };
+      replies = [lost, { role: 'assistant', content: '', tool_calls: [{ function: { name: 'list_tokens', arguments: {} } }] }, { role: 'assistant', content: 'Built the first one.' }];
+      const events = await chat({ prompt: 'make components', think: 'on' });
+      // Its plan is shown as reasoning, not passed off as the answer.
+      expect(events.map((e) => e.type)).toEqual(['thinking', 'error', 'tool', 'tool_result', 'message', 'done']);
+      expect(events[0]).toMatchObject({ text: 'Build all four components in one call.' });
+      expect((events[1] as { message: string }).message).toMatch(/no tool call Weft could read/);
+      // The retry ended with the nudge; the call after it didn't, and it was never kept.
+      expect(requests.at(-2)!.messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('could not be read') });
+      expect(lastMessage().role).toBe('tool');
+      expect(JSON.stringify(requests.at(-1)!.messages)).not.toContain('could not be read');
+
+      // Lost again straight after the nudge: the turn stops and says why.
+      replies = [lost, lost];
+      const stopped = await chat({ prompt: 'make components', think: 'on' });
+      expect(stopped.map((e) => e.type)).toEqual(['thinking', 'error', 'thinking', 'error', 'done']);
+      expect((stopped[3] as { message: string }).message).toMatch(/^Stopped: the model again wrote a tool call/);
+
+      // A model that doesn't think and sends back nothing at all: never "Done.".
+      replies = [{ role: 'assistant', content: '' }, { role: 'assistant', content: 'Here you go.' }];
+      const silent = await chat({ prompt: 'make components', model: 'small:1b' });
+      expect(silent.map((e) => e.type)).toEqual(['error', 'message', 'done']);
+      expect(silent[1]).toEqual({ type: 'message', text: 'Here you go.' });
+
+      // An answer given only in the reasoning, with no pause after it, is still the reply.
+      replies = [{ stream: [{ thinking: 'The button is #004ac6.' }] }];
+      const answered = await chat({ prompt: 'what color?', think: 'on' });
+      expect(answered[0]).toEqual({ type: 'message', text: 'The button is #004ac6.' });
+    } finally {
+      Object.assign(assistLimits, saved);
+    }
+  });
+
+  it('stops a step that runs too long, with what the model had reasoned', async () => {
+    const saved = { ...assistLimits };
+    assistLimits.stepMs = 150;
+    try {
+      replies = [{ stream: [{ thinking: 'Wait, let me plan this again.' }, { hang: true }] }];
+      const events = await chat({ prompt: 'make components', think: 'on' });
+      expect(events.map((e) => e.type)).toEqual(['thinking', 'error', 'done']);
+      expect(events[0]).toMatchObject({ text: 'Wait, let me plan this again.' });
+      expect((events[1] as { message: string }).message).toMatch(/^Stopped: big:27b spent .* on one step without finishing \(its reasoning so far is above\)/);
+      // The session is free for the next request.
+      const next = await chat({ prompt: 'hi' });
+      expect(next.at(-2)).toEqual({ type: 'message', text: 'Done.' });
+    } finally {
+      Object.assign(assistLimits, saved);
+    }
   });
 
   it('runs tool calls against the document and undoes the whole turn', async () => {
