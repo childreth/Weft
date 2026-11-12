@@ -75,7 +75,7 @@ Model:
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), with "tokens" in the same call for its fonts, type and accent; "tokens" that aren't colors also reach <theme>-dark, so set them once. Set the dark accent with theme "<theme>-dark".
 - Responsive: "styles" apply at every width; "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ${breakpointRange(b)}`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it. Build the layout in styles and adapt it with tablet and mobile (both apply on a phone; mobile wins). Use desktop only for a rule that shouldn't reach smaller screens, so nothing has to undo it there.
 - States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
-- Components: when the same thing repeats (cards, list rows, buttons, nav items), build it once and reuse it. Mark the layer {"component": true} and, on each text layer inside whose text differs per use, {"bind": {"text": "planName"}} (a prop name is camelCase; an icon's name is text too). Create the others as {"instance": {"component": "<its name or id>", "props": {"planName": "…"}}}. An instance draws the component's layers and follows every change to them, so you restyle all of them by editing the component. Nothing inside an instance can be edited: set its props, style its root (width, gridColumn, alignSelf), or detach it into ordinary layers with update_nodes {"instance": null}. get_canvas lists the components with their props. A copy of a component is an instance of it.
+- Components: when the same thing repeats (cards, list rows, buttons, nav items), build it once and reuse it. Mark the layer {"component": true} and, on each text layer inside whose text differs per use, {"bind": {"text": "planName"}} (a prop name is camelCase; an icon's name is text too). Create the others as {"instance": {"component": "<its name or id>", "props": {"planName": "…"}}}. An instance draws the component's layers and follows every change to them, so you restyle all of them by editing the component. Nothing inside an instance can be edited: set its props, style its root (width, gridColumn, alignSelf), or detach it into ordinary layers with update_nodes {"instance": null}. get_canvas lists the components with their props. A copy of a component is an instance of it. To reuse what a design already repeats, don't rebuild it: mark one of the look-alike layers as the component and bind its text, then turn the others into instances where they stand with update_nodes {"id": "<layer>", "instance": {"component": "<name or id>"}}; each one's own text fills the props.
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
@@ -373,6 +373,12 @@ function nextArtboardPosition(room: Room): { x: number; y: number } {
   if (frames.length === 0) return { x: 0, y: 0 };
   return { x: Math.max(...frames.map((f) => f.x + f.width)) + 120, y: Math.min(...frames.map((f) => f.y)) };
 }
+
+/** A long list cut to its start, saying how many more there are. */
+const some = (list: readonly string[], max = 6): string => `${list.slice(0, max).join(', ')}${list.length > max ? ` and ${list.length - max} more` : ''}`;
+
+const CONVERT_NOTE =
+  "droppedText is text the instance no longer shows, and changedLayers are layers inside that now look like the component's. If that content matters: undo_agent_change, then bind a layer in the component to a prop for it, or leave that layer as it was. Tell the user what changed.";
 
 /** A component by id, or by name when only one has that name. */
 function resolveComponent(room: Room, ref: string): string {
@@ -676,7 +682,15 @@ export function createMcpServer(
                 .optional()
                 .describe('Inside a component: {"text": "buttonLabel"} exposes this text layer\'s text as the prop "buttonLabel" (camelCase); null removes it'),
               props: z.record(z.string(), z.string().nullable()).optional().describe("An instance's prop values, merged; null goes back to the component's own"),
-              instance: z.null().optional().describe('null detaches an instance into ordinary layers under the same id; send it with only the id'),
+              instance: strictObject({
+                component: z.string().describe("The component's id, or its name"),
+                props: z.record(z.string(), z.string()).optional().describe('Only for text the layer does not already hold'),
+              })
+                .nullable()
+                .optional()
+                .describe(
+                  '{"component": "<name or id>"} turns this existing layer into an instance of that component, in place: its own text fills the props and the component\'s layers replace its own. null detaches an instance into ordinary layers under the same id; send it with only the id',
+                ),
             }),
           )
           .min(1),
@@ -704,10 +718,33 @@ export function createMcpServer(
             return issues.map((m) => `updates[${i}]: ${m}`);
           }),
         );
-        for (const { id, ...patch } of updates) {
-          room.doc.updateNode(id, patch as NodePatch, agent.identity.origin);
+        const converted: Array<Record<string, unknown>> = [];
+        const mismatched: string[] = [];
+        updates.forEach(({ id, instance, ...patch }, i) => {
           touched.add(id);
-        }
+          if (!instance) return room.doc.updateNode(id, { ...patch, ...(instance === null && { instance }) } as NodePatch, agent.identity.origin);
+          // An existing layer becomes an instance where it stands; what it held is matched to the component's props.
+          const { props, ...rest } = patch;
+          const given = Object.fromEntries(Object.entries(props ?? {}).filter((entry): entry is [string, string] => entry[1] !== null));
+          const component = resolveComponent(room, instance.component);
+          const name = nameOf(room, id);
+          const match = room.doc.convertToInstance(id, { component, props: { ...instance.props, ...given } }, agent.identity.origin);
+          if (Object.values(rest).some((value) => value !== undefined)) room.doc.updateNode(id, rest as NodePatch, agent.identity.origin);
+          // Showing the component's text in another layer's place is wrong content, not a loss to report: refuse, with what to pass.
+          if (match.defaulted.length) {
+            mismatched.push(
+              `updates[${i}]: "${name}" (${id}) isn't built like "${nameOf(room, component)}", so nothing in it supplies ${match.defaulted.join(', ')}: the instance would show the component's own text there. Pass ${match.defaulted.length === 1 ? 'it' : 'them'} in instance.props${match.droppedText.length ? ` (its text that found no prop: ${some(match.droppedText.map((t) => JSON.stringify(t)))})` : ''}`,
+            );
+          }
+          converted.push({
+            id,
+            props: match.props,
+            ...(match.droppedText.length && { droppedText: some(match.droppedText) }),
+            ...(match.changedLayers.length && { changedLayers: some(match.changedLayers) }),
+          });
+        });
+        throwIssues(mismatched);
+        const lossy = converted.some((c) => c.droppedText || c.changedLayers);
         const warnings = [
           ...backgroundWarnings(room, updates),
           ...themeWarnings(room, updates.filter((u) => u.theme).map((u) => u.id)),
@@ -717,6 +754,8 @@ export function createMcpServer(
         const restyled = updates.some((u) => u.styles || u.breakpoints || u.states);
         return {
           updated: updates.map((u) => u.id),
+          ...(converted.length && { converted }),
+          ...(lossy && { convertedNote: CONVERT_NOTE }),
           ...(warnings.length && { warnings }),
           ...(remindSkill && restyled && !identity.readStyleGuide && { note: SKILL_REMINDER }),
         };

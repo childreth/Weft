@@ -17,8 +17,10 @@ import {
   enclosingComponent,
   expandTree,
   instanceTree,
+  matchInstance,
   propIssues,
   reachesComponent,
+  type InstanceMatch,
   type SceneLookup,
 } from './components';
 import {
@@ -109,8 +111,11 @@ export interface NodePatch {
   bind?: Partial<Record<BindField, string | null>> | null;
   /** An instance's prop values, merged; null goes back to what the component shows. */
   props?: Record<string, string | null>;
-  /** null detaches an instance: it becomes ordinary layers and stops following its component. */
-  instance?: null;
+  /**
+   * null detaches an instance: it becomes ordinary layers and stops following its component.
+   * A component turns an ordinary layer into an instance of it, in place (`convertToInstance`).
+   */
+  instance?: null | { component: string; props?: Readonly<Record<string, string>> };
 }
 
 export interface Snapshot {
@@ -1243,6 +1248,16 @@ export class GridDocument {
       }
       return this.detachInstance(id, origin);
     }
+    if (patch.instance) {
+      const { instance, props, ...rest } = patch;
+      const taken = (['tag', 'text', 'bind', 'component'] as const).find((key) => rest[key] !== undefined);
+      if (taken) throw new GridError(`An instance takes its ${taken} from its component: leave ${taken} out when turning a layer into one`);
+      const given = Object.fromEntries(Object.entries(props ?? {}).filter((entry): entry is [string, string] => entry[1] !== null));
+      return this.transact(() => {
+        this.convertToInstance(id, { component: instance.component, props: { ...instance.props, ...given } }, origin);
+        if (Object.values(rest).some((value) => value !== undefined)) this.updateNode(id, rest, origin);
+      }, origin);
+    }
     if (isInstance) {
       if (patch.component) throw new GridError("An instance can't be a component: detach it first (instance: null)");
       const taken = (['tag', 'text', 'bind'] as const).find((key) => patch[key] !== undefined);
@@ -1332,11 +1347,7 @@ export class GridDocument {
     for (const id of doomed) {
       if (!this.isComponent(id)) continue;
       const users = this.instancesOf(id).filter((user) => !doomed.has(user));
-      if (users.length) {
-        throw new GridError(
-          `"${this.nodes.get(id)!.get('name')}" is a component with ${users.length === 1 ? 'an instance' : `${users.length} instances`} elsewhere: delete or detach ${users.length === 1 ? 'it' : 'them'} first (${users.slice(0, 5).join(', ')}${users.length > 5 ? '…' : ''})`,
-        );
-      }
+      if (users.length) throw new GridError(this.componentInUseMessage(id, users, ids));
     }
     this.transact(() => {
       for (const id of doomed) this.nodes.delete(id);
@@ -1659,6 +1670,58 @@ export class GridDocument {
     }, origin);
   }
 
+  /**
+   * Turns an ordinary layer into an instance of a component, in place: same id,
+   * name and position, so nothing has to be deleted, recreated and moved back.
+   * For a design that already repeats something: mark one as the component,
+   * then convert the rest. The layer's text fills the component's props
+   * (`matchInstance`; `ref.props` win), its own layers are replaced by the
+   * component's, and its root keeps only the styles, attributes and overrides
+   * that differ from the component's root, so it follows the component's look
+   * but stays where and how it was placed. Returns what was kept and lost.
+   */
+  convertToInstance(id: string, ref: { component: string; props?: Readonly<Record<string, string>> }, origin: Origin = ORIGIN_LOCAL): InstanceMatch {
+    const y = this.requireY(id);
+    const scene = this.scene();
+    const node = scene.node(id)!;
+    if (node.instance) throw new GridError(`"${node.name}" (${id}) is already an instance: set its props, or detach it first (instance: null)`);
+    if (node.parentId === null) throw new GridError("An artboard can't be an instance: convert a frame inside it");
+    if (node.component) {
+      throw new GridError(`"${node.name}" (${id}) is a component${ref.component === id ? ': it is the one the others become instances of, so leave it out' : ", so it can't also be an instance"}`);
+    }
+    const inner = this.getDescendantIds(id).find((d) => this.isComponent(d));
+    if (inner) throw new GridError(`"${node.name}" (${id}) holds the component "${scene.node(inner)!.name}", which converting it would delete: move that out first`);
+    throwIssues(this.instanceIssues(ref, node.parentId, scene));
+
+    const component = scene.node(ref.component)!;
+    const match = matchInstance(id, component.id, scene);
+    const props = { ...match.props, ...ref.props };
+    const differing = <T>(own: Readonly<Record<string, T>> | undefined, base: Readonly<Record<string, T>> | undefined): Record<string, T> =>
+      Object.fromEntries(Object.entries(own ?? {}).filter(([key, value]) => base?.[key] !== value));
+    this.transact(() => {
+      for (const d of this.getDescendantIds(id)) this.nodes.delete(d);
+      y.set('type', 'frame');
+      y.set('tag', 'div');
+      y.delete('text');
+      y.delete('bind');
+      replaceMap(y.get('styles') as Y.Map<string>, differing(node.styles, component.styles));
+      replaceMap(y.get('attributes') as Y.Map<string>, differing(node.attributes, component.attributes));
+      for (const key of ['breakpoints', 'states'] as const) {
+        y.delete(key);
+        const kept = Object.fromEntries(
+          Object.entries(node[key] ?? {}).flatMap(([at, styles]) => {
+            const own = differing(styles as StyleMap, (component[key] as Record<string, StyleMap> | undefined)?.[at]);
+            return Object.keys(own).length ? [[at, own]] : [];
+          }),
+        );
+        if (Object.keys(kept).length) writeOverrides(y, key, kept);
+      }
+      if (node.theme !== undefined && node.theme === component.theme) y.delete('theme');
+      writeInstance(y, component.id, props);
+    }, origin);
+    return { ...match, props, defaulted: match.defaulted.filter((name) => !(name in props)) };
+  }
+
   /** `frame` moved to the right of the artboards it vertically overlaps. */
   private besideRow(frame: ArtboardFrame): ArtboardFrame {
     const row = this.getChildren(null).flatMap((n) => (n.frame && n.frame.y < frame.y + frame.height && n.frame.y + n.frame.height > frame.y ? [n.frame] : []));
@@ -1881,6 +1944,36 @@ export class GridDocument {
     if (typeof parent.get('instance') === 'string') {
       throw new GridError(`"${parent.get('name')}" (${parentId}) is an instance: its layers come from its component. Add layers to the component, or detach the instance (instance: null)`);
     }
+  }
+
+  /**
+   * Why deleting `requested` is refused: it would take the component `id` with it
+   * while `users` still draw it. Says where things are by name. A person deleting
+   * an artboard may not know a component sits layers deep inside it, and ids
+   * tell them nothing about which artboards the instances are on.
+   */
+  private componentInUseMessage(id: string, users: readonly string[], requested: readonly string[]): string {
+    const name = (node: string) => this.nodes.get(node)?.get('name') as string;
+    const parent = (node: string) => (this.nodes.get(node)?.get('parentId') as string | null | undefined) ?? null;
+    const artboard = (node: string) => {
+      let cur = node;
+      for (let up = parent(cur); up !== null; up = parent(cur)) cur = up;
+      return name(cur);
+    };
+    const boards = [...new Set(users.map(artboard))];
+    const count = users.length === 1 ? 'an instance' : `${users.length} instances`;
+    const them = users.length === 1 ? 'it' : 'them';
+    const where = ` (on ${boards.slice(0, 4).join(', ')}${boards.length > 4 ? '…' : ''})`;
+    const idList = `${users.slice(0, 5).join(', ')}${users.length > 5 ? '…' : ''}`;
+    if (requested.includes(id)) return `"${name(id)}" is a component with ${count} elsewhere${where}: delete or detach ${them} first (${idList})`;
+    // Deleted along with something that holds it: say what, and the way down to it.
+    const inside: string[] = [];
+    let holder = parent(id);
+    while (holder !== null && !requested.includes(holder)) {
+      inside.unshift(name(holder));
+      holder = parent(holder);
+    }
+    return `"${holder === null ? 'This' : name(holder)}" holds the component "${name(id)}"${inside.length ? ` (inside ${inside.join(' › ')})` : ''}, which has ${count} elsewhere${where}. Move the component to another artboard, or delete or detach ${them} first (${idList})`;
   }
 
   /** Why an instance described by `ref` can't go into `parentId`. */

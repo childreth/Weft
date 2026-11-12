@@ -111,6 +111,8 @@ export function run<T>(fn: () => T): T | undefined {
 export const agentApi = {
   getTree: (rootId?: string) => doc.getTree(rootId),
   getComponents: () => doc.getComponents(),
+  /** Turns an existing layer into an instance of a component, in place; returns what was kept and lost. */
+  convertToInstance: (id: string, ref: { component: string; props?: Record<string, string> }) => doc.convertToInstance(id, ref, ORIGIN_AGENT),
   getSelection: () => useEditor.getState().selection,
   createNode: (input: CreateNodeInput) => doc.createNode(input, ORIGIN_AGENT),
   updateNode: (id: string, patch: NodePatch) => doc.updateNode(id, patch, ORIGIN_AGENT),
