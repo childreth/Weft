@@ -19,9 +19,23 @@ import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from
 export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 /** Tool-calling rounds in one turn. Converting a design to components took a correct model more than 12; repeats are stopped separately (`MAX_REPEATS`). */
 const MAX_STEPS = 30;
+/** The least a tool result is cut to: what a model loaded with a small context, or one we know nothing about, gets. */
 const MAX_TOOL_RESULT_CHARS = 8000;
-/** Cloud models have large contexts: room for the whole design skill. */
+/** Cloud models have large contexts: room for the whole design skill. Also the most a local model gets. */
 const MAX_CLOUD_TOOL_RESULT_CHARS = 60_000;
+/**
+ * Characters of one tool result per token of the context a local model is
+ * loaded with: about a tenth of the context. The flat 8,000 showed gemma4 a
+ * tenth of a 76,000-character list, and in a replay eval it asked for the same
+ * read again in 6 of 10 samples instead of doing the work.
+ */
+const TOOL_RESULT_CHARS_PER_CONTEXT_TOKEN = 0.3;
+
+/** How long one tool result may be for a local model loaded with this many tokens of context. */
+export function toolResultLimit(contextTokens: number | undefined): number {
+  if (!contextTokens || !Number.isFinite(contextTokens)) return MAX_TOOL_RESULT_CHARS;
+  return Math.min(MAX_CLOUD_TOOL_RESULT_CHARS, Math.max(MAX_TOOL_RESULT_CHARS, Math.round(contextTokens * TOOL_RESULT_CHARS_PER_CONTEXT_TOKEN)));
+}
 /** Repeats refused before the model is made to answer without tools. */
 const MAX_REPEATS = 2;
 const ANSWER_NOW = 'You are repeating tool calls. Stop calling tools and answer the user now with what you already know: what you changed, or what you found and would change.';
@@ -330,6 +344,22 @@ export class Assistant {
     }, 60_000).unref();
   }
 
+  /**
+   * The context, in tokens, Ollama has this model loaded with: what it chose
+   * for this machine, often far less than the model's maximum. Undefined when
+   * the model isn't loaded or Ollama doesn't say.
+   */
+  private async loadedContext(model: string, signal: AbortSignal): Promise<number | undefined> {
+    try {
+      const res = await fetch(`${this.ollamaUrl}/api/ps`, { signal });
+      if (!res.ok) return undefined;
+      const { models } = (await res.json()) as { models?: Array<{ name?: string; model?: string; context_length?: number }> };
+      return models?.find((m) => m.name === model || m.model === model)?.context_length;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Models that can call tools: local ones first (offline-first), largest first, then cloud ones. */
   async models(signal?: AbortSignal): Promise<AssistModel[]> {
     const res = await fetch(`${this.ollamaUrl}/api/tags`, { signal });
@@ -437,6 +467,8 @@ ${selection}`;
       let unreadable = 0;
       /** What the model had reasoned before a call that was lost: sent back with the nudge so it doesn't start over. */
       let lostReasoning = '';
+      /** How long a tool result may be. Asked for at the first result: by then the model has answered once, so it is loaded. */
+      let resultLimit: number | undefined;
       for (let step = 0; step < MAX_STEPS; step++) {
         if (repeats >= MAX_REPEATS) {
           // A looping model ignores "you already made this call"; without tools it has to answer.
@@ -477,10 +509,11 @@ ${selection}`;
             : await this.callTool(session, tools, name, injectArgs(args, session.injects.get(name) ?? [], req));
           seen.add(key);
           emit({ type: 'tool_result', name, ok: !text.isError, text: text.text.slice(0, 400) });
+          resultLimit ??= info?.cloud ? MAX_CLOUD_TOOL_RESULT_CHARS : toolResultLimit(await this.loadedContext(req.model, signal));
           session.history.push({
             role: 'tool',
             tool_name: name,
-            content: clipToolResult(text.text, info?.cloud ? MAX_CLOUD_TOOL_RESULT_CHARS : MAX_TOOL_RESULT_CHARS),
+            content: clipToolResult(text.text, resultLimit),
             ...(text.images.length > 0 && { images: text.images }),
           });
         }

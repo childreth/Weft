@@ -8,3 +8,6 @@ playwright-report
 
 # Eval reference images that stay on this machine
 evals/references/*.local.*
+
+# The document a replay fixture was captured from: the whole document, so it stays on this machine
+evals/replay/fixtures/*.local.*
