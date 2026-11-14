@@ -167,8 +167,14 @@ describe('components', () => {
     const main = card(doc, library);
     const instance = doc.createNode({ type: 'frame', parentId: page, instance: { component: main.id } });
 
-    expect(() => doc.deleteNodes([main.id])).toThrow(/"Card" is a component with an instance elsewhere/);
-    expect(() => doc.deleteNodes([library])).toThrow(/delete or detach it first/);
+    expect(() => doc.deleteNodes([main.id])).toThrow(/"Card" is a component with an instance elsewhere \(on Page\): delete or detach it first/);
+    // Deleting what holds it says so by name: a person may not know a component sits layers deep in an artboard.
+    expect(() => doc.deleteNodes([library])).toThrow('"Components" holds the component "Card", which has an instance elsewhere (on Page). Move the component to another artboard, or delete or detach it first');
+    const shelf = doc.createNode({ type: 'frame', parentId: library, name: 'Shelf' });
+    doc.moveNode(main.id, shelf);
+    expect(() => doc.deleteNodes([library])).toThrow('holds the component "Card" (inside Shelf), which has an instance elsewhere (on Page)');
+    doc.moveNode(main.id, library);
+    doc.deleteNodes([shelf]);
     expect(() => doc.updateNode(main.id, { component: false })).toThrow(/has an instance/);
     // Together, or once the instance is gone, it's fine.
     doc.deleteNodes([instance]);
@@ -331,5 +337,109 @@ describe('components', () => {
     Y.applyUpdate(b.ydoc, Y.encodeStateAsUpdate(a.ydoc));
     Y.applyUpdate(a.ydoc, Y.encodeStateAsUpdate(b.ydoc));
     for (const doc of [a, b]) expect(texts(doc.getExpandedTree(instance))).toEqual(['From A', 'From B']);
+  });
+});
+
+describe('turning existing layers into instances', () => {
+  /** A list of rows built by hand, each a name and a status, the way a design repeats something before it has components. */
+  function rows(doc: GridDocument) {
+    const page = artboard(doc);
+    const list = doc.createNode({ type: 'frame', tag: 'ul', parentId: page, name: 'List' });
+    const row = (name: string, status: string, styles: Record<string, string> = {}) => {
+      const id = doc.createNode({ type: 'frame', tag: 'li', parentId: list, name, styles: { display: 'grid', padding: '8px', ...styles } });
+      const title = doc.createNode({ type: 'text', tag: 'span', parentId: id, text: name, name: 'Name' });
+      const state = doc.createNode({ type: 'text', tag: 'span', parentId: id, text: status, name: 'Status' });
+      return { id, title, state };
+    };
+    return { page, list, vex: row('Vex', 'Ready'), boss: row('Goblin Boss', 'Acting now', { backgroundColor: 'var(--color-primary-container)' }), wolf: row('Wolf', 'Ready') };
+  }
+
+  it('converts a look-alike in place: same id and position, its text as props, its own root styles kept', () => {
+    const doc = new GridDocument();
+    const { list, vex, boss, wolf } = rows(doc);
+    doc.updateNode(vex.id, { component: true });
+    doc.updateNode(vex.title, { bind: { text: 'name' } });
+    doc.updateNode(vex.state, { bind: { text: 'status' } });
+
+    const match = doc.convertToInstance(boss.id, { component: vex.id });
+    expect(match).toEqual({ props: { name: 'Goblin Boss', status: 'Acting now' }, defaulted: [], droppedText: [], changedLayers: [] });
+    // One node where three were, still second in the list.
+    expect(doc.getChildren(list).map((n) => n.id)).toEqual([vex.id, boss.id, wolf.id]);
+    expect(doc.getDescendantIds(boss.id)).toEqual([]);
+    expect(doc.has(boss.title)).toBe(false);
+    // Only what differed from the component's root stays on the instance, so it follows the component and keeps its highlight.
+    expect(doc.getNode(boss.id)).toMatchObject({ name: 'Goblin Boss', styles: { backgroundColor: 'var(--color-primary-container)' }, instance: { component: vex.id } });
+    expect(doc.getNode(boss.id)!.styles).not.toHaveProperty('padding');
+    const drawn = doc.getExpandedTree(boss.id);
+    expect(drawn).toMatchObject({ tag: 'li', styles: { display: 'grid', padding: '8px', backgroundColor: 'var(--color-primary-container)' } });
+    expect(texts(drawn)).toEqual(['Goblin Boss', 'Acting now']);
+
+    // Text equal to the component's isn't stored: that instance follows the component's default. Through updateNode too.
+    doc.updateNode(wolf.id, { instance: { component: vex.id }, styles: { opacity: '0.5' } });
+    expect(doc.getNode(wolf.id)).toMatchObject({ instance: { component: vex.id, props: { name: 'Wolf' } }, styles: { opacity: '0.5' } });
+    doc.updateNode(vex.state, { text: 'Waiting' });
+    expect(texts(doc.getExpandedTree(wolf.id))).toEqual(['Wolf', 'Waiting']);
+    expect(texts(doc.getExpandedTree(boss.id))).toEqual(['Goblin Boss', 'Acting now']);
+  });
+
+  it('says what a conversion loses, and what a differently built layer would get wrong', () => {
+    const doc = new GridDocument();
+    const { vex, boss, wolf } = rows(doc);
+    doc.updateNode(vex.id, { component: true });
+    doc.updateNode(vex.title, { bind: { text: 'name' } });
+    // Status isn't a prop, a chip has no counterpart, and one inner layer is restyled.
+    const chip = doc.createNode({ type: 'frame', parentId: boss.id, name: 'Chips' });
+    doc.createNode({ type: 'text', tag: 'span', parentId: chip, text: 'Frightened' });
+    doc.updateNode(boss.title, { styles: { fontWeight: '700' } });
+    const match = doc.convertToInstance(boss.id, { component: vex.id });
+    expect(match.props).toEqual({ name: 'Goblin Boss' });
+    expect(match.droppedText).toEqual(['Acting now', 'Frightened']);
+    expect(match.changedLayers).toEqual(['Name', 'Chips']);
+
+    // Built differently (the name is wrapped): nothing supplies the prop, unless it's passed.
+    const odd = doc.createNode({ type: 'frame', tag: 'li', parentId: doc.getNode(wolf.id)!.parentId!, name: 'Odd' });
+    const wrap = doc.createNode({ type: 'frame', parentId: odd, name: 'Wrap' });
+    doc.createNode({ type: 'text', parentId: wrap, text: 'Mirelle' });
+    expect(doc.convertToInstance(odd, { component: vex.id }, 'test')).toMatchObject({ defaulted: ['name'], droppedText: ['Mirelle'] });
+    const again = doc.createNode({ type: 'frame', tag: 'li', parentId: doc.getNode(wolf.id)!.parentId!, name: 'Odd 2' });
+    expect(doc.convertToInstance(again, { component: vex.id, props: { name: 'Mirelle' } })).toMatchObject({ props: { name: 'Mirelle' }, defaulted: [] });
+  });
+
+  it("refuses what can't become an instance", () => {
+    const doc = new GridDocument();
+    const { page, list, vex, boss, wolf } = rows(doc);
+    doc.updateNode(vex.id, { component: true });
+    doc.updateNode(vex.title, { bind: { text: 'name' } });
+    expect(() => doc.convertToInstance(vex.id, { component: vex.id })).toThrow(/it is the one the others become instances of/);
+    expect(() => doc.convertToInstance(page, { component: vex.id })).toThrow(/artboard can't be an instance/);
+    expect(() => doc.convertToInstance(boss.id, { component: wolf.id })).toThrow(/isn't a component/);
+    expect(() => doc.convertToInstance(boss.id, { component: vex.id, props: { nope: 'x' } })).toThrow(/has no prop "nope"/);
+    expect(() => doc.convertToInstance(list, { component: vex.id })).toThrow(/holds the component "Vex"/);
+    expect(() => doc.convertToInstance(vex.state, { component: vex.id })).toThrow(/would contain itself/);
+    expect(() => doc.updateNode(boss.id, { instance: { component: vex.id }, text: 'x' })).toThrow(/takes its text from its component/);
+    doc.convertToInstance(boss.id, { component: vex.id });
+    expect(() => doc.convertToInstance(boss.id, { component: vex.id })).toThrow(/already an instance/);
+    // Nothing above changed what was refused.
+    expect(doc.getDescendantIds(wolf.id)).toHaveLength(2);
+  });
+
+  it('undoes as one step and reaches another editor whole', () => {
+    const a = new GridDocument();
+    const b = new GridDocument();
+    const { vex, boss } = rows(a);
+    a.updateNode(vex.id, { component: true });
+    a.updateNode(vex.title, { bind: { text: 'name' } });
+    Y.applyUpdate(b.ydoc, Y.encodeStateAsUpdate(a.ydoc));
+    const undo = new Y.UndoManager(a.ydoc.getMap('nodes'), { trackedOrigins: new Set(['me']) });
+    a.convertToInstance(boss.id, { component: vex.id }, 'me');
+    Y.applyUpdate(b.ydoc, Y.encodeStateAsUpdate(a.ydoc));
+    expect(texts(b.getExpandedTree(boss.id))).toEqual(['Goblin Boss', 'Ready']);
+    undo.undo();
+    expect(a.getNode(boss.id)!.instance).toBeUndefined();
+    expect(a.getChildren(boss.id).map((n) => [n.id, n.text])).toEqual([
+      [boss.title, 'Goblin Boss'],
+      [boss.state, 'Acting now'],
+    ]);
+    expect(a.getNode(boss.id)).toMatchObject({ tag: 'li', styles: { padding: '8px', backgroundColor: 'var(--color-primary-container)' } });
   });
 });

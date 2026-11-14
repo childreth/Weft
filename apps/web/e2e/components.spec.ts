@@ -75,3 +75,53 @@ test('instances draw their component, follow its edits, and select as one layer'
   await expect(layer(ids.pro).locator('[data-gf-id]')).toHaveCount(0);
   await expect(drawn(ids.pro, ids.title)).toHaveText('Pro');
 });
+
+test('a row the design already repeats becomes an instance where it stands', async ({ page }) => {
+  await page.goto('/?ephemeral');
+  await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
+  const ids = await page.evaluate(() => {
+    const { doc } = window.weft;
+    const root = doc.getChildren(null)[0]!.id;
+    const list = doc.createNode({ type: 'frame', tag: 'ul', name: 'Order', parentId: root, styles: { display: 'grid', gap: 'var(--space-2)', padding: 'var(--space-6)' } });
+    const row = (name: string, status: string, styles: Record<string, string> = {}) => {
+      const id = doc.createNode({
+        type: 'frame',
+        tag: 'li',
+        name,
+        parentId: list,
+        styles: { display: 'flex', justifyContent: 'space-between', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-surface-container)', ...styles },
+      });
+      const title = doc.createNode({ type: 'text', tag: 'span', parentId: id, text: name });
+      const state = doc.createNode({ type: 'text', tag: 'span', parentId: id, text: status });
+      return { id, title, state };
+    };
+    const vex = row('Vex', 'Ready');
+    const boss = row('Goblin Boss', 'Acting now', { backgroundColor: 'var(--color-primary-container)' });
+    doc.updateNode(vex.id, { component: true, name: 'Initiative row' });
+    doc.updateNode(vex.title, { bind: { text: 'name' } });
+    doc.updateNode(vex.state, { bind: { text: 'status' } });
+    return { list, vex, boss };
+  });
+
+  const layer = (id: string) => page.locator(`.gf-artboard-host [data-gf-id="${id}"]`);
+  const box = async (id: string) => layer(id).evaluate((el) => JSON.stringify(el.getBoundingClientRect()));
+  const look = async (id: string) => layer(id).evaluate((el) => getComputedStyle(el).backgroundColor);
+  await expect(layer(ids.boss.title)).toHaveText('Goblin Boss');
+  const before = { box: await box(ids.boss.id), look: await look(ids.boss.id) };
+
+  // Converted while it's on screen, through the same call an in-page agent makes.
+  const match = await page.evaluate(({ boss, vex }) => window.weft.agent.convertToInstance(boss.id, { component: vex.id }), ids);
+  expect(match).toEqual({ props: { name: 'Goblin Boss', status: 'Acting now' }, defaulted: [], droppedText: [], changedLayers: [] });
+
+  // Same place, size, highlight and words; its layers are now the component's.
+  await expect(layer(ids.boss.id).locator(`[data-gf-src="${ids.vex.title}"]`)).toHaveText('Goblin Boss');
+  await expect(layer(ids.boss.id).locator(`[data-gf-src="${ids.vex.state}"]`)).toHaveText('Acting now');
+  await expect(layer(ids.boss.title)).toHaveCount(0);
+  expect({ box: await box(ids.boss.id), look: await look(ids.boss.id) }).toEqual(before);
+  await expect(page.locator('.gf-layer', { has: page.locator('.gf-layer-name', { hasText: /^Goblin Boss$/ }) }).locator('.gf-layer-tag')).toHaveText('li');
+
+  // It follows the component from here on.
+  await page.evaluate((vex) => window.weft.doc.updateNode(vex.id, { styles: { padding: 'var(--space-6)' } }), ids.vex);
+  await expect.poll(() => layer(ids.boss.id).evaluate((el) => getComputedStyle(el).paddingTop)).toBe(await layer(ids.vex.id).evaluate((el) => getComputedStyle(el).paddingTop));
+  await page.screenshot({ path: 'test-results/m5-convert.png' });
+});

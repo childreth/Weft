@@ -228,6 +228,87 @@ export function flattenTree(tree: SceneTree): SceneNode[] {
   return out;
 }
 
+/** What turning a layer into an instance of a component keeps and loses. */
+export interface InstanceMatch {
+  /** Prop values read from the layer's own text (only where it differs from the component's). */
+  props: Record<string, string>;
+  /** Props nothing in the layer supplies: the instance would show the component's own text for these. */
+  defaulted: string[];
+  /** Text in the layer that no prop carries, so the instance won't show it. */
+  droppedText: string[];
+  /** Layers inside (by name) that look different from the component's, or have no counterpart in it. */
+  changedLayers: string[];
+}
+
+/** Same value whatever order its keys were written in. */
+const stable = (value: unknown): string =>
+  JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1))) : v,
+  );
+
+/**
+ * Lines a layer up with a component it was built like (a copy of it, or a
+ * sibling made the same way) and reads the layer's text into the component's
+ * props. Layers pair by position where both sides have the same number of
+ * children, else by a name only one child on each side has. Read-only: it says
+ * what a conversion would keep and lose, for `GridDocument.convertToInstance`
+ * and for telling an agent before anything is thrown away.
+ */
+export function matchInstance(layerId: string, componentId: string, scene: SceneLookup): InstanceMatch {
+  const defaults = componentProps(componentId, scene);
+  const props: Record<string, string> = {};
+  const matched = new Set<string>();
+  const droppedText: string[] = [];
+  const changedLayers: string[] = [];
+  const kids = (id: string) => scene.children(id).flatMap((child) => scene.node(child) ?? []);
+  const textIn = (node: SceneNode): string[] => (node.type === 'text' ? (node.text?.trim() ? [node.text] : []) : kids(node.id).flatMap(textIn));
+  /** `layer` has no counterpart: everything in it goes. */
+  const lose = (layer: SceneNode) => {
+    droppedText.push(...textIn(layer));
+    changedLayers.push(layer.name);
+  };
+  const look = (node: SceneNode) => stable([node.tag, node.styles, node.breakpoints ?? {}, node.states ?? {}, node.attributes, !!node.hidden]);
+
+  const pair = (main: SceneNode, layer: SceneNode, root: boolean): void => {
+    if (main.instance || layer.instance) {
+      const same = main.instance && layer.instance && main.instance.component === layer.instance.component && stable(main.instance.props) === stable(layer.instance.props);
+      if (!same) lose(layer);
+      return;
+    }
+    if (main.type !== layer.type) return lose(layer);
+    // The root's own look stays on the instance; inside, the component's replaces it.
+    if (!root && look(main) !== look(layer)) changedLayers.push(layer.name);
+    if (main.type === 'text') {
+      const name = main.bind?.text;
+      const text = layer.text ?? '';
+      if (name === undefined) {
+        if (text !== (main.text ?? '') && text.trim()) droppedText.push(text);
+      } else if (matched.has(name) || text.length > MAX_PROP_VALUE_LENGTH) {
+        // A second layer on the same prop shows the first one's value.
+        if (text !== (props[name] ?? defaults[name]) && text.trim()) droppedText.push(text);
+      } else {
+        matched.add(name);
+        if (text !== defaults[name]) props[name] = text;
+      }
+      return;
+    }
+    const mains = kids(main.id);
+    const layers = kids(layer.id);
+    if (mains.length === layers.length) return mains.forEach((child, i) => pair(child, layers[i]!, false));
+    const once = (list: SceneNode[], name: string) => list.filter((n) => n.name === name).length === 1;
+    for (const child of layers) {
+      const partner = once(layers, child.name) && once(mains, child.name) ? mains.find((n) => n.name === child.name) : undefined;
+      if (partner) pair(partner, child, false);
+      else lose(child);
+    }
+  };
+
+  const main = scene.node(componentId);
+  const layer = scene.node(layerId);
+  if (main && layer) pair(main, layer, true);
+  return { props, defaulted: Object.keys(defaults).filter((name) => !matched.has(name)), droppedText, changedLayers: [...new Set(changedLayers)] };
+}
+
 /** Bindings as stored: only known fields with a name. */
 export function cleanBindings(bind: Readonly<Record<string, unknown>> | null | undefined): NodeBindings | undefined {
   const out: NodeBindings = {};

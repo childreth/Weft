@@ -302,6 +302,86 @@ describe('MCP tools', () => {
     expect((await call('read_skill', { path: 'SKILL.md' })).text).toContain('`desktop` (> 1024px), `tablet` (≤ 1024px), `mobile` (≤ 600px)');
   });
 
+  it('turns the rows a design already repeats into instances, where they stand', async () => {
+    const row = (name: string, status: string, extra: Record<string, unknown> = {}) => ({
+      tag: 'li',
+      name,
+      styles: { display: 'grid', padding: '8px' },
+      children: [
+        { tag: 'span', name: 'Name', text: name },
+        { tag: 'span', name: 'Status', text: status },
+      ],
+      ...extra,
+    });
+    const made = await call('create_nodes', {
+      doc: 'convert',
+      nodes: [
+        {
+          tag: 'main',
+          name: 'Tracker',
+          frame: { width: 600 },
+          children: [
+            {
+              tag: 'ul',
+              name: 'Order',
+              children: [row('Vex', 'Ready'), row('Goblin Boss', 'Acting now', { styles: { display: 'grid', padding: '8px', backgroundColor: 'var(--color-primary-container)' } }), row('Wolf', 'Ready'), row('Thora', 'Dying')],
+            },
+          ],
+        },
+      ],
+    });
+    type Made = { id: string; children: Made[] };
+    const page = (made.data.created as Made[])[0]!;
+    const list = page.children[0]!;
+    const [vex, boss, wolf, thora] = list.children;
+    const doc = server.rooms.get('convert').doc;
+    const html = async () => (await call('export_html', { doc: 'convert', id: page.id })).text;
+    expect(await html()).toContain('>Acting now</span>');
+    const before = (await html()).replace(/ data-gf-(id|src)="[^"]*"/g, '');
+
+    // One call: mark a row, bind its text, convert the others by the component's name. Nothing deleted, recreated or moved.
+    const converted = await call('update_nodes', {
+      doc: 'convert',
+      updates: [
+        { id: vex!.id, component: true, name: 'Initiative row' },
+        { id: vex!.children[0]!.id, bind: { text: 'name' } },
+        { id: vex!.children[1]!.id, bind: { text: 'status' } },
+        ...[boss, wolf, thora].map((r) => ({ id: r!.id, instance: { component: 'Initiative row' } })),
+      ],
+    });
+    expect(converted.isError).toBe(false);
+    expect(converted.data.converted).toEqual([
+      { id: boss!.id, props: { name: 'Goblin Boss', status: 'Acting now' } },
+      { id: wolf!.id, props: { name: 'Wolf' } },
+      { id: thora!.id, props: { name: 'Thora', status: 'Dying' } },
+    ]);
+    expect(converted.data.convertedNote).toBeUndefined();
+    expect(doc.getChildren(list.id).map((n) => n.id)).toEqual([vex!.id, boss!.id, wolf!.id, thora!.id]);
+    expect(doc.getComponents()).toMatchObject([{ name: 'Initiative row', instances: 3 }]);
+    // The page reads the same as before: same elements, text and styles, highlight included.
+    expect((await html()).replace(/ data-gf-(id|src)="[^"]*"/g, '')).toBe(before);
+
+    // A layer built differently is refused with the props to pass and the text it holds, and nothing in the call applies.
+    const odd = await call('create_nodes', { doc: 'convert', parentId: list.id, nodes: [{ tag: 'li', name: 'Mirelle', children: [{ tag: 'div', name: 'Wrap', children: [{ text: 'Mirelle' }, { text: 'Hidden' }] }] }] });
+    const oddId = (odd.data.created as Made[])[0]!.id;
+    const refused = await call('update_nodes', { doc: 'convert', updates: [{ id: oddId, instance: { component: 'Initiative row' } }] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain(`"Mirelle" (${oddId}) isn't built like "Initiative row", so nothing in it supplies name, status`);
+    expect(refused.text).toContain('Pass them in instance.props (its text that found no prop: "Mirelle", "Hidden")');
+    expect(doc.getDescendantIds(oddId)).toHaveLength(3);
+
+    // With the props passed it converts, and what didn't carry over is reported.
+    const passed = await call('update_nodes', { doc: 'convert', updates: [{ id: oddId, instance: { component: 'Initiative row', props: { name: 'Mirelle' } }, props: { status: 'Hidden' } }] });
+    expect(passed.data.converted).toEqual([{ id: oddId, props: { name: 'Mirelle', status: 'Hidden' }, droppedText: 'Mirelle, Hidden', changedLayers: 'Wrap' }]);
+    expect(passed.data.convertedNote).toContain('droppedText is text the instance no longer shows');
+    expect(await html()).toContain('>Hidden</span>');
+
+    // The component itself can't be one of them, and one undo puts a converted row back.
+    expect((await call('update_nodes', { doc: 'convert', updates: [{ id: vex!.id, instance: { component: 'Initiative row' } }] })).text).toContain('leave it out');
+    await call('undo_agent_change', { doc: 'convert' });
+    expect(doc.getDescendantIds(oddId)).toHaveLength(3);
+  });
+
   it('builds a component and its instances in one call, and keeps them in step', async () => {
     const made = await call('create_nodes', {
       doc: 'components',
