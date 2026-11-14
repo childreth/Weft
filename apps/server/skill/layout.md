@@ -51,7 +51,7 @@ Use `header`, `nav`, `section`, `article`, `aside` and `footer` for what they ar
 
 When the same thing appears three or more times (cards in a grid, rows in a list, nav items, a button used across screens), build it once as a component and place instances. Restyling the component then restyles all of them, and reading the canvas back costs one short node per instance instead of a whole subtree.
 
-- Make one: create the layer with `component: true`. On each text layer inside whose words differ per use, add `bind: { "text": "<prop>" }` (an icon's name is text, so it can be a prop too). The component's own text is what an instance shows when it doesn't set that prop.
+- Make one: create the layer with `component: true`. On each text layer inside whose words differ per use, add `bind: { "text": "<prop>" }` (an icon's name is text, so it can be a prop too). Prop names are camelCase, as in code: `name`, `dateLabel`, never `date_label` or `date-label`. The component's own text is what an instance shows when it doesn't set that prop.
 - Use it: `{ "instance": { "component": "Plan card", "props": { "name": "Pro", "price": "$12" } } }`, by name or id. An instance made in the same `create_nodes` call must come after its component.
 - Place it: styles on an instance apply to its root, for where it sits in its parent (`gridColumn`, `width`, `alignSelf`). Leave the look to the component.
 - Nothing inside an instance can be edited. To change every one, edit the component. To change one, set a prop, or detach it with `update_nodes { "id": …, "instance": null }` and edit the layers it becomes.

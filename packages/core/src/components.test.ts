@@ -131,7 +131,13 @@ describe('components', () => {
     expect(() => doc.moveNode(plain, null)).toThrow(/can't become an artboard/);
 
     expect(() => doc.updateNode(main.id, { bind: { text: 'label' } })).toThrow(/Only a text layer/);
-    expect(() => doc.updateNode(main.title, { bind: { text: 'Title Case' } })).toThrow(/must start with a lowercase letter/);
+    // The error names the fix, so a model that guessed another naming style gets it right on the next call.
+    expect(() => doc.updateNode(main.title, { bind: { text: 'Title Case' } })).toThrow(/must be camelCase.*Use "titleCase"/);
+    expect(() => doc.updateNode(main.title, { bind: { text: 'date_label' } })).toThrow(/Use "dateLabel"/);
+    expect(() => doc.updateNode(main.title, { bind: { text: 'DATE-LABEL' } })).toThrow(/Use "dateLabel"/);
+    // Nothing sensible to suggest (dropping the digit would change the name): the rule and examples stand alone.
+    expect(() => doc.updateNode(main.title, { bind: { text: '2nd_line' } })).toThrow(/\(label, iconName\)/);
+    expect(() => doc.updateNode(main.title, { bind: { text: '___' } })).toThrow(/\(label, iconName\)/);
     expect(() => doc.updateNode(main.title, { bind: { href: 'link' } as never })).toThrow(/Can't bind "href"/);
     doc.updateNode(main.caption, { bind: { text: 'cta' } });
     expect(componentProps(main.id, doc.scene())).toEqual({ title: 'Title', cta: 'Read more' });

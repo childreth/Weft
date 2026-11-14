@@ -1,3 +1,5 @@
+import { request as httpRequest, type IncomingMessage } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -22,6 +24,76 @@ const MAX_CLOUD_TOOL_RESULT_CHARS = 60_000;
 /** Repeats refused before the model is made to answer without tools. */
 const MAX_REPEATS = 2;
 const ANSWER_NOW = 'You are repeating tool calls. Stop calling tools and answer the user now with what you already know: what you changed, or what you found and would change.';
+/**
+ * Limits on one model call. An object so tests can shorten them.
+ * - `stepMs`: how long a single call may run. Ours, and said plainly when it's
+ *   hit: Node's `fetch` gave up on its own after 5 minutes without a byte and
+ *   reported only "fetch failed".
+ * - `swallowedMs`: a model that went quiet this long and then finished with no
+ *   reply and no tool call was writing something Ollama took and threw away:
+ *   a tool call it couldn't parse (it logs a warning and returns nothing).
+ */
+export const assistLimits = { stepMs: 10 * 60 * 1000, swallowedMs: 1500 };
+/** Unreadable calls in a row before the turn is stopped: one nudge, then give up. */
+const MAX_UNREADABLE = 2;
+/**
+ * Sent as the last message of the next call only, never kept: a small model follows what it read last.
+ * Size isn't the cause it names: gemma4 lost calls holding a single node, and re-sent one unchanged when told only to send less.
+ */
+const UNREADABLE_CALL =
+  '[From Weft, not the user] Your last tool call could not be read, so nothing was changed: its brackets or quotes did not match. Write the call again from the start, do not repeat it as it was. Close every { and [ exactly once and write nothing after the final }. If it holds many nodes, send fewer per call. If you were not calling a tool, answer the user in plain text now.';
+const UNREADABLE_NOTICE =
+  "The model's last step ended with no reply and no tool call Weft could read: most likely a tool call whose brackets or quotes didn't match. Asking it to write the call again.";
+const UNREADABLE_STOP =
+  'Stopped: the model again wrote a tool call that could not be read, so nothing from those calls was applied. Try again, ask for one small step, or use another model.';
+
+/** A model call that ran past `assistLimits.stepMs`; `thinking` is what it had reasoned by then. */
+class StepLimitError extends Error {
+  constructor(
+    model: string,
+    readonly thinking: string,
+  ) {
+    const ms = assistLimits.stepMs;
+    const spent = ms >= 60_000 ? `${Math.round(ms / 60_000)} minutes` : `${Math.round(ms / 1000)} seconds`;
+    super(`Stopped: ${model} spent ${spent} on one step without finishing${thinking ? ' (its reasoning so far is above)' : ''}. Try a smaller request, or a step at a time.`);
+  }
+}
+
+/**
+ * POSTs JSON and resolves with the response once its head arrives. Not `fetch`:
+ * that gives up after 5 minutes without a byte, and a model writing a long tool
+ * call sends nothing until it's done. This waits as long as `signal` allows.
+ */
+function postJSON(url: string, body: unknown, signal: AbortSignal): Promise<IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    const request = url.startsWith('https:') ? httpsRequest : httpRequest;
+    const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, signal }, resolve);
+    req.on('error', (err: NodeJS.ErrnoException) =>
+      reject(signal.aborted || !err.code ? err : new Error(`Can't reach Ollama at ${new URL(url).origin} (${err.code}). Is it running?`)),
+    );
+    req.end(JSON.stringify(body));
+  });
+}
+
+/** A response's body as lines, as they arrive (Ollama streams one JSON object per line). */
+async function* responseLines(res: IncomingMessage): AsyncGenerator<string> {
+  res.setEncoding('utf8');
+  let buffer = '';
+  for await (const chunk of res) {
+    buffer += chunk as string;
+    const lines = buffer.split('\n');
+    buffer = lines.pop()!;
+    for (const line of lines) if (line.trim()) yield line;
+  }
+  if (buffer.trim()) yield buffer;
+}
+
+async function responseText(res: IncomingMessage): Promise<string> {
+  let text = '';
+  for await (const line of responseLines(res)) text += `${line}\n`;
+  return text.trim();
+}
+
 /** User turns of history sent back to the model. */
 const HISTORY_TURNS = 6;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
@@ -284,26 +356,50 @@ ${selection}`;
       const tools = toolsFor(session.tools, info);
       // Snapshot the selection once: re-reading it after edits makes models think their change was already there.
       const system = this.systemPrompt(req, info);
-      /** One model call: its reasoning is shown, not kept in the history sent back. */
-      const ask = async (prompt: string, offered?: OllamaTool[]): Promise<ChatMessage> => {
+      /** One model call. Its reasoning is shown, not kept in the history sent back. */
+      const ask = async (prompt: string, offered?: OllamaTool[], extra?: ChatMessage[]) => {
         const started = Date.now();
-        const { reply, thinking } = await this.complete(session, req.model, info, prompt, signal, offered, req.think);
-        // Some models (Qwen 3.5) put a final answer only in their reasoning: that is the reply then.
-        if (!reply.content.trim() && !reply.tool_calls) reply.content = thinking;
-        else if (thinking) emit({ type: 'thinking', text: thinking, ms: Date.now() - started });
+        const showThinking = (text: string) => void (text && emit({ type: 'thinking', text, ms: Date.now() - started }));
+        try {
+          const result = await this.complete(session, req.model, info, prompt, signal, offered, req.think, extra);
+          return { ...result, empty: !result.reply.content.trim() && !result.reply.tool_calls, showThinking };
+        } catch (err) {
+          // Cut off mid-thought: what it had reasoned is the only clue to why.
+          if (err instanceof StepLimitError) showThinking(err.thinking);
+          throw err;
+        }
+      };
+      /** Keeps a reply. Some models (Qwen 3.5) put a final answer only in their reasoning: that is the reply then. */
+      const keep = ({ reply, thinking, empty, showThinking }: Awaited<ReturnType<typeof ask>>): ChatMessage => {
+        if (empty) reply.content = thinking;
+        else showThinking(thinking);
         session.history.push(reply);
         return reply;
       };
       const seen = new Set<string>();
       let repeats = 0;
+      let unreadable = 0;
       for (let step = 0; step < MAX_STEPS; step++) {
         if (repeats >= MAX_REPEATS) {
           // A looping model ignores "you already made this call"; without tools it has to answer.
-          const reply = await ask(`${system}\n\n${ANSWER_NOW}`);
+          const reply = keep(await ask(`${system}\n\n${ANSWER_NOW}`));
           emit({ type: 'message', text: reply.content.trim() || 'Done.' });
           return;
         }
-        const reply = await ask(system, tools);
+        const turn = await ask(system, tools, unreadable > 0 ? [{ role: 'user', content: UNREADABLE_CALL }] : undefined);
+        // Nothing came back, or the model wrote on after its reasoning and none of it arrived: a tool call Ollama
+        // couldn't parse and dropped. Showing the reasoning as the answer (or "Done.") would hide that nothing happened.
+        if (turn.empty && (!turn.thinking || turn.silentMs >= assistLimits.swallowedMs)) {
+          turn.showThinking(turn.thinking);
+          if (++unreadable >= MAX_UNREADABLE) {
+            emit({ type: 'error', message: UNREADABLE_STOP });
+            return;
+          }
+          emit({ type: 'error', message: UNREADABLE_NOTICE });
+          continue;
+        }
+        unreadable = 0;
+        const reply = keep(turn);
         const calls = reply.tool_calls ?? [];
         if (calls.length === 0) {
           emit({ type: 'message', text: reply.content.trim() || 'Done.' });
@@ -344,7 +440,11 @@ ${selection}`;
     }
   }
 
-  /** One model call; without `tools` the model has to answer in text. */
+  /**
+   * One model call, streamed; without `tools` the model has to answer in text.
+   * `extra` messages go after the history for this call only. `silentMs` is how
+   * long the model went without sending anything before it finished.
+   */
   private async complete(
     session: Session,
     model: string,
@@ -353,31 +453,69 @@ ${selection}`;
     signal: AbortSignal,
     tools?: OllamaTool[],
     choice?: ThinkChoice,
-  ): Promise<{ reply: ChatMessage; thinking: string }> {
+    extra: ChatMessage[] = [],
+  ): Promise<{ reply: ChatMessage; thinking: string; silentMs: number }> {
+    const limit = new AbortController();
+    const timer = setTimeout(() => limit.abort(), assistLimits.stepMs);
+    const either = AbortSignal.any([signal, limit.signal]);
     const send = (think: boolean | string | undefined) =>
-      fetch(`${this.ollamaUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        signal,
-        body: JSON.stringify({
+      postJSON(
+        `${this.ollamaUrl}/api/chat`,
+        {
           model,
-          messages: [{ role: 'system', content: system }, ...recent(session.history)],
+          messages: [{ role: 'system', content: system }, ...recent(session.history), ...extra],
           ...(tools && { tools }),
-          stream: false,
+          // Streamed so the connection is never idle for a whole reply, and so what a model had reasoned survives a stop.
+          stream: true,
           ...(think !== undefined && { think }),
           options: { temperature: 0.2 },
-        }),
-      });
-    const think = thinkParam(info, choice);
-    let res = await send(think);
-    // A model that turns out not to take a level still thinks with plain "on".
-    if (!res.ok && typeof think === 'string') res = await send(true);
-    if (!res.ok) throw new Error(`Ollama: ${(await res.text()).slice(0, 300) || res.status}`);
-    const { message } = (await res.json()) as { message: ChatMessage & { thinking?: string } };
-    return {
-      reply: { role: 'assistant', content: message.content ?? '', ...(message.tool_calls?.length && { tool_calls: message.tool_calls }) },
-      thinking: message.thinking?.trim() ?? '',
-    };
+        },
+        either,
+      );
+    const ok = (res: IncomingMessage) => res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300;
+    let thinking = '';
+    try {
+      const think = thinkParam(info, choice);
+      let res = await send(think);
+      // A model that turns out not to take a level still thinks with plain "on".
+      if (!ok(res) && typeof think === 'string') {
+        res.resume();
+        res = await send(true);
+      }
+      if (!ok(res)) throw new Error(`Ollama: ${(await responseText(res)).slice(0, 300) || res.statusCode}`);
+      let content = '';
+      const calls: NonNullable<ChatMessage['tool_calls']> = [];
+      let lastOutput = Date.now();
+      let silentMs = 0;
+      for await (const line of responseLines(res)) {
+        let chunk: { message?: Partial<ChatMessage> & { thinking?: string }; done?: boolean; error?: string };
+        try {
+          chunk = JSON.parse(line);
+        } catch {
+          throw new Error(`Ollama sent a reply that isn't JSON: ${line.slice(0, 120)}`);
+        }
+        // Ollama reports a failure partway through a stream as a line of its own.
+        if (chunk.error) throw new Error(`Ollama: ${chunk.error.slice(0, 300)}`);
+        const part = chunk.message;
+        if (part?.thinking || part?.content || part?.tool_calls?.length) {
+          thinking += part.thinking ?? '';
+          content += part.content ?? '';
+          calls.push(...(part.tool_calls ?? []));
+          lastOutput = Date.now();
+        }
+        if (chunk.done) silentMs = Date.now() - lastOutput;
+      }
+      return {
+        reply: { role: 'assistant', content, ...(calls.length > 0 && { tool_calls: calls }) },
+        thinking: thinking.trim(),
+        silentMs,
+      };
+    } catch (err) {
+      if (limit.signal.aborted && !signal.aborted) throw new StepLimitError(model, thinking.trim());
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async callTool(
