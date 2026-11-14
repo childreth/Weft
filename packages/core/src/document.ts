@@ -13,11 +13,15 @@ import {
   PROP_NAME,
   bindIssues,
   cleanBindings,
+  componentPropSpecs,
   componentProps,
+  componentAttributeProps,
+  componentStyleProps,
   enclosingComponent,
   expandTree,
   instanceTree,
   matchInstance,
+  mergeBindings,
   propIssues,
   reachesComponent,
   type InstanceMatch,
@@ -31,6 +35,11 @@ import {
   isStateId,
   VOID_TAGS,
   getStyleMeta,
+  GRADIENT,
+  isColorProp,
+  styleValueIssue,
+  attributeNameIssue,
+  attributeValueIssue,
   isBreakpointId,
   isStyleProp,
   isValidTag,
@@ -46,6 +55,7 @@ import {
   type StateId,
   type StateStyles,
   type NodeBindings,
+  type NodeBindingsPatch,
   type NodeType,
   type SceneNode,
   type SceneTree,
@@ -107,8 +117,8 @@ export interface NodePatch {
   theme?: string | null;
   /** true marks a main component; false or null unmarks one that nothing uses. */
   component?: boolean | null;
-  /** Merged by field; a null field, or null for all of them, removes the binding. */
-  bind?: Partial<Record<BindField, string | null>> | null;
+  /** Merged by field (styles by property); a null field, or null for all of them, removes the binding. */
+  bind?: NodeBindingsPatch | null;
   /** An instance's prop values, merged; null goes back to what the component shows. */
   props?: Record<string, string | null>;
   /**
@@ -148,13 +158,6 @@ export class GridError extends Error {
   }
 }
 
-const ATTRIBUTE_NAME = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
-const UNSAFE_STYLE_VALUE = /[;{}<>]/;
-/** Values that would make the browser fetch something: url(), image-set(), …, or escapes that could hide them. */
-const EXTERNAL_STYLE_VALUE = /\b(?:url|image|image-set|-webkit-image-set|cross-fade|element|expression)\s*\(|\\/i;
-const GRADIENT = /\b(?:repeating-)?(?:linear|radial|conic)-gradient\s*\(/i;
-/** A gradient in a color property is dropped by CSS: the element paints nothing. */
-const isColorProp = (prop: StyleProp) => getStyleMeta(prop).tokenGroups?.includes('color') ?? false;
 const DEFAULT_FRAME: ArtboardFrame = { x: 0, y: 0, width: 1280, height: 800, heightMode: 'hug' };
 /** Space left between an artboard and a duplicate placed beside it. */
 const ARTBOARD_GAP = 100;
@@ -512,10 +515,9 @@ export function styleIssues(styles: Partial<Record<string, string | null>>): str
     if (!isStyleProp(key)) issues.push(`Unknown style property "${key}"${styleHint(key)}`);
     else if (value === null || value === undefined) continue;
     else if (typeof value !== 'string') issues.push(`Style "${key}" must be a string`);
-    else if (UNSAFE_STYLE_VALUE.test(value)) issues.push(`Style "${key}" contains forbidden characters`);
-    else if (EXTERNAL_STYLE_VALUE.test(value)) issues.push(`Style "${key}" can't load external resources (url(), image-set()); gradients are fine`);
-    else if (GRADIENT.test(value) && isColorProp(key)) {
-      issues.push(`Style "${key}" takes a color, not a gradient${key === 'backgroundColor' ? ': put the gradient in backgroundImage' : ''}`);
+    else {
+      const bad = styleValueIssue(key, value);
+      if (bad) issues.push(bad);
     }
   }
   return issues;
@@ -536,11 +538,11 @@ export function stateIssues(states: Record<string, Partial<Record<string, string
 export function attributeIssues(attributes: Record<string, string | null>): string[] {
   const issues: string[] = [];
   for (const [name, value] of Object.entries(attributes)) {
-    if (!ATTRIBUTE_NAME.test(name)) issues.push(`Invalid attribute name "${name}"`);
-    else if (/^on/i.test(name)) issues.push(`Event handler attributes are not allowed ("${name}")`);
-    else if (name === 'style' || name === 'class') issues.push(`Use styles instead of the "${name}" attribute`);
+    const badName = attributeNameIssue(name);
+    const badValue = typeof value === 'string' ? attributeValueIssue(name, value) : null;
+    if (badName) issues.push(badName);
     else if (value !== null && typeof value !== 'string') issues.push(`Attribute "${name}" must be a string`);
-    else if (typeof value === 'string' && /^\s*javascript:/i.test(value)) issues.push(`Unsafe URL in "${name}"`);
+    else if (badValue) issues.push(badValue);
     else if (name === 'srcset') issues.push('Use "src" (one image) instead of "srcset"');
     else if (name === 'src' && typeof value === 'string') {
       const issue = imageSrcIssue(value);
@@ -567,7 +569,7 @@ export interface TreeInput {
   states?: Record<string, Partial<Record<string, string | null>> | null | undefined>;
   attributes?: Record<string, string | null>;
   component?: boolean;
-  bind?: Readonly<Record<string, string | null | undefined>>;
+  bind?: NodeBindingsPatch;
   instance?: unknown;
   children?: readonly TreeInput[];
 }
@@ -1154,16 +1156,29 @@ export class GridDocument {
     return tree;
   }
 
-  /** The document's components, with their props and what each shows by default. */
-  getComponents(): Array<{ id: string; name: string; props: Record<string, string>; instances: number }> {
+  /** The document's components, with their props and what each shows by default, and which props set styles or attributes. */
+  getComponents(): Array<{
+    id: string;
+    name: string;
+    props: Record<string, string>;
+    styleProps?: Record<string, StyleProp[]>;
+    attributeProps?: Record<string, string[]>;
+    instances: number;
+  }> {
     const scene = this.scene();
     const nodes = this.getNodes();
-    return sortSiblings(nodes.filter((n) => n.component)).map((n) => ({
-      id: n.id,
-      name: n.name,
-      props: componentProps(n.id, scene),
-      instances: nodes.filter((i) => i.instance?.component === n.id).length,
-    }));
+    return sortSiblings(nodes.filter((n) => n.component)).map((n) => {
+      const styleProps = componentStyleProps(n.id, scene);
+      const attributeProps = componentAttributeProps(n.id, scene);
+      return {
+        id: n.id,
+        name: n.name,
+        props: componentProps(n.id, scene),
+        ...(Object.keys(styleProps).length && { styleProps }),
+        ...(Object.keys(attributeProps).length && { attributeProps }),
+        instances: nodes.filter((i) => i.instance?.component === n.id).length,
+      };
+    });
   }
 
   isComponent(id: string): boolean {
@@ -1291,7 +1306,7 @@ export class GridDocument {
       else if (patch.component === false || patch.component === null) y.delete('component');
       if (patch.bind === null) y.delete('bind');
       else if (patch.bind) {
-        const next = cleanBindings({ ...(y.get('bind') as Record<string, unknown> | undefined), ...patch.bind });
+        const next = mergeBindings(cleanBindings(y.get('bind') as Record<string, unknown> | undefined), patch.bind);
         if (next) y.set('bind', next);
         else y.delete('bind');
       }
@@ -1704,8 +1719,12 @@ export class GridDocument {
       y.set('tag', 'div');
       y.delete('text');
       y.delete('bind');
-      replaceMap(y.get('styles') as Y.Map<string>, differing(node.styles, component.styles));
-      replaceMap(y.get('attributes') as Y.Map<string>, differing(node.attributes, component.attributes));
+      // A style the component's root lets a prop set went into the prop: kept here too, it would hide it.
+      const ownStyles = Object.entries(differing(node.styles, component.styles)).filter(([prop]) => !component.bind?.styles?.[prop as StyleProp]);
+      replaceMap(y.get('styles') as Y.Map<string>, Object.fromEntries(ownStyles));
+      // Likewise an attribute it binds; the props hold this layer's value (or that it had none).
+      const ownAttributes = Object.entries(differing(node.attributes, component.attributes)).filter(([name]) => !component.bind?.attributes?.[name]);
+      replaceMap(y.get('attributes') as Y.Map<string>, Object.fromEntries(ownAttributes));
       for (const key of ['breakpoints', 'states'] as const) {
         y.delete(key);
         const kept = Object.fromEntries(
@@ -1981,7 +2000,7 @@ export class GridDocument {
     const component = scene.node(ref.component);
     if (!component) return [`Component ${ref.component} not found`];
     if (!component.component) return [`"${component.name}" (${component.id}) isn't a component: mark it with component: true first`];
-    const issues = propIssues(ref.props ?? {}, componentProps(component.id, scene), component.name);
+    const issues = propIssues(ref.props ?? {}, componentPropSpecs(component.id, scene), component.name);
     const around = enclosingComponent(parentId, scene);
     if (around !== null && reachesComponent(component.id, around, scene)) {
       issues.push(`"${component.name}" can't go inside "${scene.node(around)!.name}": the component would contain itself`);
@@ -2013,7 +2032,7 @@ export class GridDocument {
       const scene = this.scene();
       const component = scene.node(y.get('instance') as string);
       if (!component?.component) issues.push("Its component is missing, so its props can't be set");
-      else issues.push(...propIssues(patch.props, componentProps(component.id, scene), component.name));
+      else issues.push(...propIssues(patch.props, componentPropSpecs(component.id, scene), component.name));
     }
     return issues;
   }

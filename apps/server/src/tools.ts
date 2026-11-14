@@ -75,7 +75,7 @@ Model:
 - Themes: a theme is a named set of token overrides (built in: "dark"); set "theme" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {"theme": "dark"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens "seed" and "theme" (makes <theme> and <theme>-dark), with "tokens" in the same call for its fonts, type and accent; "tokens" that aren't colors also reach <theme>-dark, so set them once. Set the dark accent with theme "<theme>-dark".
 - Responsive: "styles" apply at every width; "breakpoints" holds per-node style overrides, e.g. {"mobile": {"gridTemplateColumns": "1fr"}}. ${BREAKPOINTS.map((b) => `"${b.id}" applies at ${breakpointRange(b)}`).join('; ')} — on the canvas that is the artboard's width, so resize an artboard to preview it. Build the layout in styles and adapt it with tablet and mobile (both apply on a phone; mobile wins). Use desktop only for a rule that shouldn't reach smaller screens, so nothing has to undo it there.
 - States: "states" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {"hover": {"backgroundColor": "var(--color-primary-container)"}}, with transition in styles ("background-color 150ms ease"). Give links, buttons and inputs a hover and a focus state.
-- Components: when the same thing repeats (cards, list rows, buttons, nav items), build it once and reuse it. Mark the layer {"component": true} and, on each text layer inside whose text differs per use, {"bind": {"text": "planName"}} (a prop name is camelCase; an icon's name is text too). Create the others as {"instance": {"component": "<its name or id>", "props": {"planName": "…"}}}. An instance draws the component's layers and follows every change to them, so you restyle all of them by editing the component. Nothing inside an instance can be edited: set its props, style its root (width, gridColumn, alignSelf), or detach it into ordinary layers with update_nodes {"instance": null}. get_canvas lists the components with their props. A copy of a component is an instance of it. To reuse what a design already repeats, don't rebuild it: mark one of the look-alike layers as the component and bind its text, then turn the others into instances where they stand with update_nodes {"id": "<layer>", "instance": {"component": "<name or id>"}}; each one's own text fills the props.
+- Components: when the same thing repeats (cards, list rows, buttons, nav items), build it once and reuse it. Mark the layer {"component": true} and, on each text layer inside whose text differs per use, {"bind": {"text": "planName"}} (a prop name is camelCase; an icon's name is text too). Create the others as {"instance": {"component": "<its name or id>", "props": {"planName": "…"}}}. An instance draws the component's layers and follows every change to them, so you restyle all of them by editing the component. Nothing inside an instance can be edited: set its props, style its root (width, gridColumn, alignSelf), or detach it into ordinary layers with update_nodes {"instance": null}. When instances differ by a style too (a chart bar's height, the active tab's color), bind it the same way: {"bind": {"styles": {"height": "barHeight"}}} on the layer, then "barHeight": "53px" in an instance's props; anything else inside comes from the component. An attribute that only some instances have works the same way: {"bind": {"attributes": {"aria-current": "current"}}}, then "current": "page" on the active one and "current": "" (off) on the rest; otherwise every instance gets the component's (all four tabs would say they're the current page). get_canvas lists the components with their props, and which of them set styles (styleProps) or attributes (attributeProps). A copy of a component is an instance of it. To reuse what a design already repeats, don't rebuild it: mark one of the look-alike layers as the component and bind its text, then turn the others into instances where they stand with update_nodes {"id": "<layer>", "instance": {"component": "<name or id>"}}; each one's own text, and its values for bound styles and attributes, fill the props. Bind the styles and attributes that differ before converting, or they're reported (changedLayers, addedAttributes) and lost.
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
@@ -148,7 +148,7 @@ interface NodeSpec {
   frame?: Partial<ArtboardFrame>;
   theme?: string;
   component?: boolean;
-  bind?: { text?: string };
+  bind?: { text?: string; styles?: Record<string, string>; attributes?: Record<string, string> };
   instance?: { component: string; props?: Record<string, string> };
   children?: NodeSpec[];
 }
@@ -178,12 +178,18 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     frame: frameSchema.optional().describe('Canvas placement; only for new artboards (parentId null)'),
     theme: z.string().optional().describe(THEME_PARAM),
     component: z.boolean().optional().describe('true makes this layer a component, to place instances of. Not an artboard, and not inside another component'),
-    bind: strictObject({ text: z.string().optional() })
+    bind: strictObject({
+      text: z.string().optional(),
+      styles: z.record(z.string(), z.string()).optional(),
+      attributes: z.record(z.string(), z.string()).optional(),
+    })
       .optional()
-      .describe('Inside a component: {"text": "buttonLabel"} lets each instance set this text layer\'s text through its prop "buttonLabel" (camelCase)'),
+      .describe(
+        'Inside a component: {"text": "buttonLabel"} lets each instance set this text layer\'s text through its prop "buttonLabel"; {"styles": {"height": "barHeight"}} lets it set a style property through a prop the same way, and {"attributes": {"aria-current": "current"}} an attribute. Prop names are camelCase',
+      ),
     instance: strictObject({
       component: z.string().describe("The component's id, or its name"),
-      props: z.record(z.string(), z.string()).optional().describe("Values for its props; one left out shows the component's own text"),
+      props: z.record(z.string(), z.string()).optional().describe("Values for its props (a style prop takes a CSS value; an attribute prop set to \"\" leaves the attribute off); one left out shows the component's own"),
     })
       .optional()
       .describe("Makes this node an instance: it draws that component's layers and follows its changes. No tag, text or children; styles apply to its root (width, gridColumn, alignSelf)"),
@@ -388,7 +394,7 @@ function nextArtboardPosition(room: Room): { x: number; y: number } {
 const some = (list: readonly string[], max = 6): string => `${list.slice(0, max).join(', ')}${list.length > max ? ` and ${list.length - max} more` : ''}`;
 
 const CONVERT_NOTE =
-  "droppedText is text the instance no longer shows, and changedLayers are layers inside that now look like the component's. If that content matters: undo_agent_change, then bind a layer in the component to a prop for it, or leave that layer as it was. Tell the user what changed.";
+  "droppedText is text the instance no longer shows, changedLayers are layers inside that now look like the component's, and addedAttributes are attributes of the component's root the layer didn't have and the instance now does (check they're true of it: aria-current, selected, open). If that matters: undo_agent_change, then bind a layer in the component to a prop for it (its text, the styles that differ: bind.styles, or the attribute: bind.attributes), or leave that layer as it was. Tell the user what changed.";
 
 /** A component by id, or by name when only one has that name. */
 function resolveComponent(room: Room, ref: string): string {
@@ -691,11 +697,20 @@ export function createMcpServer(
                 .describe(`${STATE_STYLES}; merged like styles, null clears a whole state`),
               attributes: z.record(z.string(), z.string().nullable()).optional(),
               component: z.boolean().optional().describe('true makes this layer a component; false unmarks one that has no instances'),
-              bind: strictObject({ text: z.string().nullable().optional() })
+              bind: strictObject({
+                text: z.string().nullable().optional(),
+                styles: z.record(z.string(), z.string().nullable()).nullable().optional(),
+                attributes: z.record(z.string(), z.string().nullable()).nullable().optional(),
+              })
                 .nullable()
                 .optional()
-                .describe('Inside a component: {"text": "buttonLabel"} exposes this text layer\'s text as the prop "buttonLabel" (camelCase); null removes it'),
-              props: z.record(z.string(), z.string().nullable()).optional().describe("An instance's prop values, merged; null goes back to the component's own"),
+                .describe(
+                  'Inside a component: {"text": "buttonLabel"} exposes this text layer\'s text as the prop "buttonLabel"; {"styles": {"height": "barHeight"}} exposes a style property as a prop, {"attributes": {"aria-current": "current"}} an attribute (both merged by key). Prop names are camelCase; null removes a binding, or all of them',
+                ),
+              props: z
+                .record(z.string(), z.string().nullable())
+                .optional()
+.describe("An instance's prop values, merged (a style prop takes a CSS value, and \"\" shows the component's; an attribute prop set to \"\" leaves the attribute off); null goes back to the component's own"),
               instance: strictObject({
                 component: z.string().describe("The component's id, or its name"),
                 props: z.record(z.string(), z.string()).optional().describe('Only for text the layer does not already hold'),
@@ -762,10 +777,11 @@ export function createMcpServer(
             props: match.props,
             ...(match.droppedText.length && { droppedText: some(match.droppedText) }),
             ...(match.changedLayers.length && { changedLayers: some(match.changedLayers) }),
+            ...(match.addedAttributes.length && { addedAttributes: match.addedAttributes }),
           });
         });
         throwIssues(mismatched);
-        const lossy = converted.some((c) => c.droppedText || c.changedLayers);
+        const lossy = converted.some((c) => c.droppedText || c.changedLayers || c.addedAttributes);
         const warnings = [
           ...backgroundWarnings(room, updates),
           ...themeWarnings(room, updates.filter((u) => u.theme).map((u) => u.id)),

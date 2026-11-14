@@ -111,7 +111,7 @@ test('a row the design already repeats becomes an instance where it stands', asy
 
   // Converted while it's on screen, through the same call an in-page agent makes.
   const match = await page.evaluate(({ boss, vex }) => window.weft.agent.convertToInstance(boss.id, { component: vex.id }), ids);
-  expect(match).toEqual({ props: { name: 'Goblin Boss', status: 'Acting now' }, defaulted: [], droppedText: [], changedLayers: [] });
+  expect(match).toEqual({ props: { name: 'Goblin Boss', status: 'Acting now' }, defaulted: [], droppedText: [], changedLayers: [], addedAttributes: [] });
 
   // Same place, size, highlight and words; its layers are now the component's.
   await expect(layer(ids.boss.id).locator(`[data-gf-src="${ids.vex.title}"]`)).toHaveText('Goblin Boss');
@@ -124,4 +124,50 @@ test('a row the design already repeats becomes an instance where it stands', asy
   await page.evaluate((vex) => window.weft.doc.updateNode(vex.id, { styles: { padding: 'var(--space-6)' } }), ids.vex);
   await expect.poll(() => layer(ids.boss.id).evaluate((el) => getComputedStyle(el).paddingTop)).toBe(await layer(ids.vex.id).evaluate((el) => getComputedStyle(el).paddingTop));
   await page.screenshot({ path: 'test-results/m5-convert.png' });
+});
+
+test('bars that differ in height and color become instances that keep them, through style props', async ({ page }) => {
+  await page.goto('/?ephemeral');
+  await page.waitForFunction(() => window.weft?.scene.nodes.size > 0);
+  const ids = await page.evaluate(() => {
+    const { doc } = window.weft;
+    const root = doc.getChildren(null)[0]!.id;
+    const chart = doc.createNode({
+      type: 'frame',
+      name: 'Volume chart',
+      parentId: root,
+      styles: { display: 'flex', alignItems: 'end', gap: 'var(--space-2)', height: '120px', padding: 'var(--space-6)' },
+    });
+    const day = (label: string, height: string, color: string) => {
+      const id = doc.createNode({ type: 'frame', name: label, parentId: chart, styles: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', width: '40px' } });
+      const bar = doc.createNode({ type: 'frame', name: 'Bar', parentId: id, styles: { width: '100%', borderRadius: '8px', height, backgroundColor: color } });
+      doc.createNode({ type: 'text', tag: 'span', name: 'Label', parentId: id, text: label });
+      return { id, bar };
+    };
+    const days = [day('M', '8px', 'var(--color-surface-container-highest)'), day('T', '40px', 'var(--color-primary)'), day('W', '72px', 'var(--color-primary)'), day('T', '56px', 'var(--color-tertiary)')];
+    const [mon] = days;
+    doc.updateNode(mon!.id, { component: true, name: 'Day' });
+    doc.updateNode(mon!.bar, { bind: { styles: { height: 'barHeight', backgroundColor: 'barColor' } } });
+    doc.updateNode(doc.getChildren(mon!.id)[1]!.id, { bind: { text: 'label' } });
+    return days;
+  });
+
+  const bar = (i: number) =>
+    i === 0 ? page.locator(`.gf-artboard-host [data-gf-id="${ids[0]!.bar}"]`) : page.locator(`.gf-artboard-host [data-gf-id="${ids[i]!.id}"] [data-gf-src="${ids[0]!.bar}"]`);
+  const looks = async (from: (i: number) => ReturnType<typeof bar>) =>
+    Promise.all(ids.map((_, i) => from(i).evaluate((el) => `${getComputedStyle(el).height} ${getComputedStyle(el).backgroundColor}`)));
+  const before = await looks((i) => page.locator(`.gf-artboard-host [data-gf-id="${ids[i]!.bar}"]`));
+
+  const matches = await page.evaluate((days) => days.slice(1).map((d) => window.weft.agent.convertToInstance(d.id, { component: days[0]!.id })), ids);
+  expect(matches.map((m) => m.changedLayers)).toEqual([[], [], []]);
+  expect(matches[2]!.props).toMatchObject({ barHeight: '56px', barColor: 'var(--color-tertiary)' });
+  // Each bar is now the component's layer, drawn at its own height and color.
+  await expect(bar(3)).toHaveCount(1);
+  expect(await looks(bar)).toEqual(before);
+
+  // The shape follows the component; the height stays each instance's own.
+  await page.evaluate((mon) => window.weft.doc.updateNode(mon.bar, { styles: { borderRadius: '2px' } }), ids[0]!);
+  await expect.poll(() => bar(2).evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).toBe('2px');
+  expect(await bar(2).evaluate((el) => getComputedStyle(el).height)).toBe('72px');
+  await page.screenshot({ path: 'test-results/m5-style-props.png' });
 });

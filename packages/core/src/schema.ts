@@ -259,6 +259,25 @@ export function getStyleMeta(prop: StyleProp): StylePropMeta {
   return STYLE_PROP_META[prop];
 }
 
+export const UNSAFE_STYLE_VALUE = /[;{}<>]/;
+/** Values that would make the browser fetch something: url(), image-set(), …, or escapes that could hide them. */
+export const EXTERNAL_STYLE_VALUE = /\b(?:url|image|image-set|-webkit-image-set|cross-fade|element|expression)\s*\(|\\/i;
+export const GRADIENT = /\b(?:repeating-)?(?:linear|radial|conic)-gradient\s*\(/i;
+/** A gradient in a color property is dropped by CSS: the element paints nothing. */
+export const isColorProp = (prop: StyleProp) => getStyleMeta(prop).tokenGroups?.includes('color') ?? false;
+
+/**
+ * Why `value` can't be the style `prop`, or null when it can. Here rather than
+ * with the other validation so components can check a prop's value where they
+ * draw it.
+ */
+export function styleValueIssue(prop: StyleProp, value: string): string | null {
+  if (UNSAFE_STYLE_VALUE.test(value)) return `Style "${prop}" contains forbidden characters`;
+  if (EXTERNAL_STYLE_VALUE.test(value)) return `Style "${prop}" can't load external resources (url(), image-set()); gradients are fine`;
+  if (GRADIENT.test(value) && isColorProp(prop)) return `Style "${prop}" takes a color, not a gradient${prop === 'backgroundColor' ? ': put the gradient in backgroundImage' : ''}`;
+  return null;
+}
+
 /**
  * Responsive breakpoints. A node's base styles apply at every width; its
  * override styles for a breakpoint apply when the artboard (canvas) or
@@ -375,10 +394,41 @@ export interface SceneTree extends Omit<SceneNode, 'parentId' | 'index'> {
   expanded?: SceneTree;
 }
 
-/** A layer's fields that a component prop can set. */
-export const BIND_FIELDS = ['text'] as const;
+/** A layer's fields that a component prop can set: its text, style properties, and attributes. */
+export const BIND_FIELDS = ['text', 'styles', 'attributes'] as const;
 export type BindField = (typeof BIND_FIELDS)[number];
-export type NodeBindings = Partial<Record<BindField, string>>;
+export interface NodeBindings {
+  /** The prop that sets this text layer's text. */
+  text?: string;
+  /** Style properties and the prop that sets each: `{ height: 'barHeight' }`. */
+  styles?: Partial<Record<StyleProp, string>>;
+  /** Attributes and the prop that sets each: `{ 'aria-current': 'current' }`. */
+  attributes?: Record<string, string>;
+}
+/** A change to a layer's bindings: merged by field (and by style property or attribute); null removes. */
+export interface NodeBindingsPatch {
+  text?: string | null;
+  styles?: Partial<Record<string, string | null>> | null;
+  attributes?: Record<string, string | null> | null;
+}
+
+export const ATTRIBUTE_NAME = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
+
+/** Why `name` can't be an attribute on a layer, or null. */
+export function attributeNameIssue(name: string): string | null {
+  if (!ATTRIBUTE_NAME.test(name)) return `Invalid attribute name "${name}"`;
+  if (/^on/i.test(name)) return `Event handler attributes are not allowed ("${name}")`;
+  if (name === 'style' || name === 'class') return `Use styles instead of the "${name}" attribute`;
+  return null;
+}
+
+/** Why `value` can't be `name`'s value, or null (an image's `src` is checked separately, against the asset store). */
+export function attributeValueIssue(name: string, value: string): string | null {
+  return /^\s*javascript:/i.test(value) ? `Unsafe URL in "${name}"` : null;
+}
+
+/** Attributes a prop can't set: an image has to come from the asset store, which collects what a page uses from its layers. */
+export const UNBINDABLE_ATTRIBUTES: readonly string[] = ['src', 'srcset'];
 
 /** The component an instance draws (a node id in this document) and its values for that component's props. */
 export interface InstanceRef {
