@@ -198,6 +198,16 @@ const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text:
 
 const OUTLINE_TEXT = 60;
 
+/** Finds a node, to read what an instance's component is. */
+type NodeLookup = { getNode(id: string): { tag: string } | undefined };
+
+/**
+ * The element a node is drawn as. An instance's is its component's: what it
+ * stores itself is whatever it was before (a converted row stores `div`), and
+ * an agent reading that would think a list row isn't an `li`.
+ */
+const shownTag = (tree: SceneTree, nodes: NodeLookup): string => (tree.instance ? (nodes.getNode(tree.instance.component)?.tag ?? tree.tag) : tree.tag);
+
 /** What makes a node a component, a bound layer or an instance. */
 const componentFields = (tree: SceneTree): Record<string, unknown> => ({
   ...(tree.component && { component: true }),
@@ -206,8 +216,8 @@ const componentFields = (tree: SceneTree): Record<string, unknown> => ({
 });
 
 /** Structure only: what each node is and says, for finding ids cheaply. */
-export function outline(tree: SceneTree, depth: number): Record<string, unknown> {
-  const out: Record<string, unknown> = { id: tree.id, tag: tree.tag };
+export function outline(tree: SceneTree, depth: number, nodes: NodeLookup): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: tree.id, tag: shownTag(tree, nodes) };
   // Text layers are usually named after their text; don't send it twice.
   if (tree.text === undefined || !tree.text.startsWith(tree.name)) out.name = tree.name;
   if (tree.text !== undefined) out.text = tree.text.length > OUTLINE_TEXT ? `${tree.text.slice(0, OUTLINE_TEXT)}…` : tree.text;
@@ -216,15 +226,15 @@ export function outline(tree: SceneTree, depth: number): Record<string, unknown>
   if (tree.hidden) out.hidden = true;
   Object.assign(out, componentFields(tree));
   if (tree.children.length) {
-    if (depth > 0) out.children = tree.children.map((c) => outline(c, depth - 1));
+    if (depth > 0) out.children = tree.children.map((c) => outline(c, depth - 1, nodes));
     else out.childCount = tree.children.length;
   }
   return out;
 }
 
 /** Drops empty fields and truncates deep trees to keep responses small. */
-export function compact(tree: SceneTree, depth: number): Record<string, unknown> {
-  const out: Record<string, unknown> = { id: tree.id, type: tree.type, tag: tree.tag, name: tree.name };
+export function compact(tree: SceneTree, depth: number, nodes: NodeLookup): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: tree.id, type: tree.type, tag: shownTag(tree, nodes), name: tree.name };
   if (tree.text !== undefined) out.text = tree.text;
   if (tree.frame) out.frame = tree.frame;
   if (tree.theme) out.theme = tree.theme;
@@ -236,7 +246,7 @@ export function compact(tree: SceneTree, depth: number): Record<string, unknown>
   if (tree.locked) out.locked = true;
   Object.assign(out, componentFields(tree));
   if (tree.children.length) {
-    if (depth > 0) out.children = tree.children.map((c) => compact(c, depth - 1));
+    if (depth > 0) out.children = tree.children.map((c) => compact(c, depth - 1, nodes));
     else out.childCount = tree.children.length;
   }
   return out;
@@ -577,10 +587,10 @@ export function createMcpServer(
         const components = all.length ? { components: all } : {};
         if (detail === 'outline') {
           // Unindented: the outline exists to be small.
-          const nodes = room.doc.getTree(rootId).map((t) => outline(t, maxDepth));
+          const nodes = room.doc.getTree(rootId).map((t) => outline(t, maxDepth, room.doc));
           return { content: [{ type: 'text', text: JSON.stringify({ document: doc, ...components, nodes }) }] };
         }
-        return ok({ document: doc, ...components, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth)) });
+        return ok({ document: doc, ...components, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth, room.doc)) });
       } catch (err) {
         return fail((err as Error).message);
       }
@@ -600,7 +610,7 @@ export function createMcpServer(
       agent.look(room.humans().flatMap((h) => h.selection.filter((id) => room.doc.has(id))), 'Looking at your selection');
       const users = room.humans().map((h) => ({
         user: h.user.name,
-        selection: h.selection.filter((id) => room.doc.has(id)).map((id) => compact(room.doc.getTree(id)[0]!, maxDepth)),
+        selection: h.selection.filter((id) => room.doc.has(id)).map((id) => compact(room.doc.getTree(id)[0]!, maxDepth, room.doc)),
       }));
       if (users.length === 0) return ok({ users, note: 'No editor is connected to this document.' });
       return ok({ users });
@@ -659,6 +669,10 @@ export function createMcpServer(
           .array(
             strictObject({
               id: z.string(),
+              type: z
+                .enum(['frame', 'text'])
+                .optional()
+                .describe("The node's type as get_canvas shows it. Never changed: accepted when it matches, so a node copied from get_canvas can be sent back"),
               name: z.string().optional(),
               tag: z.string().optional(),
               text: z.string().optional(),
@@ -709,6 +723,13 @@ export function createMcpServer(
             const node = room.doc.getNode(u.id);
             const issues = [
               ...(node ? [] : [`Node ${u.id} not found`]),
+              ...(node && u.type && u.type !== node.type
+                ? [
+                    `"${node.name}" is a ${node.type} layer, and a layer's type can't change. ${
+                      node.type === 'text' ? 'For mixed styles, make a frame with this tag holding text children' : 'Give it a text child, or create a text node in its place'
+                    }, or leave type out`,
+                  ]
+                : []),
               ...(node && u.tag ? [tagIssue(node.type, u.tag) ?? []].flat() : []),
               ...(u.styles ? styleIssues(u.styles) : []),
               ...(u.breakpoints ? breakpointIssues(u.breakpoints) : []),
@@ -720,7 +741,7 @@ export function createMcpServer(
         );
         const converted: Array<Record<string, unknown>> = [];
         const mismatched: string[] = [];
-        updates.forEach(({ id, instance, ...patch }, i) => {
+        updates.forEach(({ id, instance, type: _type, ...patch }, i) => {
           touched.add(id);
           if (!instance) return room.doc.updateNode(id, { ...patch, ...(instance === null && { instance }) } as NodePatch, agent.identity.origin);
           // An existing layer becomes an instance where it stands; what it held is matched to the component's props.

@@ -340,11 +340,12 @@ describe('MCP tools', () => {
     const before = (await html()).replace(/ data-gf-(id|src)="[^"]*"/g, '');
 
     // One call: mark a row, bind its text, convert the others by the component's name. Nothing deleted, recreated or moved.
+    // "type" is what get_canvas shows on every node, and models copy it into updates: it's taken when it matches.
     const converted = await call('update_nodes', {
       doc: 'convert',
       updates: [
-        { id: vex!.id, component: true, name: 'Initiative row' },
-        { id: vex!.children[0]!.id, bind: { text: 'name' } },
+        { id: vex!.id, type: 'frame', component: true, name: 'Initiative row' },
+        { id: vex!.children[0]!.id, type: 'text', bind: { text: 'name' } },
         { id: vex!.children[1]!.id, bind: { text: 'status' } },
         ...[boss, wolf, thora].map((r) => ({ id: r!.id, instance: { component: 'Initiative row' } })),
       ],
@@ -360,6 +361,17 @@ describe('MCP tools', () => {
     expect(doc.getComponents()).toMatchObject([{ name: 'Initiative row', instances: 3 }]);
     // The page reads the same as before: same elements, text and styles, highlight included.
     expect((await html()).replace(/ data-gf-(id|src)="[^"]*"/g, '')).toBe(before);
+    // And an agent reading the canvas sees list rows: an instance shows its component's element, not the div it stores.
+    for (const detail of ['full', 'outline']) {
+      const read = await call('get_canvas', { doc: 'convert', rootId: list.id, detail });
+      expect((read.data.nodes[0].children as Array<{ tag: string }>).map((r) => r.tag)).toEqual(['li', 'li', 'li', 'li']);
+    }
+    expect(doc.getNode(boss!.id)!.tag).toBe('div');
+    // A type that doesn't match is refused, saying what to do instead; nothing in the call applies.
+    const retype = await call('update_nodes', { doc: 'convert', updates: [{ id: vex!.children[0]!.id, type: 'frame', name: 'Renamed' }] });
+    expect(retype.isError).toBe(true);
+    expect(retype.text).toMatch(/updates\[0\]: "[^"]+" is a text layer, and a layer's type can't change/);
+    expect(doc.getNode(vex!.children[0]!.id)!.name).not.toBe('Renamed');
 
     // A layer built differently is refused with the props to pass and the text it holds, and nothing in the call applies.
     const odd = await call('create_nodes', { doc: 'convert', parentId: list.id, nodes: [{ tag: 'li', name: 'Mirelle', children: [{ tag: 'div', name: 'Wrap', children: [{ text: 'Mirelle' }, { text: 'Hidden' }] }] }] });
@@ -419,7 +431,8 @@ describe('MCP tools', () => {
     expect(canvas.data.components).toEqual([{ id: main!.id, name: 'Plan card', props: { name: 'Starter', price: '$0' }, instances: 2 }]);
     const outlined = canvas.data.nodes[0].children as Array<Record<string, unknown>>;
     expect(outlined[0]).toMatchObject({ component: true });
-    expect(outlined[1]).toEqual({ id: pro!.id, tag: 'div', name: 'Pro', instance: { component: main!.id, props: { name: 'Pro', price: '$12' } } });
+    // Its element is the component's (an article), not the div it stores.
+    expect(outlined[1]).toEqual({ id: pro!.id, tag: 'article', name: 'Pro', instance: { component: main!.id, props: { name: 'Pro', price: '$12' } } });
 
     // Rendered: each instance is laid out like the component, with its own root styles on top.
     const boxes = async () => ((await call('get_screenshot', { doc: 'components', id: page!.id, image: false })).data.boxes as Array<{ id: string; height: number; width: number }>);

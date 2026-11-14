@@ -410,7 +410,7 @@ export class Assistant {
     const selected = (req.selection ?? []).filter((id) => room.doc.has(id)).slice(0, 20);
     const selection = selected.length
       ? `When the user sent this request they had selected these nodes ("this", "these", "it" refer to them), with their styles: read them here instead of calling get_canvas. Your edits since are not reflected here:\n${JSON.stringify(
-          selected.map((id) => compact(room.doc.getTree(id)[0]!, 4)),
+          selected.map((id) => compact(room.doc.getTree(id)[0]!, 4, room.doc)),
         )}`
       : 'Nothing is selected. Call get_canvas to see the document.';
     return `${SERVER_INSTRUCTIONS}
