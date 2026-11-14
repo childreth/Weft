@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { assistLimits, isRepeating, ollamaUrlFrom, type AssistEvent } from './assist';
+import { assistLimits, isRepeating, ollamaUrlFrom, toolResultLimit, type AssistEvent } from './assist';
 import { startGridServer, type GridServer } from './server';
 
 /**
@@ -20,6 +20,8 @@ const requests: Array<{
 }> = [];
 /** Makes the fake refuse an effort level, like a model that only takes on/off. */
 let refuseLevels = false;
+/** What the fake reports as loaded (`/api/ps`): a model's name and the context it was loaded with. */
+let loaded: Array<{ name: string; context_length: number }> = [];
 const spoken: Array<Record<string, unknown>> = [];
 let server: GridServer;
 const SESSION = 'test-session-1';
@@ -42,6 +44,7 @@ beforeAll(async () => {
         }),
       );
     }
+    if (req.url === '/api/ps') return res.end(JSON.stringify({ models: loaded }));
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     if (req.url === '/v1/audio/speech') {
@@ -386,6 +389,34 @@ describe('assist', () => {
     expect(results[1]!.text).toContain('already made this exact call');
     const canvas = requests.at(-2)!.messages.filter((m) => m.role === 'tool').at(-2)!;
     expect(canvas.content).toContain('[Cut off:');
+    expect(canvas.content).toContain('showing the first 8000');
+  });
+
+  it('lets a model loaded with a large context read more of a tool result', async () => {
+    // The board from the test above: its read is far longer than 8,000 characters.
+    const read = { function: { name: 'get_canvas', arguments: { maxDepth: 11 } } };
+    const toolResult = () => requests.at(-1)!.messages.filter((m) => m.role === 'tool').at(-1)!.content;
+    try {
+      loaded = [{ name: 'big:27b', context_length: 131072 }];
+      replies = [{ role: 'assistant', content: '', tool_calls: [read] }, { role: 'assistant', content: 'Read it.' }];
+      await chat({ prompt: 'look again', session: 'context-session-1' });
+      expect(toolResult()).toContain('Line 79');
+      expect(toolResult()).not.toContain('[Cut off:');
+      // Another model being loaded says nothing about this one.
+      loaded = [{ name: 'small:1b', context_length: 131072 }];
+      replies = [{ role: 'assistant', content: '', tool_calls: [read] }, { role: 'assistant', content: 'Read it.' }];
+      await chat({ prompt: 'look again', session: 'context-session-2' });
+      expect(toolResult()).toContain('showing the first 8000');
+    } finally {
+      loaded = [];
+    }
+    // A tenth of the context, in characters: never under the old 8,000, never over what cloud models get.
+    expect(toolResultLimit(undefined)).toBe(8000);
+    expect(toolResultLimit(8192)).toBe(8000);
+    expect(toolResultLimit(32768)).toBe(9830);
+    expect(toolResultLimit(65536)).toBe(19661);
+    expect(toolResultLimit(131072)).toBe(39322);
+    expect(toolResultLimit(262144)).toBe(60000);
   });
 
   it('rejects cross-site origins and answers local CORS preflight', async () => {
