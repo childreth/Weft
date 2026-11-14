@@ -1,0 +1,1067 @@
+{
+ "model": "gemma4:26b-mlx",
+ "messages": [
+  {
+   "role": "system",
+   "content": "Weft is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.\n\nModel:\n- Top-level nodes are artboards (type \"frame\" with a canvas \"frame\" {x, y, width, height, heightMode}). Everything inside is laid out by CSS (flex/grid), not absolute coordinates.\n- Artboard height: heightMode \"hug\" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; \"fixed\" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.\n- Node types: \"frame\" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and \"text\" (tag p/h1–h6/span/a/button/label/li/…; has \"text\").\n- Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.\n- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except background, font, animation, content, float, clear; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required (\"\" if decorative); remote URLs aren't loaded: import_image fetches one into the store and returns its src. Fonts: any Google Font via search_fonts → add_fonts, then point a role at it with set_tokens {\"font-family.heading\": \"{font-family.<slug>}\"} (and font-family.body) and set fontFamily var(--font-family-heading) / var(--font-family-body). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).\n- A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.\n- Text roles work like the color roles: h1, h2, h3, h4, h5, h6, body-lg, body-md, body-sm, label, caption. A role is its tokens: var(--font-size-<role>), var(--font-weight-<role>), var(--line-height-<role>), var(--letter-spacing-<role>), with var(--font-family-heading) on headings and var(--font-family-body) otherwise. body-lg is lead text, body-md the default, body-sm secondary text, label for buttons and form labels, caption for what explains something else. A node with a heading tag, button, label, figcaption or small starts with its role; styles you pass win. For other text, set the role's styles. Change a role with set_tokens (\"font-size.h1\": \"64px\"), for the document or a theme, not layer by layer.\n- Prefer design tokens over raw values: var(--space-4), var(--color-primary), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.\n- Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). For a brand palette, set_tokens with \"seed\" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.\n- Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.\n- Themes: a theme is a named set of token overrides (built in: \"dark\"); set \"theme\" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {\"theme\": \"dark\"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens \"seed\" and \"theme\" (makes <theme> and <theme>-dark), with \"tokens\" in the same call for its fonts, type and accent; \"tokens\" that aren't colors also reach <theme>-dark, so set them once. Set the dark accent with theme \"<theme>-dark\".\n- Responsive: \"styles\" apply at every width; \"breakpoints\" holds per-node style overrides, e.g. {\"mobile\": {\"gridTemplateColumns\": \"1fr\"}}. \"desktop\" applies at > 1024px; \"tablet\" applies at ≤ 1024px; \"mobile\" applies at ≤ 600px — on the canvas that is the artboard's width, so resize an artboard to preview it. Build the layout in styles and adapt it with tablet and mobile (both apply on a phone; mobile wins). Use desktop only for a rule that shouldn't reach smaller screens, so nothing has to undo it there.\n- States: \"states\" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {\"hover\": {\"backgroundColor\": \"var(--color-primary-container)\"}}, with transition in styles (\"background-color 150ms ease\"). Give links, buttons and inputs a hover and a focus state.\n- Components: when the same thing repeats (cards, list rows, buttons, nav items), build it once and reuse it. Mark the layer {\"component\": true} and, on each text layer inside whose text differs per use, {\"bind\": {\"text\": \"planName\"}} (a prop name is camelCase; an icon's name is text too). Create the others as {\"instance\": {\"component\": \"<its name or id>\", \"props\": {\"planName\": \"…\"}}}. An instance draws the component's layers and follows every change to them, so you restyle all of them by editing the component. Nothing inside an instance can be edited: set its props, style its root (width, gridColumn, alignSelf), or detach it into ordinary layers with update_nodes {\"instance\": null}. get_canvas lists the components with their props. A copy of a component is an instance of it. To reuse what a design already repeats, don't rebuild it: mark one of the look-alike layers as the component and bind its text, then turn the others into instances where they stand with update_nodes {\"id\": \"<layer>\", \"instance\": {\"component\": \"<name or id>\"}}; each one's own text fills the props.\n- Native behavior, no scripts: details/summary for disclosure (same \"name\" attribute = only one open); a popover (any frame with attributes {\"popover\": \"\"} and an \"id\", opened by a button with {\"popovertarget\": \"<id>\"}); a dialog (tag dialog with an \"id\", opened by a button with {\"commandfor\": \"<id>\", \"command\": \"show-modal\"}, closed by one with \"command\": \"close\"); select with option children; textarea (its text is the starting value). Boolean attributes take \"\" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.\n\n- Responsive comparison: duplicate_node with frame {\"width\": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.\n- Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.\n\nAlways pass your model name in \"model\" (e.g. \"Claude Opus 5.5\", \"Qwen3 Coder 30B\") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.\n\nBefore designing or restyling anything, call read_skill with no path: it returns Weft's whole design guide (layout recipes, style and taste rules, how to check your work). Once per session is enough; read it again only when it's no longer in your context.\n\nWorkflow: get_selection or get_canvas (detail \"outline\" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile; image false for just the boxes), and test_flow for anything interactive → select_nodes to show the user what you changed.\n\nSessions end after 30 minutes without a call, and when the Weft server restarts. On HTTP 404 \"Session not found\", initialize again: documents are saved, so nothing is lost.\n\nYou are the assistant built into the Weft editor, running on a local model. The \"doc\" and \"model\" arguments are filled in for you: never pass them. read_skill and get_screenshot aren't available here: skip those steps.\nMake the change the user asks for with as few tool calls as possible, batching nodes into one create_nodes or update_nodes call. Use node ids exactly as given. When done, reply in one or two short sentences saying what you changed. Do not paste JSON back to the user.\n\nWhen the user sent this request they had selected these nodes (\"this\", \"these\", \"it\" refer to them), with their styles: read them here instead of calling get_canvas. Your edits since are not reflected here:\n[{\"id\":\"f_JxNr7kFQzK\",\"type\":\"frame\",\"tag\":\"main\",\"name\":\"DM — Combat tracker\",\"frame\":{\"x\":4200,\"y\":0,\"width\":440,\"height\":2096,\"heightMode\":\"hug\"},\"theme\":\"torchlight-dark\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-6)\",\"padding\":\"var(--space-6) var(--space-8) var(--space-10)\",\"backgroundColor\":\"var(--color-surface)\",\"color\":\"var(--color-on-surface)\",\"fontFamily\":\"var(--font-family-body)\",\"minHeight\":\"900px\"},\"breakpoints\":{\"mobile\":{\"padding\":\"var(--space-4)\",\"gap\":\"var(--space-4)\"}},\"children\":[{\"id\":\"f_3qTNlPjBYt\",\"type\":\"frame\",\"tag\":\"header\",\"name\":\"Encounter bar\",\"styles\":{\"display\":\"flex\",\"alignItems\":\"center\",\"gap\":\"var(--space-6)\",\"flexWrap\":\"wrap\",\"paddingBottom\":\"var(--space-5)\",\"borderBottom\":\"1px solid var(--color-outline-variant)\"},\"children\":[{\"id\":\"f_0NdiQbhmod\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Encounter title\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\",\"flex\":\"1\",\"minWidth\":\"240px\"},\"children\":[{\"id\":\"t_C06EG1EF32\",\"type\":\"text\",\"tag\":\"h1\",\"name\":\"Text\",\"text\":\"Ambush on the Triboar Trail\",\"styles\":{\"fontFamily\":\"var(--font-family-heading)\",\"fontSize\":\"var(--font-size-h3)\",\"fontWeight\":\"var(--font-weight-h1)\",\"lineHeight\":\"1.15\",\"letterSpacing\":\"var(--letter-spacing-h1)\",\"margin\":\"0\"}},{\"id\":\"t_gtNYRkw8p6\",\"type\":\"text\",\"tag\":\"p\",\"name\":\"Encounter meta\",\"text\":\"4 players and 5 monsters, 2 down\",\"styles\":{\"margin\":\"0\",\"color\":\"var(--color-on-surface-variant)\",\"fontSize\":\"var(--font-size-body-sm)\"}}]},{\"id\":\"f_ImR74pIfXY\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Round counter\",\"styles\":{\"display\":\"flex\",\"alignItems\":\"baseline\",\"gap\":\"var(--space-2)\"},\"attributes\":{\"aria-label\":\"Round 3, 1 minute 12 seconds elapsed\"},\"children\":[{\"id\":\"t_wbD6Ym3wF1\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Round\",\"styles\":{\"fontSize\":\"var(--font-size-label)\",\"textTransform\":\"uppercase\",\"letterSpacing\":\"0.08em\",\"color\":\"var(--color-on-surface-variant)\"}},{\"id\":\"t_lNz0xA1OeC\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"3\",\"styles\":{\"fontFamily\":\"var(--font-family-heading)\",\"fontSize\":\"48px\",\"lineHeight\":\"1\",\"fontWeight\":\"700\",\"fontVariantNumeric\":\"tabular-nums\",\"color\":\"var(--color-primary)\"}},{\"id\":\"t_48TRZf10FZ\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"1 min 12 s in game\",\"styles\":{\"fontSize\":\"var(--font-size-body-sm)\",\"color\":\"var(--color-on-surface-variant)\"}}]},{\"id\":\"f_YgvvCWELqi\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Turn controls\",\"styles\":{\"display\":\"flex\",\"alignItems\":\"center\",\"gap\":\"var(--space-2)\"},\"children\":[{\"id\":\"f_vOP84befRq\",\"type\":\"frame\",\"tag\":\"button\",\"name\":\"Previous turn\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"inline-flex\",\"alignItems\":\"center\",\"justifyContent\":\"center\",\"width\":\"44px\",\"height\":\"44px\",\"borderRadius\":\"var(--radius-full)\",\"border\":\"1px solid var(--color-outline)\",\"backgroundColor\":\"transparent\",\"color\":\"var(--color-on-surface)\",\"cursor\":\"pointer\",\"transition\":\"background-color 150ms ease\"},\"states\":{\"hover\":{\"backgroundColor\":\"var(--color-surface-container-high)\"},\"focus\":{\"outline\":\"2px solid var(--color-primary)\",\"outlineOffset\":\"2px\"}},\"attributes\":{\"type\":\"button\",\"aria-label\":\"Previous turn\"},\"children\":[{\"id\":\"t_HRO5ItGXRi\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"undo\",\"styles\":{\"fontFamily\":\"var(--font-family-material-symbols-rounded)\",\"fontSize\":\"22px\",\"lineHeight\":\"1\",\"letterSpacing\":\"normal\",\"textTransform\":\"none\",\"whiteSpace\":\"nowrap\",\"fontWeight\":\"400\"},\"attributes\":{\"aria-hidden\":\"true\"}}]},{\"id\":\"f_QW8vpfYtzL\",\"type\":\"frame\",\"tag\":\"button\",\"name\":\"Add monster button\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"inline-flex\",\"alignItems\":\"center\",\"gap\":\"var(--space-2)\",\"height\":\"44px\",\"padding\":\"0 var(--space-4)\",\"borderRadius\":\"var(--radius-full)\",\"border\":\"none\",\"backgroundColor\":\"var(--color-secondary-container)\",\"color\":\"var(--color-on-secondary-container)\",\"cursor\":\"pointer\",\"transition\":\"background-color 150ms ease\"},\"states\":{\"hover\":{\"backgroundColor\":\"var(--color-surface-container-highest)\"},\"focus\":{\"outline\":\"2px solid var(--color-primary)\",\"outlineOffset\":\"2px\"}},\"attributes\":{\"type\":\"button\",\"commandfor\":\"add-monster\",\"command\":\"show-modal\"},\"children\":[{\"id\":\"t_FYGcfRfj6i\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"add\",\"styles\":{\"fontFamily\":\"var(--font-family-material-symbols-rounded)\",\"fontSize\":\"20px\",\"lineHeight\":\"1\",\"letterSpacing\":\"normal\",\"textTransform\":\"none\",\"whiteSpace\":\"nowrap\",\"fontWeight\":\"400\"},\"attributes\":{\"aria-hidden\":\"true\"}},{\"id\":\"t_IzDBXv9mn5\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Add monster\",\"styles\":{\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\"}}]},{\"id\":\"f_OcXuewO8kL\",\"type\":\"frame\",\"tag\":\"button\",\"name\":\"Next turn button\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"inline-flex\",\"alignItems\":\"center\",\"gap\":\"var(--space-2)\",\"height\":\"44px\",\"padding\":\"0 var(--space-5)\",\"borderRadius\":\"var(--radius-full)\",\"border\":\"none\",\"backgroundColor\":\"var(--color-primary)\",\"color\":\"var(--color-on-primary)\",\"cursor\":\"pointer\",\"transition\":\"box-shadow 150ms ease\"},\"states\":{\"hover\":{\"boxShadow\":\"0 0 0 4px var(--color-primary-container)\"},\"focus\":{\"outline\":\"2px solid var(--color-primary)\",\"outlineOffset\":\"3px\"},\"active\":{\"transform\":\"scale(0.98)\"}},\"attributes\":{\"type\":\"button\"},\"children\":[{\"id\":\"t_CcU72gEk8U\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Next turn\",\"styles\":{\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"700\"}},{\"id\":\"t_fsj0Ag9DtL\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"arrow_forward\",\"styles\":{\"fontFamily\":\"var(--font-family-material-symbols-rounded)\",\"fontSize\":\"20px\",\"lineHeight\":\"1\",\"letterSpacing\":\"normal\",\"textTransform\":\"none\",\"whiteSpace\":\"nowrap\",\"fontWeight\":\"400\"},\"attributes\":{\"aria-hidden\":\"true\"}}]}]}]},{\"id\":\"f_xmgopK7Uim\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Workspace\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"minmax(0, 1fr) 400px\",\"gap\":\"var(--space-6)\",\"alignItems\":\"start\"},\"breakpoints\":{\"tablet\":{\"gridTemplateColumns\":\"1fr\"}},\"children\":[{\"id\":\"f_qTwzAK1LEm\",\"type\":\"frame\",\"tag\":\"section\",\"name\":\"Initiative\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-2)\",\"minWidth\":\"0\"},\"attributes\":{\"aria-label\":\"Initiative order\"},\"children\":[{\"id\":\"f_uZyBzG7aGJ\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Column labels\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"gap\":\"var(--space-4)\",\"padding\":\"0 var(--space-4) var(--space-1)\",\"alignItems\":\"end\"},\"breakpoints\":{\"mobile\":{\"display\":\"none\"}},\"attributes\":{\"aria-hidden\":\"true\"},\"children\":[{\"id\":\"t_HZNLT35E4F\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Init\",\"styles\":{\"fontSize\":\"var(--font-size-caption)\",\"textTransform\":\"uppercase\",\"letterSpacing\":\"0.08em\",\"color\":\"var(--color-on-surface-variant)\"}},{\"id\":\"t_aVK3rt5Nvk\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Combatant\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-caption)\",\"fontWeight\":\"400\",\"lineHeight\":\"1.4\",\"letterSpacing\":\"0.08em\",\"textTransform\":\"uppercase\",\"color\":\"var(--color-on-surface-variant)\",\"margin\":\"0\"}},{\"id\":\"t_360VZ7R31Y\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Hit points\",\"styles\":{\"fontSize\":\"var(--font-size-caption)\",\"textTransform\":\"uppercase\",\"letterSpacing\":\"0.08em\",\"color\":\"var(--color-on-surface-variant)\"}},{\"id\":\"t_gZE1sCLkRj\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Conditions\",\"styles\":{\"fontSize\":\"var(--font-size-caption)\",\"textTransform\":\"uppercase\",\"letterSpacing\":\"0.08em\",\"color\":\"var(--color-on-surface-variant)\"}}]},{\"id\":\"f_Su8RaG9YtI\",\"type\":\"frame\",\"tag\":\"ol\",\"name\":\"Initiative order\",\"styles\":{\"listStyle\":\"none\",\"padding\":\"0\",\"margin\":\"0\",\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\"},\"children\":[{\"id\":\"f_iCxDTPEu7Z\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Vex\",\"styles\":{\"alignItems\":\"center\",\"backgroundColor\":\"var(--color-surface-container-low)\",\"borderRadius\":\"var(--radius-md)\",\"display\":\"grid\",\"gap\":\"var(--space-4)\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"padding\":\"var(--space-3) var(--space-4)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"childCount\":5},{\"id\":\"f_Ej01J4bl3t\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Goblin Boss (current turn)\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"gap\":\"var(--space-4)\",\"alignItems\":\"center\",\"padding\":\"var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) - 4px)\",\"borderRadius\":\"var(--radius-md)\",\"backgroundColor\":\"var(--color-primary-container)\",\"color\":\"var(--color-on-primary-container)\",\"borderLeft\":\"4px solid var(--color-primary)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"attributes\":{\"aria-current\":\"true\"},\"childCount\":5},{\"id\":\"f_sW0i578MCh\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Brother Aldric\",\"styles\":{\"alignItems\":\"center\",\"backgroundColor\":\"var(--color-surface-container-low)\",\"borderRadius\":\"var(--radius-md)\",\"display\":\"grid\",\"gap\":\"var(--space-4)\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"padding\":\"var(--space-3) var(--space-4)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"childCount\":5},{\"id\":\"f_NEJN0gtUab\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Goblin A\",\"styles\":{\"alignItems\":\"center\",\"backgroundColor\":\"var(--color-surface-container-low)\",\"borderRadius\":\"var(--radius-md)\",\"display\":\"grid\",\"gap\":\"var(--space-4)\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"padding\":\"var(--space-3) var(--space-4)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"childCount\":5},{\"id\":\"f_LAvCF6HNKv\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Goblin B (defeated)\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"gap\":\"var(--space-4)\",\"alignItems\":\"center\",\"padding\":\"var(--space-2) var(--space-4)\",\"borderRadius\":\"var(--radius-md)\",\"color\":\"var(--color-on-surface-variant)\",\"border\":\"1px dashed var(--color-outline-variant)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"childCount\":5},{\"id\":\"f_dRKNVrukIe\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Thora (dying)\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"gap\":\"var(--space-4)\",\"alignItems\":\"center\",\"padding\":\"var(--space-3) var(--space-4)\",\"borderRadius\":\"var(--radius-md)\",\"backgroundColor\":\"var(--color-error-container)\",\"color\":\"var(--color-on-error-container)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"childCount\":5},{\"id\":\"f_s2dwvcfD1r\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Wolf\",\"styles\":{\"alignItems\":\"center\",\"backgroundColor\":\"var(--color-surface-container-low)\",\"borderRadius\":\"var(--radius-md)\",\"display\":\"grid\",\"gap\":\"var(--space-4)\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"padding\":\"var(--space-3) var(--space-4)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"childCount\":5},{\"id\":\"f_7J4k6de2ZY\",\"type\":\"frame\",\"tag\":\"li\",\"name\":\"Mirelle\",\"styles\":{\"alignItems\":\"center\",\"backgroundColor\":\"var(--color-surface-container-low)\",\"borderRadius\":\"var(--radius-md)\",\"display\":\"grid\",\"gap\":\"var(--space-4)\",\"gridTemplateColumns\":\"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\"padding\":\"var(--space-3) var(--space-4)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"40px 1fr 40px\",\"rowGap\":\"var(--space-2)\"}},\"childCount\":5}]}]},{\"id\":\"f_3wO7ESfloV\",\"type\":\"frame\",\"tag\":\"aside\",\"name\":\"Current turn panel\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-6)\",\"padding\":\"var(--space-5)\",\"borderRadius\":\"var(--radius-lg)\",\"backgroundColor\":\"var(--color-surface-container)\",\"position\":\"sticky\",\"top\":\"var(--space-6)\"},\"breakpoints\":{\"tablet\":{\"position\":\"static\"}},\"attributes\":{\"aria-labelledby\":\"turn-heading\"},\"children\":[{\"id\":\"f_TZFJIguAgp\",\"type\":\"frame\",\"tag\":\"header\",\"name\":\"Turn header\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\"},\"children\":[{\"id\":\"t_nCvunk2erJ\",\"type\":\"text\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Acting now, then Brother Aldric\",\"styles\":{\"margin\":\"0\",\"fontSize\":\"var(--font-size-body-sm)\",\"color\":\"var(--color-on-surface-variant)\"}},{\"id\":\"t_pK2IJXDvYe\",\"type\":\"text\",\"tag\":\"h2\",\"name\":\"Text\",\"text\":\"Goblin Boss\",\"styles\":{\"fontFamily\":\"var(--font-family-heading)\",\"fontSize\":\"var(--font-size-h3)\",\"fontWeight\":\"var(--font-weight-h2)\",\"lineHeight\":\"1.15\",\"letterSpacing\":\"var(--letter-spacing-h2)\",\"margin\":\"0\"},\"attributes\":{\"id\":\"turn-heading\"}},{\"id\":\"t_0cduB72CN0\",\"type\":\"text\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Small humanoid (goblinoid), neutral evil\",\"styles\":{\"margin\":\"0\",\"fontSize\":\"var(--font-size-body-sm)\",\"fontStyle\":\"italic\",\"color\":\"var(--color-on-surface-variant)\"}}]},{\"id\":\"f_LzNVbpT7vU\",\"type\":\"frame\",\"tag\":\"dl\",\"name\":\"Stats\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"repeat(3, 1fr)\",\"gap\":\"var(--space-2)\",\"margin\":\"0\"},\"children\":[{\"id\":\"f_RThZkG98dF\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"AC\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column-reverse\",\"gap\":\"2px\",\"padding\":\"var(--space-3)\",\"borderRadius\":\"var(--radius-md)\",\"backgroundColor\":\"var(--color-surface-container-high)\"},\"childCount\":2},{\"id\":\"f_GYOD8KFDKs\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"HP\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column-reverse\",\"gap\":\"2px\",\"padding\":\"var(--space-3)\",\"borderRadius\":\"var(--radius-md)\",\"backgroundColor\":\"var(--color-surface-container-high)\"},\"childCount\":2},{\"id\":\"f_NxIbWBsEGk\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Speed\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column-reverse\",\"gap\":\"2px\",\"padding\":\"var(--space-3)\",\"borderRadius\":\"var(--radius-md)\",\"backgroundColor\":\"var(--color-surface-container-high)\"},\"childCount\":2}]},{\"id\":\"f_moVvnklXVj\",\"type\":\"frame\",\"tag\":\"form\",\"name\":\"HP adjust\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-2)\"},\"attributes\":{\"aria-label\":\"Adjust Goblin Boss hit points\"},\"children\":[{\"id\":\"t_XZ3Q2mpvNs\",\"type\":\"text\",\"tag\":\"label\",\"name\":\"Text\",\"text\":\"Damage or healing\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"color\":\"var(--color-on-surface-variant)\"},\"attributes\":{\"for\":\"hp-amount\"}},{\"id\":\"f_7M4vKYNeq4\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"HP adjust row\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"1fr auto auto\",\"gap\":\"var(--space-2)\"},\"childCount\":3}]},{\"id\":\"f_RyqLUdgwsW\",\"type\":\"frame\",\"tag\":\"section\",\"name\":\"Condition toggles\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-2)\"},\"attributes\":{\"aria-labelledby\":\"cond-heading\"},\"children\":[{\"id\":\"t_6icmW5cKQj\",\"type\":\"text\",\"tag\":\"h3\",\"name\":\"Text\",\"text\":\"Conditions\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"400\",\"lineHeight\":\"1.4\",\"letterSpacing\":\"var(--letter-spacing-h3)\",\"margin\":\"0\",\"color\":\"var(--color-on-surface-variant)\"},\"attributes\":{\"id\":\"cond-heading\"}},{\"id\":\"f_AafgdsRfVm\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Condition chips\",\"styles\":{\"display\":\"flex\",\"flexWrap\":\"wrap\",\"gap\":\"6px\"},\"childCount\":14}]},{\"id\":\"f_76mxLtNDtO\",\"type\":\"frame\",\"tag\":\"section\",\"name\":\"Actions\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-3)\",\"paddingTop\":\"var(--space-5)\",\"borderTop\":\"1px solid var(--color-outline-variant)\"},\"attributes\":{\"aria-labelledby\":\"actions-heading\"},\"children\":[{\"id\":\"t_IgQnXFhcHh\",\"type\":\"text\",\"tag\":\"h3\",\"name\":\"Text\",\"text\":\"Actions\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"400\",\"lineHeight\":\"1.4\",\"letterSpacing\":\"var(--letter-spacing-h3)\",\"margin\":\"0\",\"color\":\"var(--color-on-surface-variant)\"},\"attributes\":{\"id\":\"actions-heading\"}},{\"id\":\"f_O9mkcRTM1R\",\"type\":\"frame\",\"tag\":\"dl\",\"name\":\"Action list\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-3)\",\"margin\":\"0\"},\"childCount\":3}]}]}]},{\"id\":\"f_4yRRLKFXFr\",\"type\":\"frame\",\"tag\":\"dialog\",\"name\":\"Add monster dialog\",\"styles\":{\"width\":\"min(520px, calc(100vw - 32px))\",\"padding\":\"var(--space-6)\",\"border\":\"none\",\"borderRadius\":\"var(--radius-lg)\",\"backgroundColor\":\"var(--color-surface-container-high)\",\"color\":\"var(--color-on-surface)\",\"fontFamily\":\"var(--font-family-body)\",\"boxShadow\":\"0 24px 48px var(--color-shadow)\",\"boxSizing\":\"border-box\"},\"attributes\":{\"id\":\"add-monster\",\"aria-labelledby\":\"add-monster-title\"},\"children\":[{\"id\":\"f_023Hh3deDP\",\"type\":\"frame\",\"tag\":\"form\",\"name\":\"Add monster form\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-5)\"},\"attributes\":{\"method\":\"dialog\"},\"children\":[{\"id\":\"f_OkYHSl7wl1\",\"type\":\"frame\",\"tag\":\"header\",\"name\":\"Dialog header\",\"styles\":{\"display\":\"flex\",\"alignItems\":\"flex-start\",\"justifyContent\":\"space-between\",\"gap\":\"var(--space-4)\"},\"children\":[{\"id\":\"f_EcPZQeJrZj\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Dialog title\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\"},\"childCount\":2},{\"id\":\"f_Ha0LTy6R4K\",\"type\":\"frame\",\"tag\":\"button\",\"name\":\"Close\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"inline-flex\",\"alignItems\":\"center\",\"justifyContent\":\"center\",\"width\":\"40px\",\"height\":\"40px\",\"flexShrink\":\"0\",\"border\":\"none\",\"borderRadius\":\"var(--radius-full)\",\"backgroundColor\":\"transparent\",\"color\":\"var(--color-on-surface-variant)\",\"cursor\":\"pointer\"},\"states\":{\"hover\":{\"backgroundColor\":\"var(--color-surface-container-highest)\"},\"focus\":{\"outline\":\"2px solid var(--color-primary)\",\"outlineOffset\":\"2px\"}},\"attributes\":{\"type\":\"button\",\"aria-label\":\"Close\",\"commandfor\":\"add-monster\",\"command\":\"close\"},\"childCount\":1}]},{\"id\":\"f_zUYiTdfPxJ\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Fields\",\"styles\":{\"display\":\"grid\",\"gridTemplateColumns\":\"repeat(4, 1fr)\",\"gap\":\"var(--space-4) var(--space-3)\"},\"breakpoints\":{\"mobile\":{\"gridTemplateColumns\":\"repeat(2, 1fr)\"}},\"children\":[{\"id\":\"f_Gv4cJyz1iu\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"Stat block field\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\",\"gridColumn\":\"span 3\",\"color\":\"var(--color-on-surface-variant)\",\"minWidth\":\"0\"},\"breakpoints\":{\"mobile\":{\"gridColumn\":\"1 / -1\"}},\"childCount\":2},{\"id\":\"f_YxcXw1EGBp\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"Count field\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\",\"color\":\"var(--color-on-surface-variant)\",\"minWidth\":\"0\"},\"breakpoints\":{\"mobile\":{\"gridColumn\":\"1 / -1\"}},\"childCount\":2},{\"id\":\"f_R0qI1kCNe5\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"Name field\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\",\"gridColumn\":\"1 / -1\",\"color\":\"var(--color-on-surface-variant)\",\"minWidth\":\"0\"},\"childCount\":3},{\"id\":\"f_ENY1xcx2e9\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"HP field\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\",\"gridColumn\":\"span 2\",\"color\":\"var(--color-on-surface-variant)\",\"minWidth\":\"0\"},\"childCount\":2},{\"id\":\"f_uuaHjH7Zu2\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"AC field\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\",\"color\":\"var(--color-on-surface-variant)\",\"minWidth\":\"0\"},\"childCount\":2},{\"id\":\"f_d8176sSor6\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"Init bonus field\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-1)\",\"color\":\"var(--color-on-surface-variant)\",\"minWidth\":\"0\"},\"childCount\":2}]},{\"id\":\"f_fwMYwuqzjR\",\"type\":\"frame\",\"tag\":\"div\",\"name\":\"Initiative mode\",\"styles\":{\"display\":\"flex\",\"flexDirection\":\"column\",\"gap\":\"var(--space-2)\"},\"attributes\":{\"role\":\"radiogroup\",\"aria-labelledby\":\"init-mode-label\"},\"children\":[{\"id\":\"t_WlGDFIUh9X\",\"type\":\"text\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Initiative\",\"styles\":{\"fontSize\":\"var(--font-size-label)\",\"color\":\"var(--color-on-surface-variant)\"},\"attributes\":{\"id\":\"init-mode-label\"}},{\"id\":\"f_F7x9QnI3Au\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"Group roll\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-body-md)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"alignItems\":\"center\",\"gap\":\"var(--space-2)\",\"cursor\":\"pointer\"},\"childCount\":2},{\"id\":\"f_Ll5TNAntAs\",\"type\":\"frame\",\"tag\":\"label\",\"name\":\"Each roll\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-body-md)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"flex\",\"alignItems\":\"center\",\"gap\":\"var(--space-2)\",\"cursor\":\"pointer\"},\"childCount\":2}]},{\"id\":\"f_CAkiZvE6Lg\",\"type\":\"frame\",\"tag\":\"footer\",\"name\":\"Dialog actions\",\"styles\":{\"display\":\"flex\",\"justifyContent\":\"flex-end\",\"alignItems\":\"center\",\"gap\":\"var(--space-2)\",\"paddingTop\":\"var(--space-2)\"},\"children\":[{\"id\":\"t_mZv7eZYZM8\",\"type\":\"text\",\"tag\":\"button\",\"name\":\"Text\",\"text\":\"Cancel\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"700\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"height\":\"44px\",\"padding\":\"0 var(--space-4)\",\"border\":\"none\",\"borderRadius\":\"var(--radius-full)\",\"backgroundColor\":\"transparent\",\"color\":\"var(--color-primary)\",\"cursor\":\"pointer\"},\"states\":{\"hover\":{\"backgroundColor\":\"var(--color-surface-container-highest)\"},\"focus\":{\"outline\":\"2px solid var(--color-primary)\",\"outlineOffset\":\"2px\"}},\"attributes\":{\"type\":\"button\",\"commandfor\":\"add-monster\",\"command\":\"close\"}},{\"id\":\"f_NzDWBFYOQa\",\"type\":\"frame\",\"tag\":\"button\",\"name\":\"Add to initiative\",\"styles\":{\"fontFamily\":\"var(--font-family-body)\",\"fontSize\":\"var(--font-size-label)\",\"fontWeight\":\"var(--font-weight-label)\",\"lineHeight\":\"var(--line-height-label)\",\"letterSpacing\":\"var(--letter-spacing-label)\",\"display\":\"inline-flex\",\"alignItems\":\"center\",\"gap\":\"var(--space-2)\",\"height\":\"44px\",\"padding\":\"0 var(--space-5)\",\"border\":\"none\",\"borderRadius\":\"var(--radius-full)\",\"backgroundColor\":\"var(--color-primary)\",\"color\":\"var(--color-on-primary)\",\"cursor\":\"pointer\"},\"states\":{\"hover\":{\"boxShadow\":\"0 0 0 4px var(--color-primary-container)\"},\"focus\":{\"outline\":\"2px solid var(--color-primary)\",\"outlineOffset\":\"3px\"}},\"attributes\":{\"type\":\"submit\"},\"childCount\":2}]}]}]}]}]"
+  },
+  {
+   "role": "user",
+   "content": "Look at the Initiative order list on this artboard. The rows repeat the same structure. Make one of them a component and turn the other rows into instances of it, keeping every row's own text. Tell me anything that didn't carry over."
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "get_canvas",
+      "arguments": {
+       "rootId": "f_JxNr7kFQzK",
+       "detail": "outline"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "get_canvas",
+   "content": "{\"document\":\"default\",\"components\":[{\"id\":\"f_tNm84cBYFs\",\"name\":\"Day row\",\"props\":{\"day\":\"Mon\",\"date\":\"9\",\"title\":\"Rest\",\"subtitle\":\"15 min mobility\",\"icon\":\"check_circle\"},\"instances\":8},{\"id\":\"f_3POlbj7EFB\",\"name\":\"date-robust\",\"props\":{\"dateLabel\":\"Today\",\"dateValue\":\"12\",\"title\":\"Easy run\",\"subtitle\":\"1 mi warm-up, 3 mi steady, 1 mi cool-down\",\"distance\":\"5.0 mi\",\"pace\":\"9:45\",\"time\":\"49 min\",\"icon\":\"play_arrow\",\"buttonText\":\"Start run\"},\"instances\":2}],\"nodes\":[{\"id\":\"f_JxNr7kFQzK\",\"tag\":\"main\",\"name\":\"DM — Combat tracker\",\"frame\":{\"x\":4200,\"y\":0,\"width\":440,\"heightMode\":\"hug\"},\"theme\":\"torchlight-dark\",\"children\":[{\"id\":\"f_3qTNlPjBYt\",\"tag\":\"header\",\"name\":\"Encounter bar\",\"children\":[{\"id\":\"f_0NdiQbhmod\",\"tag\":\"div\",\"name\":\"Encounter title\",\"children\":[{\"id\":\"t_C06EG1EF32\",\"tag\":\"h1\",\"name\":\"Text\",\"text\":\"Ambush on the Triboar Trail\"},{\"id\":\"t_gtNYRkw8p6\",\"tag\":\"p\",\"name\":\"Encounter meta\",\"text\":\"4 players and 5 monsters, 2 down\"}]},{\"id\":\"f_ImR74pIfXY\",\"tag\":\"div\",\"name\":\"Round counter\",\"children\":[{\"id\":\"t_wbD6Ym3wF1\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Round\"},{\"id\":\"t_lNz0xA1OeC\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"3\"},{\"id\":\"t_48TRZf10FZ\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"1 min 12 s in game\"}]},{\"id\":\"f_YgvvCWELqi\",\"tag\":\"div\",\"name\":\"Turn controls\",\"children\":[{\"id\":\"f_vOP84befRq\",\"tag\":\"button\",\"name\":\"Previous turn\",\"children\":[{\"id\":\"t_HRO5ItGXRi\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"undo\"}]},{\"id\":\"f_QW8vpfYtzL\",\"tag\":\"button\",\"name\":\"Add monster button\",\"children\":[{\"id\":\"t_FYGcfRfj6i\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"add\"},{\"id\":\"t_IzDBXv9mn5\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Add monster\"}]},{\"id\":\"f_OcXuewO8kL\",\"tag\":\"button\",\"name\":\"Next turn button\",\"children\":[{\"id\":\"t_CcU72gEk8U\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Next turn\"},{\"id\":\"t_fsj0Ag9DtL\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"arrow_forward\"}]}]}]},{\"id\":\"f_xmgopK7Uim\",\"tag\":\"div\",\"name\":\"Workspace\",\"children\":[{\"id\":\"f_qTwzAK1LEm\",\"tag\":\"section\",\"name\":\"Initiative\",\"children\":[{\"id\":\"f_uZyBzG7aGJ\",\"tag\":\"div\",\"name\":\"Column labels\",\"children\":[{\"id\":\"t_HZNLT35E4F\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Init\"},{\"id\":\"t_aVK3rt5Nvk\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Combatant\"},{\"id\":\"t_360VZ7R31Y\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Hit points\"},{\"id\":\"t_gZE1sCLkRj\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Conditions\"}]},{\"id\":\"f_Su8RaG9YtI\",\"tag\":\"ol\",\"name\":\"Initiative order\",\"children\":[{\"id\":\"f_iCxDTPEu7Z\",\"tag\":\"li\",\"name\":\"Vex\",\"children\":[{\"id\":\"t_vDKwCR8sa5\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"21\"},{\"id\":\"f_k3vHld19IU\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_53LQJL4Cvw\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Vex\"},{\"id\":\"f_UuF2MpZ8uK\",\"tag\":\"span\",\"name\":\"Meta\",\"children\":[{\"id\":\"t_DQ3jsZ6d3f\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Rogue 5, played by Sam\"},{\"id\":\"t_y284W8JJ2b\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"AC 15\"}]}]},{\"id\":\"f_RLITe0tLJg\",\"tag\":\"div\",\"name\":\"HP\",\"children\":[{\"id\":\"f_Xg2hi6SqiO\",\"tag\":\"p\",\"name\":\"HP value\",\"children\":[{\"id\":\"t_14NhKBat1y\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"27\"},{\"id\":\"t_cJamBoP1Yd\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"/ 31\"},{\"id\":\"t_HyBG63dfdi\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"\"}]},{\"id\":\"f_e8xnYwfid0\",\"tag\":\"div\",\"name\":\"HP bar\",\"children\":[{\"id\":\"f_xtQkZc933e\",\"tag\":\"div\",\"name\":\"Fill\"}]}]},{\"id\":\"f_gK01HAtIQq\",\"tag\":\"div\",\"name\":\"Conditions\"},{\"id\":\"f_7Y3wmLmbVA\",\"tag\":\"button\",\"name\":\"Options\",\"children\":[{\"id\":\"t_HCstuFtuRC\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"more_vert\"}]}]},{\"id\":\"f_Ej01J4bl3t\",\"tag\":\"li\",\"name\":\"Goblin Boss (current turn)\",\"children\":[{\"id\":\"t_jMKoqU48gn\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"18\"},{\"id\":\"f_vUy430dlSJ\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_E3IKBGlmGs\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Goblin Boss\"},{\"id\":\"f_rbjD87faGm\",\"tag\":\"span\",\"name\":\"Meta\",\"children\":[{\"id\":\"t_E5QVXZvUsG\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Monster, CR 1\"},{\"id\":\"t_5lCjdXKiAA\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"AC 17\"}]}]},{\"id\":\"f_jMV0AZglDK\",\"tag\":\"div\",\"name\":\"HP\",\"children\":[{\"id\":\"f_qaj1VxW6Zv\",\"tag\":\"p\",\"name\":\"HP value\",\"children\":[{\"id\":\"t_O8wOd1B1KC\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"9\"},{\"id\":\"t_WZvIO92vlV\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"/ 21\"},{\"id\":\"t_zEmAcT1NJg\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Bloodied\"}]},{\"id\":\"f_z6Ryhw14u7\",\"tag\":\"div\",\"name\":\"HP bar\",\"children\":[{\"id\":\"f_fkCxP9vhMq\",\"tag\":\"div\",\"name\":\"Fill\"}]}]},{\"id\":\"f_XiibMllZGu\",\"tag\":\"div\",\"name\":\"Conditions\"},{\"id\":\"f_i8IwuAR5gp\",\"tag\":\"button\",\"name\":\"Options\",\"children\":[{\"id\":\"t_IKjZei1g0m\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"more_vert\"}]}]},{\"id\":\"f_sW0i578MCh\",\"tag\":\"li\",\"name\":\"Brother Aldric\",\"children\":[{\"id\":\"t_b6yf4ewtF1\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"16\"},{\"id\":\"f_F3r8rUqiiI\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_SGreYxbdTY\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Brother Aldric\"},{\"id\":\"f_Qmhls2t1cd\",\"tag\":\"span\",\"name\":\"Meta\",\"children\":[{\"id\":\"t_MsrRMSvoCg\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Cleric 5, played by Priya\"},{\"id\":\"t_jq3I8fPj1Y\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"AC 18\"}]}]},{\"id\":\"f_jSpbZGHjgT\",\"tag\":\"div\",\"name\":\"HP\",\"children\":[{\"id\":\"f_XWRAaWXjy2\",\"tag\":\"p\",\"name\":\"HP value\",\"children\":[{\"id\":\"t_8HJ60ewR21\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"18\"},{\"id\":\"t_fFpJync3bY\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"/ 24\"},{\"id\":\"t_mwhcN12D5X\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"+5 temp\"}]},{\"id\":\"f_Ldo90gtXxq\",\"tag\":\"div\",\"name\":\"HP bar\",\"children\":[{\"id\":\"f_9b1GV7pgns\",\"tag\":\"div\",\"name\":\"Fill\"}]}]},{\"id\":\"f_GG3O7zz5KJ\",\"tag\":\"div\",\"name\":\"Conditions\"},{\"id\":\"f_80aQTStZ37\",\"tag\":\"button\",\"name\":\"Options\",\"children\":[{\"id\":\"t_gNpWAZ2PAi\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"more_vert\"}]}]},{\"id\":\"f_NEJN0gtUab\",\"tag\":\"li\",\"name\":\"Goblin A\",\"children\":[{\"id\":\"t_OK6BbxQi9S\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"14\"},{\"id\":\"f_MkkeUo7PNl\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_IgZu92pU47\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Goblin A\"},{\"id\":\"f_X6wDI4ELAj\",\"tag\":\"span\",\"name\":\"Meta\",\"children\":[{\"id\":\"t_VMpxUBQQqP\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Monster, CR 1/4\"},{\"id\":\"t_8W1FJ8fjsW\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"AC 15\"}]}]},{\"id\":\"f_kV4V6cR6jE\",\"tag\":\"div\",\"name\":\"HP\",\"children\":[{\"id\":\"f_cMd0MonYEb\",\"tag\":\"p\",\"name\":\"HP value\",\"children\":[{\"id\":\"t_Sn0ubX2RzH\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"7\"},{\"id\":\"t_nst0FBNcj8\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"/ 7\"},{\"id\":\"t_k20XciJYWL\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"\"}]},{\"id\":\"f_EdIe6W5ioF\",\"tag\":\"div\",\"name\":\"HP bar\",\"children\":[{\"id\":\"f_biysAAJQD2\",\"tag\":\"div\",\"name\":\"Fill\"}]}]},{\"id\":\"f_92PYSBZ6Mn\",\"tag\":\"div\",\"name\":\"Conditions\"},{\"id\":\"f_Sa6tf5YOVj\",\"tag\":\"button\",\"name\":\"Options\",\"children\":[{\"id\":\"t_hPth8oj0QC\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"more_vert\"}]}]},{\"id\":\"f_LAvCF6HNKv\",\"tag\":\"li\",\"name\":\"Goblin B (defeated)\",\"children\":[{\"id\":\"t_MwpClOKUoo\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"14\"},{\"id\":\"f_L6ve3QEvBe\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_hfj0XSGtjM\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Goblin B\"},{\"id\":\"t_eOe7b6PWmg\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Monster, CR 1/4\"}]},{\"id\":\"t_Ll0CmNKMwJ\",\"tag\":\"p\",\"name\":\"HP\",\"text\":\"0 / 7\"},{\"id\":\"f_6fh2E7rCMp\",\"tag\":\"div\",\"name\":\"Conditions\",\"children\":[{\"id\":\"t_gy9fpctCtb\",\"tag\":\"span\",\"name\":\"Condition\",\"text\":\"Defeated, round 2\"}]},{\"id\":\"f_VxNp1EgNl2\",\"tag\":\"button\",\"name\":\"Remove\",\"children\":[{\"id\":\"t_5rq5Q0zMD6\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"close\"}]}]},{\"id\":\"f_dRKNVrukIe\",\"tag\":\"li\",\"name\":\"Thora (dying)\",\"children\":[{\"id\":\"t_tmf6dJJlPh\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"12\"},{\"id\":\"f_EyLGt6Tvgs\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_XM040z0XJu\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Thora\"},{\"id\":\"f_DSSwZthLlF\",\"tag\":\"span\",\"name\":\"Meta\",\"children\":[{\"id\":\"t_BUn7e5y4Gt\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Fighter 5, played by Dee\"},{\"id\":\"t_OmqPZ5Omqs\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"AC 18\"}]}]},{\"id\":\"f_qL0T3fq36W\",\"tag\":\"div\",\"name\":\"Death saves\",\"children\":[{\"id\":\"t_0TQcBSIEMY\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\n[Cut off: 18343 characters, showing the first 8000. Don't repeat this call or raise maxDepth. Pass rootId to read one part, or detail \"outline\" to find ids.]"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "get_canvas",
+      "arguments": {
+       "rootId": "f_Su8RaG9YtI"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "get_canvas",
+   "content": "{\n  \"document\": \"default\",\n  \"components\": [\n    {\n      \"id\": \"f_tNm84cBYFs\",\n      \"name\": \"Day row\",\n      \"props\": {\n        \"day\": \"Mon\",\n        \"date\": \"9\",\n        \"title\": \"Rest\",\n        \"subtitle\": \"15 min mobility\",\n        \"icon\": \"check_circle\"\n      },\n      \"instances\": 8\n    },\n    {\n      \"id\": \"f_3POlbj7EFB\",\n      \"name\": \"date-robust\",\n      \"props\": {\n        \"dateLabel\": \"Today\",\n        \"dateValue\": \"12\",\n        \"title\": \"Easy run\",\n        \"subtitle\": \"1 mi warm-up, 3 mi steady, 1 mi cool-down\",\n        \"distance\": \"5.0 mi\",\n        \"pace\": \"9:45\",\n        \"time\": \"49 min\",\n        \"icon\": \"play_arrow\",\n        \"buttonText\": \"Start run\"\n      },\n      \"instances\": 2\n    }\n  ],\n  \"nodes\": [\n    {\n      \"id\": \"f_Su8RaG9YtI\",\n      \"type\": \"frame\",\n      \"tag\": \"ol\",\n      \"name\": \"Initiative order\",\n      \"styles\": {\n        \"listStyle\": \"none\",\n        \"padding\": \"0\",\n        \"margin\": \"0\",\n        \"display\": \"flex\",\n        \"flexDirection\": \"column\",\n        \"gap\": \"var(--space-1)\"\n      },\n      \"children\": [\n        {\n          \"id\": \"f_iCxDTPEu7Z\",\n          \"type\": \"frame\",\n          \"tag\": \"li\",\n          \"name\": \"Vex\",\n          \"styles\": {\n            \"alignItems\": \"center\",\n            \"backgroundColor\": \"var(--color-surface-container-low)\",\n            \"borderRadius\": \"var(--radius-md)\",\n            \"display\": \"grid\",\n            \"gap\": \"var(--space-4)\",\n            \"gridTemplateColumns\": \"48px minmax(0,1.3fr) 200px minmax(0,1fr) 40px\",\n            \"padding\": \"var(--space-3) var(--space-4)\"\n          },\n          \"breakpoints\": {\n            \"mobile\": {\n              \"gridTemplateColumns\": \"40px 1fr 40px\",\n              \"rowGap\": \"var(--space-2)\"\n            }\n          },\n          \"children\": [\n            {\n              \"id\": \"t_vDKwCR8sa5\",\n              \"type\": \"text\",\n              \"tag\": \"span\",\n              \"name\": \"Initiative\",\n              \"text\": \"21\",\n              \"styles\": {\n                \"color\": \"var(--color-on-surface-variant)\",\n                \"fontFamily\": \"var(--font-family-heading)\",\n                \"fontSize\": \"28px\",\n                \"fontVariantNumeric\": \"tabular-nums\",\n                \"fontWeight\": \"700\",\n                \"lineHeight\": \"1\"\n              }\n            },\n            {\n              \"id\": \"f_k3vHld19IU\",\n              \"type\": \"frame\",\n              \"tag\": \"div\",\n              \"name\": \"Identity\",\n              \"styles\": {\n                \"display\": \"flex\",\n                \"flexDirection\": \"column\",\n                \"gap\": \"2px\",\n                \"minWidth\": \"0\"\n              },\n              \"children\": [\n                {\n                  \"id\": \"t_53LQJL4Cvw\",\n                  \"type\": \"text\",\n                  \"tag\": \"span\",\n                  \"name\": \"Text\",\n                  \"text\": \"Vex\",\n                  \"styles\": {\n                    \"fontSize\": \"var(--font-size-body-lg)\",\n                    \"fontWeight\": \"700\",\n                    \"lineHeight\": \"1.25\"\n                  }\n                },\n                {\n                  \"id\": \"f_UuF2MpZ8uK\",\n                  \"type\": \"frame\",\n                  \"tag\": \"span\",\n                  \"name\": \"Meta\",\n                  \"styles\": {\n                    \"color\": \"var(--color-on-surface-variant)\",\n                    \"display\": \"flex\",\n                    \"fontSize\": \"var(--font-size-body-sm)\",\n                    \"gap\": \"var(--space-3)\"\n                  },\n                  \"children\": [\n                    {\n                      \"id\": \"t_DQ3jsZ6d3f\",\n                      \"type\": \"text\",\n                      \"tag\": \"span\",\n                      \"name\": \"Text\",\n                      \"text\": \"Rogue 5, played by Sam\"\n                    },\n                    {\n                      \"id\": \"t_y284W8JJ2b\",\n                      \"type\": \"text\",\n                      \"tag\": \"span\",\n                      \"name\": \"Text\",\n                      \"text\": \"AC 15\",\n                      \"styles\": {\n                        \"fontVariantNumeric\": \"tabular-nums\",\n                        \"whiteSpace\": \"nowrap\"\n                      }\n                    }\n                  ]\n                }\n              ]\n            },\n            {\n              \"id\": \"f_RLITe0tLJg\",\n              \"type\": \"frame\",\n              \"tag\": \"div\",\n              \"name\": \"HP\",\n              \"styles\": {\n                \"display\": \"flex\",\n                \"flexDirection\": \"column\",\n                \"gap\": \"var(--space-1)\"\n              },\n              \"breakpoints\": {\n                \"mobile\": {\n                  \"gridColumn\": \"2 / 4\"\n                }\n              },\n              \"children\": [\n                {\n                  \"id\": \"f_Xg2hi6SqiO\",\n                  \"type\": \"frame\",\n                  \"tag\": \"p\",\n                  \"name\": \"HP value\",\n                  \"styles\": {\n                    \"alignItems\": \"baseline\",\n                    \"display\": \"flex\",\n                    \"fontVariantNumeric\": \"tabular-nums\",\n                    \"gap\": \"var(--space-1)\",\n                    \"margin\": \"0\"\n                  },\n                  \"children\": [\n                    {\n                      \"id\": \"t_14NhKBat1y\",\n                      \"type\": \"text\",\n                      \"tag\": \"span\",\n                      \"name\": \"Text\",\n                      \"text\": \"27\",\n                      \"styles\": {\n                        \"fontSize\": \"var(--font-size-body-lg)\",\n                        \"fontWeight\": \"700\"\n                      }\n                    },\n                    {\n                      \"id\": \"t_cJamBoP1Yd\",\n                      \"type\": \"text\",\n                      \"tag\": \"span\",\n                      \"name\": \"Text\",\n                      \"text\": \"/ 31\",\n                      \"styles\": {\n                        \"color\": \"var(--color-on-surface-variant)\",\n                        \"fontSize\": \"var(--font-size-body-sm)\"\n                      }\n                    },\n                    {\n                      \"id\": \"t_HyBG63dfdi\",\n                      \"type\": \"text\",\n                      \"tag\": \"span\",\n                      \"name\": \"Text\",\n                      \"text\": \"\",\n                      \"styles\": {\n                        \"color\": \"var(--color-error)\",\n                        \"fontSize\": \"var(--font-size-caption)\",\n                        \"fontWeight\": \"700\",\n                        \"marginLeft\": \"auto\"\n                      }\n                    }\n                  ]\n                },\n                {\n                  \"id\": \"f_e8xnYwfid0\",\n                  \"type\": \"frame\",\n                  \"tag\": \"div\",\n                  \"name\": \"HP bar\",\n                  \"styles\": {\n                    \"backgroundColor\": \"var(--color-surface-container-highest)\",\n                    \"borderRadius\": \"var(--radius-full)\",\n                    \"height\": \"6px\",\n                    \"overflow\": \"hidden\"\n                  },\n                  \"attributes\": {\n                    \"aria-label\": \"27 of 31 hit points\",\n                    \"role\": \"img\"\n                  },\n                  \"children\": [\n                    {\n                      \"id\": \"f_xtQkZc933e\",\n                      \"type\": \"frame\",\n                      \"tag\": \"div\",\n                      \"name\": \"Fill\",\n                      \"styles\": {\n                        \"borderRadius\": \"var(--radius-full)\",\n                        \"height\": \"100%\",\n                        \"width\": \"87%\",\n                        \"backgroundColor\": \"var(--color-primary)\"\n                      }\n                    }\n                  ]\n                }\n              ]\n            },\n            {\n              \"id\": \"f_gK01HAtIQq\",\n              \"type\": \"frame\",\n              \"tag\": \"div\",\n              \"name\": \"Conditions\",\n              \"styles\": {\n                \"display\": \"flex\",\n                \"flexWrap\": \"wrap\",\n                \"gap\": \"var(--space-1)\"\n              },\n              \"breakpoints\": {\n             \n[Cut off: 76070 characters, showing the first 8000. Don't repeat this call or raise maxDepth. Pass rootId to read one part, or detail \"outline\" to find ids.]"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_canvas",
+    "description": "Returns the scene graph as nested JSON: every artboard, or the subtree under rootId. Deep subtrees are truncated to childCount past maxDepth. detail \"outline\" returns only id, name, tag and short text per node (far smaller): use it to orient and find ids, then read the parts you will restyle in full.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "rootId": {
+       "description": "Return only this node and its descendants",
+       "type": "string"
+      },
+      "maxDepth": {
+       "default": 12,
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 50
+      },
+      "detail": {
+       "default": "full",
+       "description": "\"outline\": structure and text only, no styles or attributes",
+       "type": "string",
+       "enum": [
+        "full",
+        "outline"
+       ]
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "get_selection",
+    "description": "Returns what each person with the document open has selected, with each selected subtree.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "maxDepth": {
+       "default": 6,
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 50
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "create_nodes",
+    "description": "Creates one or more node subtrees in a single atomic step. parentId null (or omitted) creates new artboards, auto-placed to the right of existing ones unless frame is given. Returns the new ids.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "parentId": {
+       "default": null,
+       "description": "Container to insert into; null for new artboards",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "beforeId": {
+       "default": null,
+       "description": "Insert before this sibling; null appends",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "nodes": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "$ref": "#/definitions/__schema0"
+       }
+      }
+     },
+     "required": [
+      "nodes"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false,
+     "definitions": {
+      "__schema0": {
+       "type": "object",
+       "properties": {
+        "type": {
+         "description": "Inferred when left out: \"text\" for a node with text and no children, otherwise \"frame\"",
+         "type": "string",
+         "enum": [
+          "frame",
+          "text"
+         ]
+        },
+        "tag": {
+         "description": "Semantic HTML tag; defaults to div (frame) or p (text)",
+         "type": "string"
+        },
+        "name": {
+         "description": "Layer name shown in the layers panel",
+         "type": "string"
+        },
+        "text": {
+         "description": "Text content (text nodes only)",
+         "type": "string"
+        },
+        "styles": {
+         "description": "Standard CSS properties in camelCase (gridTemplateColumns, backgroundColor, textWrap, WebkitLineClamp), values as CSS strings. Not supported: background, font, animation, content, float, clear. No url() or other external resources. An unknown property is rejected with the closest match.",
+         "type": "object",
+         "propertyNames": {
+          "type": "string"
+         },
+         "additionalProperties": {
+          "type": "string"
+         }
+        },
+        "breakpoints": {
+         "description": "Style overrides per breakpoint (desktop, tablet, mobile), layered over styles",
+         "type": "object",
+         "propertyNames": {
+          "type": "string",
+          "enum": [
+           "desktop",
+           "tablet",
+           "mobile"
+          ]
+         },
+         "additionalProperties": {
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": "string"
+          }
+         }
+        },
+        "states": {
+         "description": "Style overrides per interaction state (hover = :hover, focus = :focus-visible, active = :active), layered over styles and breakpoints",
+         "type": "object",
+         "propertyNames": {
+          "type": "string",
+          "enum": [
+           "hover",
+           "focus",
+           "active"
+          ]
+         },
+         "additionalProperties": {
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": "string"
+          }
+         }
+        },
+        "attributes": {
+         "description": "HTML attributes such as aria-label, href, type, alt",
+         "type": "object",
+         "propertyNames": {
+          "type": "string"
+         },
+         "additionalProperties": {
+          "type": "string"
+         }
+        },
+        "frame": {
+         "description": "Canvas placement; only for new artboards (parentId null)",
+         "type": "object",
+         "properties": {
+          "x": {
+           "type": "number"
+          },
+          "y": {
+           "type": "number"
+          },
+          "width": {
+           "type": "number",
+           "exclusiveMinimum": 0
+          },
+          "height": {
+           "type": "number",
+           "exclusiveMinimum": 0,
+           "description": "Fixed height; setting it without heightMode makes the artboard fixed"
+          },
+          "heightMode": {
+           "type": "string",
+           "enum": [
+            "fixed",
+            "hug"
+           ],
+           "description": "\"hug\" sizes the artboard to its content (height is then the last measured value); \"fixed\" clips overflow"
+          }
+         },
+         "additionalProperties": false
+        },
+        "theme": {
+         "description": "Theme for this frame and everything in it (list_tokens lists themes; \"dark\" is built in): its token values replace the defaults inside it. Frames only",
+         "type": "string"
+        },
+        "component": {
+         "description": "true makes this layer a component, to place instances of. Not an artboard, and not inside another component",
+         "type": "boolean"
+        },
+        "bind": {
+         "description": "Inside a component: {\"text\": \"buttonLabel\"} lets each instance set this text layer's text through its prop \"buttonLabel\" (camelCase)",
+         "type": "object",
+         "properties": {
+          "text": {
+           "type": "string"
+          }
+         },
+         "additionalProperties": false
+        },
+        "instance": {
+         "description": "Makes this node an instance: it draws that component's layers and follows its changes. No tag, text or children; styles apply to its root (width, gridColumn, alignSelf)",
+         "type": "object",
+         "properties": {
+          "component": {
+           "type": "string",
+           "description": "The component's id, or its name"
+          },
+          "props": {
+           "description": "Values for its props; one left out shows the component's own text",
+           "type": "object",
+           "propertyNames": {
+            "type": "string"
+           },
+           "additionalProperties": {
+            "type": "string"
+           }
+          }
+         },
+         "required": [
+          "component"
+         ],
+         "additionalProperties": false
+        },
+        "children": {
+         "description": "Child nodes (frames only)",
+         "type": "array",
+         "items": {
+          "$ref": "#/definitions/__schema0"
+         }
+        }
+       },
+       "additionalProperties": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "update_nodes",
+    "description": "Applies patches to existing nodes in one atomic step. styles/attributes are merged; a null value removes that property. frame applies to artboards only.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "updates": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         },
+         "tag": {
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         },
+         "hidden": {
+          "type": "boolean"
+         },
+         "locked": {
+          "type": "boolean"
+         },
+         "frame": {
+          "type": "object",
+          "properties": {
+           "x": {
+            "type": "number"
+           },
+           "y": {
+            "type": "number"
+           },
+           "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+           },
+           "height": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Fixed height; setting it without heightMode makes the artboard fixed"
+           },
+           "heightMode": {
+            "type": "string",
+            "enum": [
+             "fixed",
+             "hug"
+            ],
+            "description": "\"hug\" sizes the artboard to its content (height is then the last measured value); \"fixed\" clips overflow"
+           }
+          },
+          "additionalProperties": false
+         },
+         "theme": {
+          "description": "Theme for this frame and everything in it (list_tokens lists themes; \"dark\" is built in): its token values replace the defaults inside it. Frames only; null removes it",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "styles": {
+          "description": "Standard CSS properties in camelCase (gridTemplateColumns, backgroundColor, textWrap, WebkitLineClamp), values as CSS strings. Not supported: background, font, animation, content, float, clear. No url() or other external resources. An unknown property is rejected with the closest match.",
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "breakpoints": {
+          "description": "Style overrides per breakpoint (desktop, tablet, mobile), layered over styles; merged like styles, null clears a whole breakpoint",
+          "type": "object",
+          "propertyNames": {
+           "type": "string",
+           "enum": [
+            "desktop",
+            "tablet",
+            "mobile"
+           ]
+          },
+          "additionalProperties": {
+           "anyOf": [
+            {
+             "type": "object",
+             "propertyNames": {
+              "type": "string"
+             },
+             "additionalProperties": {
+              "type": [
+               "string",
+               "null"
+              ]
+             }
+            },
+            {
+             "type": "null"
+            }
+           ]
+          }
+         },
+         "states": {
+          "description": "Style overrides per interaction state (hover = :hover, focus = :focus-visible, active = :active), layered over styles and breakpoints; merged like styles, null clears a whole state",
+          "type": "object",
+          "propertyNames": {
+           "type": "string",
+           "enum": [
+            "hover",
+            "focus",
+            "active"
+           ]
+          },
+          "additionalProperties": {
+           "anyOf": [
+            {
+             "type": "object",
+             "propertyNames": {
+              "type": "string"
+             },
+             "additionalProperties": {
+              "type": [
+               "string",
+               "null"
+              ]
+             }
+            },
+            {
+             "type": "null"
+            }
+           ]
+          }
+         },
+         "attributes": {
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "component": {
+          "description": "true makes this layer a component; false unmarks one that has no instances",
+          "type": "boolean"
+         },
+         "bind": {
+          "description": "Inside a component: {\"text\": \"buttonLabel\"} exposes this text layer's text as the prop \"buttonLabel\" (camelCase); null removes it",
+          "anyOf": [
+           {
+            "type": "object",
+            "properties": {
+             "text": {
+              "type": [
+               "string",
+               "null"
+              ]
+             }
+            },
+            "additionalProperties": false
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "props": {
+          "description": "An instance's prop values, merged; null goes back to the component's own",
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "instance": {
+          "description": "{\"component\": \"<name or id>\"} turns this existing layer into an instance of that component, in place: its own text fills the props and the component's layers replace its own. null detaches an instance into ordinary layers under the same id; send it with only the id",
+          "anyOf": [
+           {
+            "type": "object",
+            "properties": {
+             "component": {
+              "type": "string",
+              "description": "The component's id, or its name"
+             },
+             "props": {
+              "description": "Only for text the layer does not already hold",
+              "type": "object",
+              "propertyNames": {
+               "type": "string"
+              },
+              "additionalProperties": {
+               "type": "string"
+              }
+             }
+            },
+            "required": [
+             "component"
+            ],
+            "additionalProperties": false
+           },
+           {
+            "type": "null"
+           }
+          ]
+         }
+        },
+        "required": [
+         "id"
+        ],
+        "additionalProperties": false
+       }
+      }
+     },
+     "required": [
+      "updates"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "move_node",
+    "description": "Moves a node to a new parent and/or position among its siblings.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "parentId": {
+       "description": "New parent; null makes it a top-level artboard",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "beforeId": {
+       "default": null,
+       "description": "Insert before this sibling; null appends",
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "id",
+      "parentId"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "duplicate_node",
+    "description": "Deep-copies a node and its subtree with fresh ids, and returns ids: a map from every original node id to its copy, so you can edit the copy without reading it again. A copy of a component is an instance of it. A copied artboard lands to the right of the artboards on its row; pass frame (e.g. {\"width\": 390}) to clone it at another width, which previews its breakpoint overrides. Other nodes are inserted right after the original.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "name": {
+       "description": "Name for the copy; defaults to the original's",
+       "type": "string"
+      },
+      "frame": {
+       "description": "Artboards only: placement/size overrides for the copy",
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "number"
+        },
+        "y": {
+         "type": "number"
+        },
+        "width": {
+         "type": "number",
+         "exclusiveMinimum": 0
+        },
+        "height": {
+         "type": "number",
+         "exclusiveMinimum": 0,
+         "description": "Fixed height; setting it without heightMode makes the artboard fixed"
+        },
+        "heightMode": {
+         "type": "string",
+         "enum": [
+          "fixed",
+          "hug"
+         ],
+         "description": "\"hug\" sizes the artboard to its content (height is then the last measured value); \"fixed\" clips overflow"
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "id"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "align_nodes",
+    "description": "Aligns nodes to an edge or center. Artboards (two or more) line up by canvas frame. Elements are aligned with CSS through their flex or grid parent: the flex main axis sets the parent's justifyContent (affecting all its children), the cross axis sets the child's alignSelf, and grid children get justifySelf/alignSelf. Fails if a parent is not a flex or grid container.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "align": {
+       "type": "string",
+       "enum": [
+        "left",
+        "center",
+        "right",
+        "top",
+        "middle",
+        "bottom"
+       ],
+       "description": "left/center/right are horizontal, top/middle/bottom vertical"
+      }
+     },
+     "required": [
+      "ids",
+      "align"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "distribute_nodes",
+    "description": "Spaces nodes evenly along an axis. Artboards (three or more) get equal gaps between their frames, the outermost staying put. Flex children set justifyContent: space-between on their parent when the axis is its main axis. Fails for grid children and for the flex cross axis.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "axis": {
+       "type": "string",
+       "enum": [
+        "horizontal",
+        "vertical"
+       ]
+      }
+     },
+     "required": [
+      "ids",
+      "axis"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "delete_nodes",
+    "description": "Deletes nodes and all their descendants in one atomic step.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "ids"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "undo_agent_change",
+    "description": "Reverts your most recent tool call (create/update/move/delete). Edits by people and by other agents are not affected.",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "list_tokens",
+    "description": "Lists design tokens with the CSS value to use in styles, e.g. \"var(--space-4)\".",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "group": {
+       "description": "Filter by top-level group: color, space, radius, font-family, font-size, …",
+       "type": "string"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "set_tokens",
+    "description": "Sets this document's design tokens. Colors are the Material 3 color roles (49: color.primary, color.on-surface, color.surface-container-high…; Material's md.sys.color.<role>), which every document has. For a brand palette, pass \"seed\" (one hex color): it generates every role from it, light (the document's colors) and dark (the built-in \"dark\" theme), with contrast built in, like Material Theme Builder; \"variant\" picks how (tonal-spot, fidelity, content, vibrant, expressive, neutral, monochrome; \"fidelity\" keeps the seed's own color for primary-container). With \"seed\" and \"theme\" (\"ember\"), it makes the theme pair \"ember\" and \"ember-dark\" instead. \"tokens\" changes single tokens: {\"color.primary\": \"#c2410c\"}; with \"seed\" in the same call they apply after it, so they override what it generated. Groups: color, space, radius, font-size, font-weight, line-height, font-family, letter-spacing, shadow; font-family only for the roles font-family.heading and font-family.body, pointed at a font add_fonts added ({\"font-family.heading\": \"{font-family.fraunces}\"}). An existing name overrides it everywhere it's used; a new name adds a token (style layers with roles, not new color tokens). \"{group.name}\" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. With \"theme\", \"tokens\" override existing tokens only inside frames with that theme (creating it if new, or changing the built-in \"dark\"). For a pair, tokens set on \"ember\" that aren't colors (fonts, type, radius, spacing) also go to \"ember-dark\"; colors stay per theme, so set the dark accent with theme \"ember-dark\". \"theme\" with tokens null removes that theme. One atomic, undoable step.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "tokens": {
+       "description": "Token path → value, or null to remove one; null for all of them removes the theme",
+       "anyOf": [
+        {
+         "type": "object",
+         "propertyNames": {
+          "type": "string"
+         },
+         "additionalProperties": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "seed": {
+       "description": "A hex color (#b85c38) to generate every color role from, light and dark",
+       "type": "string"
+      },
+      "variant": {
+       "description": "How the seed becomes roles (default tonal-spot, Material's default)",
+       "type": "string",
+       "enum": [
+        "tonal-spot",
+        "fidelity",
+        "content",
+        "vibrant",
+        "expressive",
+        "neutral",
+        "monochrome"
+       ]
+      },
+      "theme": {
+       "description": "Kebab-case theme name (dark, ember, high-contrast); apply it with update_nodes {\"theme\"}",
+       "type": "string"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "get_layout",
+    "description": "Measures nodes as actually rendered by the browser: boxes relative to their artboard (CSS px), key computed styles, and overflow flags. Requires the editor to be open. Defaults to the user selection, else all artboards.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "includeDescendants": {
+       "default": false,
+       "type": "boolean"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "select_nodes",
+    "description": "Selects nodes in every open editor and (by default) zooms the viewport to them, to show the user your work.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "focus": {
+       "default": true,
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "ids"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "import_image",
+    "description": "Fetches an image from a public http(s) URL into Weft's image store. From then on it's local: it works offline and is saved and exported with the document. Returns its src (asset:…) and pixel size, with an img node to copy into create_nodes (or set the src with update_nodes). Only use a URL the user gave you or that you have seen in a page or search result; a guessed URL fails or returns the wrong picture. PNG, JPEG, WebP, GIF or AVIF up to 10 MB; not SVG. Needs a network.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "url": {
+       "type": "string",
+       "maxLength": 2000,
+       "description": "Address of the image file itself (https://…), not of a page that shows it"
+      }
+     },
+     "required": [
+      "url"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_icons",
+    "description": "Searches the bundled Material Symbols icon names (works offline) by name or meaning (\"heart\" finds favorite), most popular first. An icon is a text node whose text is the name, set in an icon font added with add_fonts; the result includes a node to copy.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "description": "What the icon shows, e.g. \"search\", \"heart\", \"chevron down\"; omit for the most popular",
+       "type": "string"
+      },
+      "limit": {
+       "default": 12,
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 50
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_fonts",
+    "description": "Searches the bundled Google Fonts catalog (works offline), most popular first. Returns each family with its category and available weights. Add the ones you use with add_fonts.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "description": "Part of a family name, e.g. \"playfair\"; omit for the most popular",
+       "type": "string"
+      },
+      "category": {
+       "type": "string",
+       "enum": [
+        "sans-serif",
+        "serif",
+        "display",
+        "handwriting",
+        "monospace",
+        "icons"
+       ]
+      },
+      "limit": {
+       "default": 12,
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 50
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "add_fonts",
+    "description": "Adds Google Fonts to the document (or more weights to one it has). Each becomes a token, e.g. \"Playfair Display\" → {font-family.playfair-display}: point a role at it with set_tokens {\"font-family.heading\": \"{font-family.playfair-display}\"} and style with var(--font-family-heading) (or font-family.body / var(--font-family-body)), so themes can swap it. Weights default to the usual 400–700 the family has. Fonts are cached locally after first use, so they keep working offline.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "fonts": {
+       "minItems": 1,
+       "maxItems": 10,
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "family": {
+          "type": "string"
+         },
+         "weights": {
+          "type": "array",
+          "items": {
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          }
+         }
+        },
+        "required": [
+         "family"
+        ],
+        "additionalProperties": false
+       }
+      }
+     },
+     "required": [
+      "fonts"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "remove_fonts",
+    "description": "Removes Google Fonts from the document. Text that used them falls back to the token fallback stack (e.g. system-ui, sans-serif).",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "families": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "families"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "import_file",
+    "description": "Adds the artboards from a saved Weft document (the JSON of a .weft or .weft.json file) to this document, beside the existing ones, with its fonts. One atomic, undoable step. Returns the new artboard ids.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "json": {
+       "type": "string",
+       "maxLength": 20000000,
+       "description": "The file contents"
+      }
+     },
+     "required": [
+      "json"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "export_html",
+    "description": "Returns an artboard as a standalone HTML page: tokens, reset, styles, breakpoints as @media rules and states (:hover…), with the document's Google Fonts linked. The same page get_screenshot renders. Use it when the user wants the code.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "description": "Artboard id; defaults to the first artboard",
+       "type": "string"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  }
+ ],
+ "stream": true,
+ "think": true,
+ "options": {
+  "temperature": 0.2
+ }
+}

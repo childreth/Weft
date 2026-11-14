@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { assistLimits, ollamaUrlFrom, type AssistEvent } from './assist';
+import { assistLimits, isRepeating, ollamaUrlFrom, toolResultLimit, type AssistEvent } from './assist';
 import { startGridServer, type GridServer } from './server';
 
 /**
@@ -20,6 +20,8 @@ const requests: Array<{
 }> = [];
 /** Makes the fake refuse an effort level, like a model that only takes on/off. */
 let refuseLevels = false;
+/** What the fake reports as loaded (`/api/ps`): a model's name and the context it was loaded with. */
+let loaded: Array<{ name: string; context_length: number }> = [];
 const spoken: Array<Record<string, unknown>> = [];
 let server: GridServer;
 const SESSION = 'test-session-1';
@@ -42,6 +44,7 @@ beforeAll(async () => {
         }),
       );
     }
+    if (req.url === '/api/ps') return res.end(JSON.stringify({ models: loaded }));
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     if (req.url === '/v1/audio/speech') {
@@ -205,6 +208,8 @@ describe('assist', () => {
       expect((events[1] as { message: string }).message).toMatch(/no tool call Weft could read/);
       // The retry ended with the nudge; the call after it didn't, and it was never kept.
       expect(requests.at(-2)!.messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('could not be read') });
+      // It carries the plan the model had reached: nothing else of the lost step is left for it to write again from.
+      expect(requests.at(-2)!.messages.at(-1)!.content).toContain('Build all four components in one call.');
       expect(lastMessage().role).toBe('tool');
       expect(JSON.stringify(requests.at(-1)!.messages)).not.toContain('could not be read');
 
@@ -218,6 +223,16 @@ describe('assist', () => {
       replies = [{ role: 'assistant', content: '' }, { role: 'assistant', content: 'Here you go.' }];
       const silent = await chat({ prompt: 'make components', model: 'small:1b' });
       expect(silent.map((e) => e.type)).toEqual(['error', 'message', 'done']);
+      // With no reasoning to hand back, the nudge doesn't pretend there was any.
+      expect(requests.at(-1)!.messages.at(-1)!.content).not.toContain('worked out');
+
+      // Long reasoning goes back as its end, where the plan is.
+      const long = `${'Looking at the rows. '.repeat(400)}So: one update_nodes call for f_plan.`;
+      replies = [{ stream: [{ thinking: long }, { wait: 120 }] }, { role: 'assistant', content: 'Converted.' }];
+      await chat({ prompt: 'make components', think: 'on' });
+      const nudge = requests.at(-1)!.messages.at(-1)!.content;
+      expect(nudge).toContain('one update_nodes call for f_plan.');
+      expect(nudge.length).toBeLessThan(7000);
       expect(silent[1]).toEqual({ type: 'message', text: 'Here you go.' });
 
       // An answer given only in the reasoning, with no pause after it, is still the reply.
@@ -244,6 +259,38 @@ describe('assist', () => {
     } finally {
       Object.assign(assistLimits, saved);
     }
+  });
+
+  it('stops a model that is writing the same lines over and over, long before the step limit', async () => {
+    // What gemma4 did for 10 minutes: a little real reasoning, then one sentence without end.
+    const line = "Actually, I'll try get_canvas with detail full and look for the Initiative row nodes.\n\n";
+    replies = [{ stream: [{ thinking: 'The list is not on this artboard. ' }, ...Array.from({ length: 40 }, () => ({ thinking: line })), { hang: true }] }];
+    const events = await chat({ prompt: 'make components', think: 'on' });
+    expect(events.map((e) => e.type)).toEqual(['thinking', 'error', 'done']);
+    expect((events[0] as { text: string }).text).toMatch(/^The list is not on this artboard\./);
+    expect((events[1] as { message: string }).message).toMatch(/^Stopped: big:27b got stuck writing the same lines over and over in its reasoning/);
+    // The same in a reply.
+    replies = [{ stream: [...Array.from({ length: 40 }, () => ({ content: line })), { hang: true }] }];
+    const reply = await chat({ prompt: 'make components' });
+    expect((reply.at(-2) as { message: string }).message).toMatch(/in its reply, so Weft ended the step/);
+    // The session is free for the next request.
+    expect((await chat({ prompt: 'hi' })).at(-2)).toEqual({ type: 'message', text: 'Done.' });
+  });
+
+  it('tells a loop from reasoning that only looks repetitive', () => {
+    const sentence = 'Wait, I will read the canvas again and look for the rows.\n';
+    expect(isRepeating(`Some thought first. ${sentence.repeat(30)}`)).toBe(true);
+    // A short stretch has to come round many more times before it counts.
+    expect(isRepeating(`Some thought first. ${'No.\n'.repeat(400)}`)).toBe(true);
+    // A long one counts after six rounds, not two.
+    const paragraph = `${'Check the header, then the list, then the footer, and compare each with the component. '.repeat(4)}\n`;
+    expect(isRepeating(`Start. ${paragraph.repeat(2)}`)).toBe(false);
+    expect(isRepeating(`Start. ${paragraph.repeat(8)}`)).toBe(true);
+    // Not loops: a few repeats, look-alike lines that differ, and a loop the model got out of.
+    expect(isRepeating(sentence.repeat(5))).toBe(false);
+    expect(isRepeating(Array.from({ length: 80 }, (_, i) => `Row ${i}: li, same styles as the component, text differs.`).join('\n'))).toBe(false);
+    expect(isRepeating(`${sentence.repeat(30)}Right: the rows are in the Day list, so convert those.`)).toBe(false);
+    expect(isRepeating('')).toBe(false);
   });
 
   it('runs tool calls against the document and undoes the whole turn', async () => {
@@ -342,6 +389,34 @@ describe('assist', () => {
     expect(results[1]!.text).toContain('already made this exact call');
     const canvas = requests.at(-2)!.messages.filter((m) => m.role === 'tool').at(-2)!;
     expect(canvas.content).toContain('[Cut off:');
+    expect(canvas.content).toContain('showing the first 8000');
+  });
+
+  it('lets a model loaded with a large context read more of a tool result', async () => {
+    // The board from the test above: its read is far longer than 8,000 characters.
+    const read = { function: { name: 'get_canvas', arguments: { maxDepth: 11 } } };
+    const toolResult = () => requests.at(-1)!.messages.filter((m) => m.role === 'tool').at(-1)!.content;
+    try {
+      loaded = [{ name: 'big:27b', context_length: 131072 }];
+      replies = [{ role: 'assistant', content: '', tool_calls: [read] }, { role: 'assistant', content: 'Read it.' }];
+      await chat({ prompt: 'look again', session: 'context-session-1' });
+      expect(toolResult()).toContain('Line 79');
+      expect(toolResult()).not.toContain('[Cut off:');
+      // Another model being loaded says nothing about this one.
+      loaded = [{ name: 'small:1b', context_length: 131072 }];
+      replies = [{ role: 'assistant', content: '', tool_calls: [read] }, { role: 'assistant', content: 'Read it.' }];
+      await chat({ prompt: 'look again', session: 'context-session-2' });
+      expect(toolResult()).toContain('showing the first 8000');
+    } finally {
+      loaded = [];
+    }
+    // A tenth of the context, in characters: never under the old 8,000, never over what cloud models get.
+    expect(toolResultLimit(undefined)).toBe(8000);
+    expect(toolResultLimit(8192)).toBe(8000);
+    expect(toolResultLimit(32768)).toBe(9830);
+    expect(toolResultLimit(65536)).toBe(19661);
+    expect(toolResultLimit(131072)).toBe(39322);
+    expect(toolResultLimit(262144)).toBe(60000);
   });
 
   it('rejects cross-site origins and answers local CORS preflight', async () => {

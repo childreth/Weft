@@ -17,10 +17,25 @@ import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from
  */
 
 export const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
-const MAX_STEPS = 12;
+/** Tool-calling rounds in one turn. Converting a design to components took a correct model more than 12; repeats are stopped separately (`MAX_REPEATS`). */
+const MAX_STEPS = 30;
+/** The least a tool result is cut to: what a model loaded with a small context, or one we know nothing about, gets. */
 const MAX_TOOL_RESULT_CHARS = 8000;
-/** Cloud models have large contexts: room for the whole design skill. */
+/** Cloud models have large contexts: room for the whole design skill. Also the most a local model gets. */
 const MAX_CLOUD_TOOL_RESULT_CHARS = 60_000;
+/**
+ * Characters of one tool result per token of the context a local model is
+ * loaded with: about a tenth of the context. The flat 8,000 showed gemma4 a
+ * tenth of a 76,000-character list, and in a replay eval it asked for the same
+ * read again in 6 of 10 samples instead of doing the work.
+ */
+const TOOL_RESULT_CHARS_PER_CONTEXT_TOKEN = 0.3;
+
+/** How long one tool result may be for a local model loaded with this many tokens of context. */
+export function toolResultLimit(contextTokens: number | undefined): number {
+  if (!contextTokens || !Number.isFinite(contextTokens)) return MAX_TOOL_RESULT_CHARS;
+  return Math.min(MAX_CLOUD_TOOL_RESULT_CHARS, Math.max(MAX_TOOL_RESULT_CHARS, Math.round(contextTokens * TOOL_RESULT_CHARS_PER_CONTEXT_TOKEN)));
+}
 /** Repeats refused before the model is made to answer without tools. */
 const MAX_REPEATS = 2;
 const ANSWER_NOW = 'You are repeating tool calls. Stop calling tools and answer the user now with what you already know: what you changed, or what you found and would change.';
@@ -36,27 +51,82 @@ const ANSWER_NOW = 'You are repeating tool calls. Stop calling tools and answer 
 export const assistLimits = { stepMs: 10 * 60 * 1000, swallowedMs: 1500 };
 /** Unreadable calls in a row before the turn is stopped: one nudge, then give up. */
 const MAX_UNREADABLE = 2;
+/** How much of a lost step's reasoning goes back with the nudge: its end, where the plan is. */
+const LOST_REASONING_CHARS = 6000;
 /**
  * Sent as the last message of the next call only, never kept: a small model follows what it read last.
- * Size isn't the cause it names: gemma4 lost calls holding a single node, and re-sent one unchanged when told only to send less.
+ * It carries what the model had reasoned, because nothing else of the lost step survives: Ollama dropped the
+ * call, and reasoning isn't kept in the history. Told only "write it again", gemma4 worked the task out from
+ * the start, came out somewhere else and looped.
+ * Size isn't the cause it names: gemma4 lost calls holding a single node, and re-sent one unchanged when told
+ * only to send less. What the log showed was strings closed another way than they were opened.
  */
-const UNREADABLE_CALL =
-  '[From Weft, not the user] Your last tool call could not be read, so nothing was changed: its brackets or quotes did not match. Write the call again from the start, do not repeat it as it was. Close every { and [ exactly once and write nothing after the final }. If it holds many nodes, send fewer per call. If you were not calling a tool, answer the user in plain text now.';
+function unreadableCall(reasoning: string): string {
+  const plan = reasoning.length > LOST_REASONING_CHARS ? `[…] ${reasoning.slice(-LOST_REASONING_CHARS)}` : reasoning;
+  return [
+    '[From Weft, not the user] Your last tool call could not be read, so nothing was changed: its brackets or quotes did not match.',
+    plan && `This is what you had worked out before writing it:\n"""\n${plan}\n"""\nDo not work it out again: write the call for it now.`,
+    'Write the call again from the start, do not repeat it as it was. End every string the way you began it, close every { and [ exactly once, and write nothing after the final }. If it holds many nodes, send fewer per call. If you were not calling a tool, answer the user in plain text now.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 const UNREADABLE_NOTICE =
   "The model's last step ended with no reply and no tool call Weft could read: most likely a tool call whose brackets or quotes didn't match. Asking it to write the call again.";
 const UNREADABLE_STOP =
   'Stopped: the model again wrote a tool call that could not be read, so nothing from those calls was applied. Try again, ask for one small step, or use another model.';
 
-/** A model call that ran past `assistLimits.stepMs`; `thinking` is what it had reasoned by then. */
-class StepLimitError extends Error {
+/** A model call Weft ended before it finished; `thinking` is what it had reasoned by then, the only clue to why. */
+class StepStopped extends Error {
   constructor(
-    model: string,
+    message: string,
     readonly thinking: string,
   ) {
+    super(message);
+  }
+}
+
+/** A model call that ran past `assistLimits.stepMs`. */
+class StepLimitError extends StepStopped {
+  constructor(model: string, thinking: string) {
     const ms = assistLimits.stepMs;
     const spent = ms >= 60_000 ? `${Math.round(ms / 60_000)} minutes` : `${Math.round(ms / 1000)} seconds`;
-    super(`Stopped: ${model} spent ${spent} on one step without finishing${thinking ? ' (its reasoning so far is above)' : ''}. Try a smaller request, or a step at a time.`);
+    super(`Stopped: ${model} spent ${spent} on one step without finishing${thinking ? ' (its reasoning so far is above)' : ''}. Try a smaller request, or a step at a time.`, thinking);
   }
+}
+
+/** A model call ended because the model was writing the same lines over and over (`isRepeating`). */
+class StepLoopError extends StepStopped {
+  constructor(model: string, thinking: string, where: 'reasoning' | 'reply') {
+    const shown = where === 'reasoning' ? ' (they are at the end of its reasoning above)' : '';
+    super(`Stopped: ${model} got stuck writing the same lines over and over in its ${where}${shown}, so Weft ended the step. Nothing from this step was applied. Try again, word the request differently, or use another model.`, thinking);
+  }
+}
+
+/** The end of a text must be one stretch written at least this many times over, and for this many characters, to count as a loop. */
+const LOOP_REPEATS = 6;
+const LOOP_CHARS = 1200;
+const LOOP_PROBE = 80;
+const LOOP_CHECK_EVERY = 200;
+
+/**
+ * Whether `text` ends in the same stretch written over and over: a model stuck
+ * in a loop, which left alone runs to the step limit (gemma4 wrote one sentence
+ * for 10 minutes). Exact repeats only, and a long run of them, so a list of
+ * look-alike lines or a ruled line never counts; a loop that varies as it goes
+ * is still left to the step limit.
+ */
+export function isRepeating(text: string): boolean {
+  if (text.length < LOOP_CHARS + LOOP_PROBE) return false;
+  // How far back the last few words were last written is the length of what repeats.
+  const end = text.length - LOOP_PROBE;
+  const previous = text.lastIndexOf(text.slice(end), end - 1);
+  if (previous < 0) return false;
+  const period = end - previous;
+  const span = Math.max(period * LOOP_REPEATS, LOOP_CHARS);
+  if (span + period > text.length) return false;
+  for (let i = text.length - span; i < text.length; i++) if (text[i] !== text[i - period]) return false;
+  return true;
 }
 
 /**
@@ -274,6 +344,22 @@ export class Assistant {
     }, 60_000).unref();
   }
 
+  /**
+   * The context, in tokens, Ollama has this model loaded with: what it chose
+   * for this machine, often far less than the model's maximum. Undefined when
+   * the model isn't loaded or Ollama doesn't say.
+   */
+  private async loadedContext(model: string, signal: AbortSignal): Promise<number | undefined> {
+    try {
+      const res = await fetch(`${this.ollamaUrl}/api/ps`, { signal });
+      if (!res.ok) return undefined;
+      const { models } = (await res.json()) as { models?: Array<{ name?: string; model?: string; context_length?: number }> };
+      return models?.find((m) => m.name === model || m.model === model)?.context_length;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Models that can call tools: local ones first (offline-first), largest first, then cloud ones. */
   async models(signal?: AbortSignal): Promise<AssistModel[]> {
     const res = await fetch(`${this.ollamaUrl}/api/tags`, { signal });
@@ -365,7 +451,7 @@ ${selection}`;
           return { ...result, empty: !result.reply.content.trim() && !result.reply.tool_calls, showThinking };
         } catch (err) {
           // Cut off mid-thought: what it had reasoned is the only clue to why.
-          if (err instanceof StepLimitError) showThinking(err.thinking);
+          if (err instanceof StepStopped) showThinking(err.thinking);
           throw err;
         }
       };
@@ -379,6 +465,10 @@ ${selection}`;
       const seen = new Set<string>();
       let repeats = 0;
       let unreadable = 0;
+      /** What the model had reasoned before a call that was lost: sent back with the nudge so it doesn't start over. */
+      let lostReasoning = '';
+      /** How long a tool result may be. Asked for at the first result: by then the model has answered once, so it is loaded. */
+      let resultLimit: number | undefined;
       for (let step = 0; step < MAX_STEPS; step++) {
         if (repeats >= MAX_REPEATS) {
           // A looping model ignores "you already made this call"; without tools it has to answer.
@@ -386,11 +476,12 @@ ${selection}`;
           emit({ type: 'message', text: reply.content.trim() || 'Done.' });
           return;
         }
-        const turn = await ask(system, tools, unreadable > 0 ? [{ role: 'user', content: UNREADABLE_CALL }] : undefined);
+        const turn = await ask(system, tools, unreadable > 0 ? [{ role: 'user', content: unreadableCall(lostReasoning) }] : undefined);
         // Nothing came back, or the model wrote on after its reasoning and none of it arrived: a tool call Ollama
         // couldn't parse and dropped. Showing the reasoning as the answer (or "Done.") would hide that nothing happened.
         if (turn.empty && (!turn.thinking || turn.silentMs >= assistLimits.swallowedMs)) {
           turn.showThinking(turn.thinking);
+          lostReasoning = turn.thinking;
           if (++unreadable >= MAX_UNREADABLE) {
             emit({ type: 'error', message: UNREADABLE_STOP });
             return;
@@ -418,15 +509,16 @@ ${selection}`;
             : await this.callTool(session, tools, name, injectArgs(args, session.injects.get(name) ?? [], req));
           seen.add(key);
           emit({ type: 'tool_result', name, ok: !text.isError, text: text.text.slice(0, 400) });
+          resultLimit ??= info?.cloud ? MAX_CLOUD_TOOL_RESULT_CHARS : toolResultLimit(await this.loadedContext(req.model, signal));
           session.history.push({
             role: 'tool',
             tool_name: name,
-            content: clipToolResult(text.text, info?.cloud ? MAX_CLOUD_TOOL_RESULT_CHARS : MAX_TOOL_RESULT_CHARS),
+            content: clipToolResult(text.text, resultLimit),
             ...(text.images.length > 0 && { images: text.images }),
           });
         }
       }
-      emit({ type: 'error', message: `Stopped after ${MAX_STEPS} steps without a final answer.` });
+      emit({ type: 'error', message: `Stopped after ${MAX_STEPS} steps without a final answer. What it did so far is in place: say "continue" to carry on, or Undo to revert the turn.` });
     } catch (err) {
       if (!signal.aborted) emit({ type: 'error', message: (err as Error).message });
     } finally {
@@ -487,6 +579,7 @@ ${selection}`;
       const calls: NonNullable<ChatMessage['tool_calls']> = [];
       let lastOutput = Date.now();
       let silentMs = 0;
+      let checked = 0;
       for await (const line of responseLines(res)) {
         let chunk: { message?: Partial<ChatMessage> & { thinking?: string }; done?: boolean; error?: string };
         try {
@@ -502,6 +595,16 @@ ${selection}`;
           content += part.content ?? '';
           calls.push(...(part.tool_calls ?? []));
           lastOutput = Date.now();
+          // Looked at every couple of hundred characters, not every token.
+          if (thinking.length + content.length - checked >= LOOP_CHECK_EVERY) {
+            checked = thinking.length + content.length;
+            const where = isRepeating(thinking) ? 'reasoning' : isRepeating(content) ? 'reply' : undefined;
+            if (where) {
+              // Closing the response is what stops Ollama generating.
+              res.destroy();
+              throw new StepLoopError(model, thinking.trim(), where);
+            }
+          }
         }
         if (chunk.done) silentMs = Date.now() - lastOutput;
       }

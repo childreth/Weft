@@ -1,0 +1,26 @@
+{
+ "name": "convert-rows",
+ "doc": "default",
+ "model": "gemma4:26b-mlx",
+ "think": "on",
+ "prompt": "Look at the Initiative order list on this artboard. The rows repeat the same structure. Make one of them a component and turn the other rows into instances of it, keeping every row's own text. Tell me anything that didn't carry over.",
+ "selection": [
+  "f_JxNr7kFQzK"
+ ],
+ "steps": [
+  {
+   "name": "get_canvas",
+   "arguments": {
+    "rootId": "f_JxNr7kFQzK",
+    "detail": "outline"
+   }
+  },
+  {
+   "name": "get_canvas",
+   "arguments": {
+    "rootId": "f_Su8RaG9YtI"
+   }
+  }
+ ],
+ "contextTokens": 131072
+}
