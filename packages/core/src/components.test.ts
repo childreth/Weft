@@ -362,7 +362,7 @@ describe('turning existing layers into instances', () => {
     doc.updateNode(vex.state, { bind: { text: 'status' } });
 
     const match = doc.convertToInstance(boss.id, { component: vex.id });
-    expect(match).toEqual({ props: { name: 'Goblin Boss', status: 'Acting now' }, defaulted: [], droppedText: [], changedLayers: [] });
+    expect(match).toEqual({ props: { name: 'Goblin Boss', status: 'Acting now' }, defaulted: [], droppedText: [], changedLayers: [], addedAttributes: [] });
     // One node where three were, still second in the list.
     expect(doc.getChildren(list).map((n) => n.id)).toEqual([vex.id, boss.id, wolf.id]);
     expect(doc.getDescendantIds(boss.id)).toEqual([]);
@@ -441,5 +441,289 @@ describe('turning existing layers into instances', () => {
       [boss.state, 'Acting now'],
     ]);
     expect(a.getNode(boss.id)).toMatchObject({ tag: 'li', styles: { padding: '8px', backgroundColor: 'var(--color-primary-container)' } });
+  });
+});
+
+describe('style props', () => {
+  /** A week's volume chart: each day a column holding a bar, whose height and color differ by day, and a label. */
+  function chart(doc: GridDocument) {
+    const page = artboard(doc);
+    const list = doc.createNode({ type: 'frame', parentId: page, name: 'Chart', styles: { display: 'flex', gap: '8px' } });
+    const day = (label: string, height: string, color: string, rootStyles: Record<string, string> = {}) => {
+      const id = doc.createNode({ type: 'frame', parentId: list, name: label, styles: { display: 'flex', flexDirection: 'column', ...rootStyles } });
+      const bar = doc.createNode({ type: 'frame', parentId: id, name: 'Bar', styles: { width: '100%', borderRadius: '12px', height, backgroundColor: color } });
+      const text = doc.createNode({ type: 'text', tag: 'span', parentId: id, name: 'Label', text: label });
+      return { id, bar, text };
+    };
+    return {
+      page,
+      list,
+      mon: day('M', '4px', 'var(--color-surface-container)'),
+      tue: day('T', '40px', 'var(--color-primary)'),
+      thu: day('T', '33px', 'var(--color-tertiary)', { opacity: '0.9' }),
+    };
+  }
+
+  it('lets an instance set a bound style through a prop, with the component value as the default', () => {
+    const doc = new GridDocument();
+    const { list, mon } = chart(doc);
+    doc.updateNode(mon.id, { component: true, name: 'Day' });
+    doc.updateNode(mon.bar, { bind: { styles: { height: 'barHeight', backgroundColor: 'barColor' } } });
+    doc.updateNode(mon.text, { bind: { text: 'label' } });
+    expect(doc.getComponents()).toEqual([
+      {
+        id: mon.id,
+        name: 'Day',
+        props: { barHeight: '4px', barColor: 'var(--color-surface-container)', label: 'M' },
+        styleProps: { barHeight: ['height'], barColor: ['backgroundColor'] },
+        instances: 0,
+      },
+    ]);
+
+    const wed = doc.createNode({ type: 'frame', parentId: list, name: 'Wed', instance: { component: mon.id, props: { label: 'W', barHeight: '53px' } } });
+    const bar = doc.getExpandedTree(wed).children[0]!;
+    // Its own height, the component's color, and nothing else changed.
+    expect(bar.styles).toEqual({ width: '100%', borderRadius: '12px', height: '53px', backgroundColor: 'var(--color-surface-container)' });
+    // '' goes back to the component's; the component's own changes still reach it.
+    doc.updateNode(wed, { props: { barHeight: '' } });
+    doc.updateNode(mon.bar, { styles: { height: '6px', borderRadius: '4px' } });
+    expect(doc.getExpandedTree(wed).children[0]!.styles).toMatchObject({ height: '6px', borderRadius: '4px' });
+    // It exports like any other style.
+    doc.updateNode(wed, { props: { barHeight: '53px' } });
+    expect(exportArtboardHTML(doc, doc.getNode(list)!.parentId!)).toContain('height: 53px');
+  });
+
+  it('checks a style prop value like the style it sets, when it is set and when it is drawn', () => {
+    const doc = new GridDocument();
+    const { list, mon } = chart(doc);
+    doc.updateNode(mon.id, { component: true, name: 'Day' });
+    doc.updateNode(mon.text, { bind: { text: 'label' } });
+    doc.updateNode(mon.bar, { bind: { styles: { backgroundColor: 'barColor' } } });
+    // Bindings name real style properties and camelCase props.
+    expect(() => doc.updateNode(mon.bar, { bind: { styles: { colour: 'tone' } } })).toThrow(/Can't bind style "colour"/);
+    expect(() => doc.updateNode(mon.bar, { bind: { styles: { color: 'bar_tone' } } })).toThrow(/Use "barTone"/);
+    // A value has to be a valid value for what it sets.
+    expect(() => doc.createNode({ type: 'frame', parentId: list, instance: { component: mon.id, props: { barColor: 'url(https://example.com/x.png)' } } })).toThrow(
+      /Prop "barColor" sets backgroundColor: Style "backgroundColor" can't load external resources/,
+    );
+    expect(() => doc.createNode({ type: 'frame', parentId: list, instance: { component: mon.id, props: { barColor: 'red; display: none' } } })).toThrow(/forbidden characters/);
+    // A value that was fine as text is never drawn as a style it isn't safe for, if the component later binds it to one.
+    const row = doc.createNode({ type: 'frame', parentId: list, instance: { component: mon.id, props: { label: 'url(https://example.com/x.png)' } } });
+    doc.updateNode(mon.bar, { bind: { styles: { backgroundImage: 'label' } } });
+    expect(doc.getExpandedTree(row).children[0]!.styles).not.toHaveProperty('backgroundImage');
+    // Removing one binding keeps the rest; null for styles removes them all.
+    doc.updateNode(mon.bar, { bind: { styles: { backgroundImage: null } } });
+    expect(doc.getNode(mon.bar)!.bind).toEqual({ styles: { backgroundColor: 'barColor' } });
+    doc.updateNode(mon.bar, { bind: { styles: null } });
+    expect(doc.getNode(mon.bar)!.bind).toBeUndefined();
+  });
+
+  it('reads bound styles into props when a look-alike is converted, instead of reporting them as changes', () => {
+    const doc = new GridDocument();
+    const { page, mon, tue, thu } = chart(doc);
+    doc.updateNode(mon.id, { component: true, name: 'Day' });
+    doc.updateNode(mon.bar, { bind: { styles: { height: 'barHeight', backgroundColor: 'barColor' } } });
+    doc.updateNode(mon.text, { bind: { text: 'label' } });
+    const before = exportArtboardHTML(doc, page).replace(/ data-gf-(id|src)="[^"]*"/g, '');
+
+    expect(doc.convertToInstance(tue.id, { component: mon.id })).toEqual({
+      props: { barHeight: '40px', barColor: 'var(--color-primary)', label: 'T' },
+      defaulted: [],
+      droppedText: [],
+      changedLayers: [],
+      addedAttributes: [],
+    });
+    // Its root keeps its own opacity; the bar's look comes through the props.
+    expect(doc.convertToInstance(thu.id, { component: mon.id }).changedLayers).toEqual([]);
+    expect(doc.getNode(thu.id)!.styles).toEqual({ opacity: '0.9' });
+    expect(exportArtboardHTML(doc, page).replace(/ data-gf-(id|src)="[^"]*"/g, '')).toBe(before);
+
+    // A style that isn't bound, or a bound one the layer doesn't set, still counts as a change, never as wrong content.
+    const fri = doc.createNode({ type: 'frame', parentId: doc.getNode(mon.id)!.parentId!, name: 'F', styles: { display: 'flex', flexDirection: 'column' } });
+    doc.createNode({ type: 'frame', parentId: fri, name: 'Bar', styles: { width: '100%', borderRadius: '2px', height: '20px' } });
+    doc.createNode({ type: 'text', tag: 'span', parentId: fri, name: 'Label', text: 'F' });
+    const match = doc.convertToInstance(fri, { component: mon.id });
+    expect(match).toMatchObject({ props: { barHeight: '20px', label: 'F' }, defaulted: [], changedLayers: ['Bar'] });
+  });
+
+  it('binds a style on the component itself: an instance root takes it from the prop, and conversion moves it there', () => {
+    const doc = new GridDocument();
+    const page = artboard(doc);
+    const nav = doc.createNode({ type: 'frame', tag: 'nav', parentId: page, name: 'Tabs' });
+    const tab = (label: string, styles: Record<string, string>) => {
+      const id = doc.createNode({ type: 'frame', tag: 'a', parentId: nav, name: label, styles: { display: 'flex', color: 'var(--color-on-surface-variant)', ...styles }, attributes: { href: `#${label.toLowerCase()}` } });
+      doc.createNode({ type: 'text', tag: 'span', parentId: id, name: 'Text', text: label });
+      return id;
+    };
+    const week = tab('Week', { color: 'var(--color-primary)' });
+    const plan = tab('Plan', {});
+    doc.updateNode(plan, { component: true, bind: { styles: { color: 'tone' } } });
+    doc.updateNode(doc.getChildren(plan)[0]!.id, { bind: { text: 'label' } });
+
+    expect(doc.convertToInstance(week, { component: plan }).props).toEqual({ tone: 'var(--color-primary)', label: 'Week' });
+    // The color went into the prop, not the root's own styles, where it would hide the prop.
+    expect(doc.getNode(week)!.styles).toEqual({});
+    expect(doc.getNode(week)!.attributes).toEqual({ href: '#week' });
+    expect(doc.getExpandedTree(week).styles).toMatchObject({ color: 'var(--color-primary)' });
+    // A root style of its own still wins over the prop: it places the instance.
+    doc.updateNode(week, { styles: { color: 'var(--color-error)' } });
+    expect(doc.getExpandedTree(week).styles.color).toBe('var(--color-error)');
+  });
+
+  it('survives a save, a copy and a detach', () => {
+    const doc = new GridDocument();
+    const { list, mon } = chart(doc);
+    doc.updateNode(mon.id, { component: true, name: 'Day' });
+    doc.updateNode(mon.bar, { bind: { styles: { height: 'barHeight' } } });
+    const wed = doc.createNode({ type: 'frame', parentId: list, instance: { component: mon.id, props: { barHeight: '53px' } } });
+
+    const reopened = new GridDocument();
+    reopened.loadSnapshot(doc.toSnapshot());
+    expect(reopened.getNode(mon.bar)!.bind).toEqual({ styles: { height: 'barHeight' } });
+    expect(reopened.getExpandedTree(wed).children[0]!.styles.height).toBe('53px');
+
+    // A copy of the component is an instance of it, showing the component's value.
+    const copy = doc.duplicateNode(mon.id);
+    expect(doc.getNode(copy)!.instance).toEqual({ component: mon.id, props: {} });
+    expect(doc.getExpandedTree(copy).children[0]!.styles.height).toBe('4px');
+
+    // Detached, it keeps the look the prop gave it, as ordinary styles.
+    doc.updateNode(wed, { instance: null });
+    const bar = doc.getChildren(wed)[0]!;
+    expect(bar.styles.height).toBe('53px');
+    expect(bar.bind).toBeUndefined();
+  });
+});
+
+describe('attribute props', () => {
+  /** A tab bar: four links, the first one the current page. */
+  function tabs(doc: GridDocument) {
+    const page = artboard(doc);
+    const nav = doc.createNode({ type: 'frame', tag: 'nav', parentId: page, name: 'Tab bar', styles: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' } });
+    const tab = (label: string, current: boolean) => {
+      const id = doc.createNode({
+        type: 'frame',
+        tag: 'a',
+        parentId: nav,
+        name: `${label} tab`,
+        styles: { color: current ? 'var(--color-primary)' : 'var(--color-on-surface-variant)' },
+        attributes: { href: `#${label.toLowerCase()}`, ...(current && { 'aria-current': 'page' }) },
+      });
+      const icon = doc.createNode({ type: 'text', tag: 'span', parentId: id, name: 'Icon', text: label.toLowerCase(), attributes: { 'aria-hidden': 'true' } });
+      const text = doc.createNode({ type: 'text', tag: 'span', parentId: id, name: 'Label', text: label });
+      return { id, icon, text };
+    };
+    return { page, nav, week: tab('Week', true), plan: tab('Plan', false), log: tab('Log', false) };
+  }
+  const drawn = (doc: GridDocument, id: string) => doc.getExpandedTree(id).attributes;
+
+  it('reports an attribute the component has and a converted layer did not, which an unbound component gives every instance', () => {
+    const doc = new GridDocument();
+    const { week, plan } = tabs(doc);
+    doc.updateNode(week.id, { component: true, bind: { styles: { color: 'tabColor' } } });
+    doc.updateNode(week.icon, { bind: { text: 'icon' } });
+    doc.updateNode(week.text, { bind: { text: 'label' } });
+    const match = doc.convertToInstance(plan.id, { component: week.id });
+    expect(match.addedAttributes).toEqual(['aria-current="page"']);
+    // This is the bug the report exists for: Plan now says it's the current page.
+    expect(drawn(doc, plan.id)).toEqual({ href: '#plan', 'aria-current': 'page' });
+  });
+
+  it('carries a bound attribute into the props when converting, and leaves it off where the layer had none', () => {
+    const doc = new GridDocument();
+    const { page, week, plan, log } = tabs(doc);
+    doc.updateNode(week.id, { component: true, name: 'Tab', bind: { styles: { color: 'tabColor' }, attributes: { 'aria-current': 'current' } } });
+    doc.updateNode(week.icon, { bind: { text: 'icon' } });
+    doc.updateNode(week.text, { bind: { text: 'label' } });
+    expect(doc.getComponents()[0]).toMatchObject({ props: { current: 'page' }, attributeProps: { current: ['aria-current'] } });
+    // Converted layers are drawn from the component's, so they're marked by where they come from instead of by id.
+    const page_ = () => exportArtboardHTML(doc, page).replace(/ data-gf-(id|src)="[^"]*"/g, '');
+    const before = page_();
+
+    for (const tab of [plan, log]) {
+      const match = doc.convertToInstance(tab.id, { component: week.id });
+      expect(match).toMatchObject({ addedAttributes: [], changedLayers: [], droppedText: [] });
+      expect(match.props.current).toBe('');
+    }
+    expect(drawn(doc, plan.id)).toEqual({ href: '#plan' });
+    expect(drawn(doc, week.id)).toEqual({ href: '#week', 'aria-current': 'page' });
+    // Nothing about the page changed, and only one tab is current.
+    const after = page_();
+    expect(after).toBe(before);
+    expect(after.match(/aria-current/g)).toHaveLength(1);
+
+    // Making another tab current is a prop.
+    doc.updateNode(plan.id, { props: { current: 'page' } });
+    doc.updateNode(week.id, { attributes: { 'aria-current': null } });
+    expect(drawn(doc, plan.id)['aria-current']).toBe('page');
+    expect(drawn(doc, log.id)['aria-current']).toBeUndefined();
+  });
+
+  it('binds attributes inside a component, and reads them when converting', () => {
+    const doc = new GridDocument();
+    const { week, plan } = tabs(doc);
+    doc.updateNode(plan.icon, { attributes: { 'aria-hidden': null, 'aria-label': 'Plan icon' } });
+    doc.updateNode(week.id, { component: true, bind: { styles: { color: 'tabColor' }, attributes: { 'aria-current': 'current' } } });
+    doc.updateNode(week.icon, { bind: { text: 'icon', attributes: { 'aria-hidden': 'iconHidden', 'aria-label': 'iconLabel' } } });
+    doc.updateNode(week.text, { bind: { text: 'label' } });
+    const match = doc.convertToInstance(plan.id, { component: week.id });
+    expect(match.changedLayers).toEqual([]);
+    expect(match.props).toMatchObject({ iconHidden: '', iconLabel: 'Plan icon' });
+    expect(doc.getExpandedTree(plan.id).children[0]!.attributes).toEqual({ 'aria-label': 'Plan icon' });
+  });
+
+  it('turns boolean attributes on and off', () => {
+    const doc = new GridDocument();
+    const page = artboard(doc);
+    const button = doc.createNode({ type: 'text', tag: 'button', parentId: page, name: 'Button', text: 'Save', component: true, bind: { text: 'label', attributes: { disabled: 'disabled' } } });
+    const faq = doc.createNode({ type: 'frame', tag: 'details', parentId: page, name: 'FAQ', component: true, attributes: { open: '' }, bind: { attributes: { open: 'open' } } });
+    doc.createNode({ type: 'text', tag: 'summary', parentId: faq, name: 'Question', text: 'Why?' });
+    // Off by default here, on by default there: an "on" boolean reads as its own name, not as '' (off).
+    expect(doc.getComponents().map((c) => c.props)).toEqual([
+      { label: 'Save', disabled: '' },
+      { open: 'open' },
+    ]);
+    const off = doc.createNode({ type: 'frame', parentId: page, name: 'Off', instance: { component: button, props: { disabled: 'disabled' } } });
+    expect(drawn(doc, off)).toEqual({ disabled: '' });
+    const closed = doc.createNode({ type: 'frame', parentId: page, name: 'Closed', instance: { component: faq, props: { open: '' } } });
+    expect(drawn(doc, closed)).toEqual({});
+    const open = doc.createNode({ type: 'frame', parentId: page, name: 'Open', instance: { component: faq } });
+    expect(drawn(doc, open)).toEqual({ open: '' });
+  });
+
+  it('checks bindings and values when set, and values again when drawn', () => {
+    const doc = new GridDocument();
+    const page = artboard(doc);
+    const link = doc.createNode({ type: 'text', tag: 'a', parentId: page, name: 'Link', text: 'Go', component: true, attributes: { href: '#a' } });
+    expect(() => doc.updateNode(link, { bind: { attributes: { onclick: 'handler' } } })).toThrow(/Event handler attributes are not allowed/);
+    expect(() => doc.updateNode(link, { bind: { attributes: { src: 'image' } } })).toThrow(/an image can't be a prop yet/);
+    expect(() => doc.updateNode(link, { bind: { attributes: { href: 'link-url' } } })).toThrow(/camelCase.*"linkUrl"/);
+
+    doc.updateNode(link, { bind: { text: 'label', attributes: { href: 'url' } } });
+    expect(() => doc.createNode({ type: 'frame', parentId: page, name: 'Bad', instance: { component: link, props: { url: 'javascript:alert(1)' } } })).toThrow(/Prop "url" sets href: Unsafe URL/);
+
+    // A text prop may hold anything; rebinding it to href later must not make it a link.
+    doc.updateNode(link, { bind: { attributes: null } });
+    const sneaky = doc.createNode({ type: 'frame', parentId: page, name: 'Sneaky', instance: { component: link, props: { label: 'javascript:alert(1)' } } });
+    doc.updateNode(link, { bind: { attributes: { href: 'label' } } });
+    expect(drawn(doc, sneaky)).toEqual({ href: '#a' });
+  });
+
+  it('keeps attribute bindings through copy, save and detach', () => {
+    const doc = new GridDocument();
+    const { week, plan } = tabs(doc);
+    doc.updateNode(week.id, { component: true, bind: { styles: { color: 'tabColor' }, attributes: { 'aria-current': 'current' } } });
+    doc.updateNode(week.icon, { bind: { text: 'icon' } });
+    doc.updateNode(week.text, { bind: { text: 'label' } });
+    doc.convertToInstance(plan.id, { component: week.id });
+
+    const copy = new GridDocument();
+    Y.applyUpdate(copy.ydoc, Y.encodeStateAsUpdate(doc.ydoc));
+    expect(copy.getNode(week.id)!.bind).toEqual({ styles: { color: 'tabColor' }, attributes: { 'aria-current': 'current' } });
+    const twin = doc.duplicateNode(plan.id);
+    expect(drawn(doc, twin)['aria-current']).toBeUndefined();
+
+    doc.updateNode(plan.id, { instance: null });
+    expect(doc.getNode(plan.id)!.attributes).toEqual({ href: '#plan' });
   });
 });

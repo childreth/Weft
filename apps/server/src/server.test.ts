@@ -394,6 +394,119 @@ describe('MCP tools', () => {
     expect(doc.getDescendantIds(oddId)).toHaveLength(3);
   });
 
+  it('converts look-alikes that differ by a style, once the style is bound to a prop', async () => {
+    const day = (label: string, height: string, color: string) => ({
+      name: label,
+      styles: { display: 'flex', flexDirection: 'column', gap: '4px' },
+      children: [
+        { name: 'Bar', styles: { width: '100%', borderRadius: '12px', height, backgroundColor: color } },
+        { tag: 'span', name: 'Label', text: label },
+      ],
+    });
+    const made = await call('create_nodes', {
+      doc: 'bars',
+      nodes: [
+        {
+          tag: 'main',
+          name: 'Week',
+          frame: { width: 400 },
+          children: [{ name: 'Chart', styles: { display: 'flex', gap: '8px', height: '80px', alignItems: 'end' }, children: [day('M', '4px', 'var(--color-surface-container)'), day('T', '40px', 'var(--color-primary)'), day('W', '53px', 'var(--color-primary)'), day('T', '33px', 'var(--color-tertiary)')] }],
+        },
+      ],
+    });
+    type Made = { id: string; children: Made[] };
+    const page = (made.data.created as Made[])[0]!;
+    const [mon, tue, wed, thu] = page.children[0]!.children;
+    const html = async () => (await call('export_html', { doc: 'bars', id: page.id })).text.replace(/ data-gf-(id|src)="[^"]*"/g, '');
+    const before = await html();
+
+    // Without the style bound, the bars would all take Monday's: reported, not hidden.
+    const unbound = await call('update_nodes', {
+      doc: 'bars',
+      updates: [{ id: mon!.id, component: true, name: 'Day' }, { id: mon!.children[1]!.id, bind: { text: 'label' } }, { id: tue!.id, instance: { component: 'Day' } }],
+    });
+    expect(unbound.data.converted).toEqual([{ id: tue!.id, props: { label: 'T' }, changedLayers: 'Bar' }]);
+    expect(unbound.data.convertedNote).toContain('bind.styles');
+    await call('undo_agent_change', { doc: 'bars' });
+
+    // Bound first, in the same call: each bar keeps its height and color, and the page is unchanged.
+    const converted = await call('update_nodes', {
+      doc: 'bars',
+      updates: [
+        { id: mon!.id, component: true, name: 'Day' },
+        { id: mon!.children[0]!.id, bind: { styles: { height: 'barHeight', backgroundColor: 'barColor' } } },
+        { id: mon!.children[1]!.id, bind: { text: 'label' } },
+        ...[tue, wed, thu].map((d) => ({ id: d!.id, instance: { component: 'Day' } })),
+      ],
+    });
+    expect(converted.isError).toBe(false);
+    expect(converted.data.converted).toEqual([
+      { id: tue!.id, props: { barHeight: '40px', barColor: 'var(--color-primary)', label: 'T' } },
+      { id: wed!.id, props: { barHeight: '53px', barColor: 'var(--color-primary)', label: 'W' } },
+      { id: thu!.id, props: { barHeight: '33px', barColor: 'var(--color-tertiary)', label: 'T' } },
+    ]);
+    expect(await html()).toBe(before);
+    const canvas = await call('get_canvas', { doc: 'bars', rootId: page.id, detail: 'outline' });
+    expect(canvas.data.components).toEqual([
+      { id: mon!.id, name: 'Day', props: { barHeight: '4px', barColor: 'var(--color-surface-container)', label: 'M' }, styleProps: { barHeight: ['height'], barColor: ['backgroundColor'] }, instances: 3 },
+    ]);
+    expect(client.getInstructions()).toContain('"bind": {"styles": {"height": "barHeight"}}');
+
+    // A style prop takes what the style takes.
+    const bad = await call('update_nodes', { doc: 'bars', updates: [{ id: wed!.id, props: { barColor: 'url(https://example.com/a.png)' } }] });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('Prop "barColor" sets backgroundColor');
+    await call('update_nodes', { doc: 'bars', updates: [{ id: wed!.id, props: { barHeight: '60px' } }] });
+    expect(await html()).toContain('height: 60px');
+  });
+
+  it("reports an attribute converting would add, and carries one bound to a prop", async () => {
+    const tab = (label: string, current: boolean) => ({
+      tag: 'a',
+      name: `${label} tab`,
+      styles: { color: current ? 'var(--color-primary)' : 'var(--color-on-surface-variant)' },
+      attributes: { href: `#${label.toLowerCase()}`, ...(current && { 'aria-current': 'page' }) },
+      children: [{ tag: 'span', name: 'Label', text: label }],
+    });
+    const made = await call('create_nodes', {
+      doc: 'tabs',
+      nodes: [{ tag: 'main', name: 'App', frame: { width: 390 }, children: [{ tag: 'nav', name: 'Tab bar', styles: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }, children: [tab('Week', true), tab('Plan', false), tab('Log', false)] }] }],
+    });
+    type Made = { id: string; children: Made[] };
+    const page = (made.data.created as Made[])[0]!;
+    const [week, plan, log] = page.children[0]!.children;
+    const setup = [
+      { id: week!.id, component: true, name: 'Tab', bind: { styles: { color: 'tabColor' } } },
+      { id: week!.children[0]!.id, bind: { text: 'label' } },
+    ];
+
+    // Unbound, Plan would also say it's the current page: reported, with the fix.
+    const unbound = await call('update_nodes', { doc: 'tabs', updates: [...setup, { id: plan!.id, instance: { component: 'Tab' } }] });
+    expect(unbound.data.converted).toEqual([{ id: plan!.id, props: { tabColor: 'var(--color-on-surface-variant)', label: 'Plan' }, addedAttributes: ['aria-current="page"'] }]);
+    expect(unbound.data.convertedNote).toContain('bind.attributes');
+    await call('undo_agent_change', { doc: 'tabs' });
+
+    const bound = await call('update_nodes', {
+      doc: 'tabs',
+      updates: [
+        { ...setup[0], bind: { styles: { color: 'tabColor' }, attributes: { 'aria-current': 'current' } } },
+        setup[1],
+        ...[plan, log].map((t) => ({ id: t!.id, instance: { component: 'Tab' } })),
+      ],
+    });
+    expect(bound.isError).toBe(false);
+    expect(bound.data.convertedNote).toBeUndefined();
+    expect((bound.data.converted as Array<{ props: Record<string, string> }>).map((c) => c.props.current)).toEqual(['', '']);
+    const html = (await call('export_html', { doc: 'tabs', id: page.id })).text;
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+    const canvas = await call('get_canvas', { doc: 'tabs', rootId: page.id, detail: 'outline' });
+    expect((canvas.data.components as Array<Record<string, unknown>>)[0]).toMatchObject({ attributeProps: { current: ['aria-current'] } });
+
+    const unsafe = await call('update_nodes', { doc: 'tabs', updates: [{ id: week!.id, bind: { attributes: { onclick: 'handler' } } }] });
+    expect(unsafe.isError).toBe(true);
+    expect(unsafe.text).toContain('Event handler attributes are not allowed');
+  });
+
   it('builds a component and its instances in one call, and keeps them in step', async () => {
     const made = await call('create_nodes', {
       doc: 'components',
