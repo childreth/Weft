@@ -69,12 +69,12 @@ test('text tool inserts editable text into the clicked container', async ({ page
 
 test('double-click edits existing text', async ({ page }) => {
   await open(page);
-  const title = page.locator('h3', { hasText: 'Governed tokens' });
+  const title = page.locator('h2', { hasText: 'Governed tokens' });
   await title.dblclick();
   await page.keyboard.press('Meta+a');
   await page.keyboard.type('Token governance');
   await page.keyboard.press('Escape');
-  await expect(page.locator('h3', { hasText: 'Token governance' })).toBeVisible();
+  await expect(page.locator('h2', { hasText: 'Token governance' })).toBeVisible();
 });
 
 test('drag artboard label to move it; resize with a handle', async ({ page }) => {
@@ -122,9 +122,9 @@ test('agent API edits show up live on the canvas', async ({ page }) => {
     const features = page!.children.find((c) => c.name === 'Features')!;
     agent.updateNode(features.id, { styles: { gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' } });
     const card = agent.createNode({ type: 'frame', tag: 'article', parentId: features.id, name: 'Agent card' });
-    agent.createNode({ type: 'text', tag: 'h3', parentId: card, text: 'Added by an agent' });
+    agent.createNode({ type: 'text', tag: 'h2', parentId: card, text: 'Added by an agent' });
   });
-  await expect(page.locator('h3', { hasText: 'Added by an agent' })).toBeVisible();
+  await expect(page.locator('h2', { hasText: 'Added by an agent' })).toBeVisible();
   // Agent edits are not on the user's undo stack.
   expect(await page.evaluate(() => window.weft.history.canUndo())).toBe(false);
 });

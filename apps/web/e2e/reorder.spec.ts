@@ -91,8 +91,8 @@ test('grid cards reorder; Escape cancels a drag; a click without moving only sel
   // The dimmed original is restored.
   expect(await card('Agent-native').evaluate((el) => (el as HTMLElement).style.opacity)).toBe('');
 
-  await page.locator('h3', { hasText: 'Governed tokens' }).click();
+  await page.locator('h2', { hasText: 'Governed tokens' }).click();
   const selected = await page.evaluate(() => window.weft.editor.getState().selection.map((id) => window.weft.doc.getNode(id)!.tag));
-  expect(selected).toEqual(['h3']);
+  expect(selected).toEqual(['h2']);
   expect(await childNames(page, features)).toEqual(order);
 });

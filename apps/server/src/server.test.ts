@@ -502,6 +502,18 @@ describe('MCP tools', () => {
     const canvas = await call('get_canvas', { doc: 'tabs', rootId: page.id, detail: 'outline' });
     expect((canvas.data.components as Array<Record<string, unknown>>)[0]).toMatchObject({ attributeProps: { current: ['aria-current'] } });
 
+    // Before the fix, converting reported the attribute; the accessibility check says what it means.
+    await call('update_nodes', { doc: 'tabs', updates: [{ id: plan!.id, props: { current: 'page' } }] });
+    const twice = await call('update_nodes', { doc: 'tabs', updates: [{ id: plan!.id, name: 'Plan tab' }] });
+    expect(twice.data.warnings).toEqual([expect.stringMatching(/^Accessibility: 2 layers in one group say aria-current="page" \(Tab, Plan tab\).*set the prop to "page" on the current instance/)]);
+    // An edit somewhere else, or a theme on the whole page, isn't told about it.
+    expect((await call('update_nodes', { doc: 'tabs', updates: [{ id: page.id, theme: 'dark' }] })).data.warnings).toBeUndefined();
+    await call('update_nodes', { doc: 'tabs', updates: [{ id: plan!.id, props: { current: '' } }] });
+
+    // Something new is checked as it's made.
+    const made2 = await call('create_nodes', { doc: 'tabs', parentId: page.id, nodes: [{ tag: 'button', name: 'Search', children: [{ tag: 'span', name: 'Icon', text: 'search', styles: { fontFamily: 'var(--font-family-material-symbols-outlined)' }, attributes: { 'aria-hidden': 'true' } }] }] });
+    expect(made2.data.warnings).toEqual(expect.arrayContaining([expect.stringContaining('Accessibility: Search: this button has no name')]));
+
     const unsafe = await call('update_nodes', { doc: 'tabs', updates: [{ id: week!.id, bind: { attributes: { onclick: 'handler' } } }] });
     expect(unsafe.isError).toBe(true);
     expect(unsafe.text).toContain('Event handler attributes are not allowed');
