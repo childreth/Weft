@@ -79,6 +79,7 @@ Model:
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
+- Wrapping: to put existing layers inside a new one (a card's contents into a button or a link, a few rows into a section), create it with "adopt": the ids to move into it, in order. With no parentId, the new node goes where the first of them was, so one call wraps several cards: {"nodes": [{"tag": "button", "adopt": ["<thumb 1>", "<title 1>"]}, {"tag": "button", "adopt": ["<thumb 2>", "<title 2>"]}]}. Moving them one by one would be a call each. They keep their ids, styles and everything else.
 - Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
 
 Always pass your model name in "model" (e.g. "Claude Opus 5.5", "Qwen3 Coder 30B") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.
@@ -150,6 +151,7 @@ interface NodeSpec {
   component?: boolean;
   bind?: { text?: string; styles?: Record<string, string>; attributes?: Record<string, string> };
   instance?: { component: string; props?: Record<string, string> };
+  adopt?: string[];
   children?: NodeSpec[];
 }
 
@@ -193,6 +195,13 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     })
       .optional()
       .describe("Makes this node an instance: it draws that component's layers and follows its changes. No tag, text or children; styles apply to its root (width, gridColumn, alignSelf)"),
+    adopt: z
+      .array(z.string())
+      .min(1)
+      .optional()
+      .describe(
+        'Ids of existing layers to move into this new node, in this order and ahead of any children: wraps them (a card\'s contents in a button, rows in a section). They keep their ids and everything else',
+      ),
     children: z.array(nodeSpec).optional().describe('Child nodes (frames only)'),
   }),
 );
@@ -382,6 +391,64 @@ function invokerWarnings(room: Room, ids: Iterable<string>): string[] {
   return [...artboards].flatMap((a) => invokerIssues([a, ...room.doc.getDescendantIds(a)].map((d) => room.doc.getNode(d)!)));
 }
 
+/**
+ * Where a top-level new node goes. The call's parentId when it has one; else a
+ * node that adopts layers (and isn't given a frame, which makes an artboard)
+ * takes the place of the first of them, the way wrapping a selection in a frame
+ * does: same parent, same position.
+ */
+function placeOf(room: Room, spec: NodeSpec, parentId: string | null, beforeId: string | null): { parentId: string | null; beforeId: string | null } {
+  if (parentId !== null || !spec.adopt?.length || spec.frame) return { parentId, beforeId };
+  const first = room.doc.getNode(spec.adopt[0]!);
+  // A missing or top-level first layer is reported by adoptIssues; this only has to not throw.
+  return first?.parentId ? { parentId: first.parentId, beforeId: first.id } : { parentId, beforeId };
+}
+
+/**
+ * Problems with the layers new nodes would adopt, found before anything is made:
+ * each must exist and be inside an artboard, be adopted once, and not hold the
+ * place the new node goes (it would have to move inside itself). A node that
+ * adopts must be able to hold them: a frame, not an instance.
+ */
+function adoptIssues(room: Room, nodes: readonly NodeSpec[], places: ReadonlyArray<{ parentId: string | null }>): string[] {
+  const issues: string[] = [];
+  const seen = new Map<string, string>();
+  let above = new Set<string>();
+  const visit = (spec: NodeSpec, at: string) => {
+    if (spec.adopt?.length) {
+      if (spec.type !== 'frame') issues.push(`${at}.adopt: only a frame can hold other layers`);
+      if (spec.instance) issues.push(`${at}.adopt: an instance's layers come from its component, so it can't adopt any`);
+      spec.adopt.forEach((id, i) => {
+        const where = `${at}.adopt[${i}]`;
+        const node = room.doc.getNode(id);
+        if (!node) return issues.push(`${where}: no layer ${id}`);
+        if (node.parentId === null) return issues.push(`${where}: "${node.name}" is an artboard; adopt the layers inside it`);
+        if (above.has(id)) return issues.push(`${where}: "${node.name}" holds the place this node goes, so it can't move inside it. Create the wrapper in "${node.name}"'s parent instead (beforeId "${id}")`);
+        const earlier = seen.get(id);
+        if (earlier) return issues.push(`${where}: "${node.name}" is already adopted by ${earlier}`);
+        seen.set(id, where);
+      });
+    }
+    spec.children?.forEach((child, i) => visit(child, `${at}.children[${i}]`));
+  };
+  nodes.forEach((spec, i) => {
+    // New nodes inside this one can only adopt from outside it, so what's above this one is what matters for all of them.
+    above = new Set<string>();
+    for (let cur = places[i]!.parentId; cur !== null; cur = room.doc.getNode(cur)?.parentId ?? null) above.add(cur);
+    visit(spec, `nodes[${i}]`);
+  });
+  // A layer and something inside it: moving the outer one already brings the inner one.
+  for (const [id, where] of seen) {
+    for (let cur = room.doc.getNode(id)?.parentId ?? null; cur !== null; cur = room.doc.getNode(cur)?.parentId ?? null) {
+      if (seen.has(cur)) {
+        issues.push(`${where}: "${room.doc.getNode(id)!.name}" is inside "${room.doc.getNode(cur)!.name}", which ${seen.get(cur)} already adopts`);
+        break;
+      }
+    }
+  }
+  return issues;
+}
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function nextArtboardPosition(room: Room): { x: number; y: number } {
@@ -413,6 +480,8 @@ function resolveComponent(room: Room, ref: string): string {
 interface CreatedNode {
   id: string;
   name: string;
+  /** Existing layers it now holds. */
+  adopted?: string[];
   children?: CreatedNode[];
 }
 
@@ -460,6 +529,11 @@ function createTree(
   touched.add(id);
   const node = room.doc.getNode(id)!;
   const created: CreatedNode = { id, name: node.name };
+  for (const layer of spec.adopt ?? []) {
+    room.doc.moveNode(layer, id, null, origin);
+    touched.add(layer);
+  }
+  if (spec.adopt?.length) created.adopted = spec.adopt;
   if (spec.children?.length) created.children = spec.children.map((c) => createTree(room, origin, c, id, null, touched));
   return created;
 }
@@ -628,7 +702,7 @@ export function createMcpServer(
     {
       title: 'Create nodes',
       description:
-        'Creates one or more node subtrees in a single atomic step. parentId null (or omitted) creates new artboards, auto-placed to the right of existing ones unless frame is given. Returns the new ids.',
+        'Creates one or more node subtrees in a single atomic step. parentId null (or omitted) creates new artboards, auto-placed to the right of existing ones unless frame is given. A new node can wrap existing layers: "adopt" moves them into it, and with no parentId it goes where the first of them was, so one call can wrap layers in several places. Returns the new ids.',
       inputSchema: {
         doc: docParam,
         parentId: z.string().nullable().default(null).describe('Container to insert into; null for new artboards'),
@@ -641,16 +715,17 @@ export function createMcpServer(
       const { room, agent } = open(doc, model);
       const nodes = input.map(withTypes);
       return mutate(room, agent, 'create_nodes', (touched, report) => {
-        throwIssues(treeIssues(nodes));
-        const created = nodes.map((spec) => createTree(room, agent.identity.origin, spec, parentId, beforeId, touched));
+        const places = nodes.map((spec) => placeOf(room, spec, parentId, beforeId));
+        throwIssues([...treeIssues(nodes), ...adoptIssues(room, nodes, places)]);
+        const created = nodes.map((spec, i) => createTree(room, agent.identity.origin, spec, places[i]!.parentId, places[i]!.beforeId, touched));
         const roots = created.map((c) => c.id);
         // `touched` is in creation (document) order, so the cursor visits parents before children.
         Object.assign(report, {
           kind: 'create',
           roots,
           flash: roots,
-          action: parentId
-            ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, parentId)}`
+          action: places[0]!.parentId
+            ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, places[0]!.parentId)}`
             : `Creating ${created.map((c) => c.name).join(', ')}`,
         });
         const warnings = [...themeWarnings(room, touched), ...iconWarnings(room, touched), ...invokerWarnings(room, touched)];
