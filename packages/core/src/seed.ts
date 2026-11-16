@@ -88,7 +88,7 @@ export function seedLandingPage(doc: GridDocument, origin: Origin = ORIGIN_SEED)
         backgroundColor: 'var(--color-surface-container)',
         borderRadius: 'var(--radius-lg)',
       });
-      text(card, 'h3', title, { fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)' });
+      text(card, 'h2', title, { fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)' });
       text(card, 'p', body, { color: 'var(--color-on-surface-variant)' });
     }
     return page;

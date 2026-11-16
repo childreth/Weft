@@ -103,7 +103,8 @@ Copy is a design decision: a headline that needs four lines can't be rescued by 
 - Buttons and links look interactive and read clearly ("View all", not "Click here").
 - Give inputs a `placeholder` and an `aria-label` (or a `label`), and give icon-only buttons an `aria-label`.
 - Charts and graphics built from shapes need words: `role: "img"` with an `aria-label` that says what they show ("Steps, last 7 days: 8,412 today").
-- Keep the semantic tags honest: headings in order, `button` for actions, `a` with `href` for navigation, and `aria-current: "page"` on the active nav link or tab.
+- Keep the semantic tags honest: headings in order, `button` for actions, `a` with `href` for navigation, and `aria-current: "page"` on the active nav link or tab (only that one: in a component, bind it to a prop).
+- `create_nodes` and `update_nodes` return `Accessibility:` warnings for what you touched: a second current tab, a button or link with no name, a field with no label, a skipped heading level, a repeated id. A screenshot can't show any of these, so fix them before calling the work done.
 
 ## Matching a reference image
 
