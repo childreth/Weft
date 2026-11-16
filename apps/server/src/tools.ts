@@ -19,6 +19,7 @@ import {
   attributeIssues,
   breakpointIssues,
   invokerIssues,
+  accessibilityIssues,
   linkedArtboard,
   stateIssues,
   defaultTokens,
@@ -449,6 +450,35 @@ function adoptIssues(room: Room, nodes: readonly NodeSpec[], places: ReadonlyArr
   return issues;
 }
 
+const MAX_ACCESSIBILITY_WARNINGS = 6;
+
+/**
+ * Accessibility problems in the touched artboards, as they're drawn (instances
+ * expanded), that involve what was touched or what holds it (an icon changed
+ * inside a button with no name). Not what a touched layer holds: a theme set on
+ * an artboard isn't the time to hear about every heading in it. A problem
+ * elsewhere on the page isn't this call's to fix, and repeating it on every
+ * edit would bury the ones that are. create_nodes touches everything it makes.
+ */
+function accessibilityWarnings(room: Room, ids: Iterable<string>): string[] {
+  const touched = [...ids].filter((id) => room.doc.has(id));
+  if (!touched.length) return [];
+  const near = new Set<string>();
+  const artboards = new Set<string>();
+  for (const id of touched) {
+    let node = room.doc.getNode(id);
+    while (node) {
+      near.add(node.id);
+      if (!node.parentId) artboards.add(node.id);
+      node = node.parentId ? room.doc.getNode(node.parentId) : undefined;
+    }
+  }
+  const found = [...artboards].flatMap((a) => accessibilityIssues(room.doc.getExpandedTree(a))).filter((issue) => issue.ids.some((id) => near.has(id)));
+  const shown = found.slice(0, MAX_ACCESSIBILITY_WARNINGS).map((issue) => `Accessibility: ${issue.message}`);
+  if (found.length > shown.length) shown.push(`Accessibility: ${found.length - shown.length} more like these`);
+  return shown;
+}
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function nextArtboardPosition(room: Room): { x: number; y: number } {
@@ -728,7 +758,7 @@ export function createMcpServer(
             ? `Adding ${plural(touched.size, 'node')} to ${nameOf(room, places[0]!.parentId)}`
             : `Creating ${created.map((c) => c.name).join(', ')}`,
         });
-        const warnings = [...themeWarnings(room, touched), ...iconWarnings(room, touched), ...invokerWarnings(room, touched)];
+        const warnings = [...themeWarnings(room, touched), ...iconWarnings(room, touched), ...invokerWarnings(room, touched), ...accessibilityWarnings(room, touched)];
         return {
           created,
           ...(warnings.length && { warnings }),
@@ -862,6 +892,7 @@ export function createMcpServer(
           ...themeWarnings(room, updates.filter((u) => u.theme).map((u) => u.id)),
           ...iconWarnings(room, touched),
           ...invokerWarnings(room, touched),
+          ...accessibilityWarnings(room, touched),
         ];
         const restyled = updates.some((u) => u.styles || u.breakpoints || u.states);
         return {
