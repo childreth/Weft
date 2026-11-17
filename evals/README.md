@@ -8,6 +8,7 @@ evals/
   references/   Reference images the prompts use (yours to add)
   results/      One file per run, from results/TEMPLATE.md
   replay/       Replay evals: one captured Assist request, sent to a model many times
+  traces/       Turning Assist traces into a fine-tuning dataset
 ```
 
 ## Running an eval
@@ -70,3 +71,24 @@ Change one thing at a time between runs (the model, its quantization, the runtim
 | 2026-10-22 | build-from-reference (cg.local.png) | Grok (remote) | `ae8691e` | not reported | 1 | not available | 23 (reviewer), 24 (self) | [CarGurus home](results/2026-10-22-cg-home-grok.md): kept the reference copy verbatim; search is a label, not an input; mobile nav lost; exposed the sessionless reminder bug |
 | 2026-11-09 | skill comparison, 4 free prompts before/after | Claude Opus 5.5 / Claude Code subagents | `57a2136` → `skill-app-screens` | ~20 each | 0–2 | not recorded | not scored | [App screens skill](results/2026-11-09-app-screens-skill.md): Material tint gone, more domain detail, variety back in round 2; found silently dropped argument keys |
 | 2026-11-15 | wrap 4 cards in buttons, same prompt before/after | Qwen 3.8 27B (MLX) / Assist | `c2ca29a` → `adopt-layers` | 0 → 2 edits (+3 reads) | 0 | not recorded | not scored | [Wrapping cards](results/2026-11-15-wrap-cards-qwen.md): stopped at the 10-minute step limit with no calls (12 moves or a rebuild needed); with `adopt`, done in one wrap and one cleanup, first step 260 s |
+| 2026-11-17 | name icon buttons through an attribute prop | Qwen 3.8 27B (MLX) / Assist | `51c22b5` + `trace-logging` | 1 edit (8 updates) | 0 | not recorded | not scored | [Labeling buttons](results/2026-11-17-label-buttons-qwen.md): component `aria-label` bound to `optionsLabel`, five instances named, two plain buttons labeled, no warnings left; 105 s; first recorded trace |
+
+## Traces (training data)
+
+Evals measure a model; traces collect material to teach one. Start Weft with `WEFT_TRACES=1 pnpm dev` and each Assist turn is appended to `.weft-data/traces/<date>.jsonl`: what the model saw at its last step, the tools it was offered and how the turn ended. Undoing a turn adds a line that points at it. They hold your documents and never leave `.weft-data`.
+
+`traces/export.mts` builds a dataset for [mlx-lm](https://github.com/ml-explore/mlx-lm)'s LoRA trainer from the turns worth learning from: answered, kept, and with every tool call accepted.
+
+```sh
+cd apps/server
+npx tsx ../../evals/traces/export.mts                          # every model → .weft-data/traces/mlx/{train,valid}.jsonl
+npx tsx ../../evals/traces/export.mts --model qwen3.8 --reasoning   # one teacher's turns, with its reasoning
+mlx_lm.lora --model <base model> --train --data ../../.weft-data/traces/mlx --mask-prompt
+```
+
+It prints how many turns it kept, by model, and why it left the others out. Some things to know before training on them:
+
+- **The answer is the last reply.** Each example is a whole conversation, and `--mask-prompt` trains only on its final message, so a turn teaches the step that finished it. A turn of four calls teaches its last one; teaching the earlier steps means cutting the conversation at each assistant message, which the export doesn't do yet.
+- **The system prompt is long** (the server instructions, several thousand tokens) and the tools are longer. A small model with a short context may need them trimmed to what the task uses.
+- **Kept isn't the same as good.** A turn you didn't undo may still be wrong in a way you didn't notice. Read a sample before training, and keep the replay fixtures and their documents out: they're for measuring, and a model trained on its test learns nothing you can measure.
+- **Teachers:** a turn from a cloud model is still that provider's output; check its terms before training on it. Open-weight models (Qwen, Gemma) are the simpler teachers.

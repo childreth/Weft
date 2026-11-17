@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -6,6 +7,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AgentIdentity, AgentRoster } from './agents';
 import { ROOM_NAME, type RoomRegistry } from './room';
 import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from './tools';
+import type { TraceLog, TraceMessage, TraceTurn } from './traces';
 
 /**
  * In-editor assistant backed by an Ollama model: local, or an Ollama cloud
@@ -245,9 +247,12 @@ interface Session {
   history: ChatMessage[];
   lastSeen: number;
   busy: boolean;
-  /** The agent's undo-stack depth before each turn that edited, newest last. */
-  turns: Array<{ doc: string; depth: number }>;
+  /** The agent's undo-stack depth before each turn that edited, newest last, and its trace's id when traces are on. */
+  turns: Array<{ doc: string; depth: number; trace?: string }>;
 }
+
+/** A reply's reasoning, kept beside it for traces: the history sent back to the model leaves it out. */
+const reasoning = new WeakMap<ChatMessage, string>();
 
 export interface ChatRequest {
   doc: string;
@@ -338,6 +343,8 @@ export class Assistant {
     private readonly roster: AgentRoster,
     readonly ollamaUrl: string,
     private readonly services: ToolServices,
+    /** Where turns are written down as training data; undefined (the default) writes nothing. */
+    private readonly traces?: TraceLog,
   ) {
     this.sweep = setInterval(() => {
       for (const [id, s] of this.sessions) if (!s.busy && Date.now() - s.lastSeen > SESSION_IDLE_MS) this.end(id);
@@ -428,7 +435,7 @@ ${selection}`;
   }
 
   /** Runs one user turn: model ↔ tools until the model answers, emitting progress as it goes. */
-  async chat(req: ChatRequest, emit: (e: AssistEvent) => void, signal: AbortSignal): Promise<void> {
+  async chat(req: ChatRequest, send: (e: AssistEvent) => void, signal: AbortSignal): Promise<void> {
     if (!ROOM_NAME.test(req.doc)) throw new Error('Invalid document name');
     const session = await this.open(req.session);
     if (session.busy) throw new Error('Assist is already working on a request in this tab');
@@ -437,13 +444,24 @@ ${selection}`;
     const presence = this.rooms.get(req.doc).agent(session.identity);
     const depth = presence.undo.undoStack.length;
     session.history.push({ role: 'user', content: req.prompt });
+    /** What a trace needs from the turn, gathered from what the editor is told. */
+    const outcome = { started: Date.now(), answered: false, errors: [] as string[], refused: 0, system: '', tools: [] as OllamaTool[], cloud: false };
+    const emit = (e: AssistEvent) => {
+      if (e.type === 'message') outcome.answered = true;
+      if (e.type === 'error') outcome.errors.push(e.message);
+      if (e.type === 'tool_result' && !e.ok) outcome.refused++;
+      send(e);
+    };
     try {
       const info = (await this.models(signal).catch(() => [])).find((m) => m.name === req.model);
       const tools = toolsFor(session.tools, info);
+      outcome.tools = tools;
+      outcome.cloud = !!info?.cloud;
       // Snapshot the selection once: re-reading it after edits makes models think their change was already there.
       const system = this.systemPrompt(req, info);
       /** One model call. Its reasoning is shown, not kept in the history sent back. */
       const ask = async (prompt: string, offered?: OllamaTool[], extra?: ChatMessage[]) => {
+        outcome.system = prompt;
         const started = Date.now();
         const showThinking = (text: string) => void (text && emit({ type: 'thinking', text, ms: Date.now() - started }));
         try {
@@ -458,7 +476,10 @@ ${selection}`;
       /** Keeps a reply. Some models (Qwen 3.5) put a final answer only in their reasoning: that is the reply then. */
       const keep = ({ reply, thinking, empty, showThinking }: Awaited<ReturnType<typeof ask>>): ChatMessage => {
         if (empty) reply.content = thinking;
-        else showThinking(thinking);
+        else {
+          showThinking(thinking);
+          if (thinking) reasoning.set(reply, thinking);
+        }
         session.history.push(reply);
         return reply;
       };
@@ -527,9 +548,55 @@ ${selection}`;
       session.busy = false;
       session.lastSeen = Date.now();
       const edits = presence.undo.undoStack.length - depth;
-      if (edits > 0) session.turns.push({ doc: req.doc, depth });
+      const trace = this.trace(req, session, outcome, signal.aborted, Math.max(edits, 0));
+      if (edits > 0) session.turns.push({ doc: req.doc, depth, trace });
       emit({ type: 'done', edits: Math.max(edits, 0) });
     }
+  }
+
+  /**
+   * Writes the turn down when traces are on, returning its id. The messages are
+   * the ones the model saw at its last step: the history it was sent (trimmed
+   * like every request) and the reply and results after it.
+   */
+  private trace(
+    req: ChatRequest,
+    session: Session,
+    outcome: { started: number; answered: boolean; errors: string[]; refused: number; system: string; tools: OllamaTool[]; cloud: boolean },
+    aborted: boolean,
+    edits: number,
+  ): string | undefined {
+    // No model call was made (Ollama unreachable before the first step): nothing to learn from.
+    if (!this.traces || !outcome.system) return undefined;
+    const messages: TraceMessage[] = [
+      { role: 'system', content: outcome.system },
+      // Screenshots are left out: they're megabytes, and already gone from the history by now.
+      ...recent(session.history).map((m): TraceMessage => {
+        const { images: _images, ...kept } = m;
+        const thought = reasoning.get(m);
+        return { ...kept, ...(thought && { thinking: thought }) };
+      }),
+    ];
+    const record: TraceTurn = {
+      type: 'turn',
+      id: randomUUID(),
+      at: new Date(outcome.started).toISOString(),
+      ms: Date.now() - outcome.started,
+      doc: req.doc,
+      model: req.model,
+      cloud: outcome.cloud,
+      ...(req.think && { think: req.think }),
+      selection: req.selection ?? [],
+      outcome: aborted ? 'stopped' : outcome.answered ? 'answered' : 'error',
+      ...(!outcome.answered && outcome.errors.length > 0 && { error: outcome.errors.at(-1) }),
+      notices: outcome.answered ? outcome.errors : outcome.errors.slice(0, -1),
+      edits,
+      refused: outcome.refused,
+      tools: outcome.tools,
+      messages,
+    };
+    void this.traces.write(record);
+    return record.id;
   }
 
   /**
@@ -653,6 +720,8 @@ ${selection}`;
       undo.undo();
       undone++;
     }
+    // The user didn't keep it: that's the most useful thing a trace can say.
+    if (turn.trace && this.traces) void this.traces.write({ type: 'undo', turn: turn.trace, at: new Date().toISOString(), undone });
     return undone;
   }
 
