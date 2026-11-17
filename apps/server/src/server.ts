@@ -10,6 +10,7 @@ import { AgentRoster, type AgentIdentity } from './agents';
 import { Assistant, SESSION_ID, THINK_CHOICES, ollamaUrlFrom, type AssistEvent, type ChatRequest, type ThinkChoice } from './assist';
 import { MAX_SPOKEN_CHARS, Speech } from './speech';
 import { RemoteAccess } from './remote';
+import { TraceLog } from './traces';
 import { AssetError, AssetStore } from './assets';
 import { FontCache, type FontOrigins } from './fonts';
 import { ImageImporter } from './import-image';
@@ -29,6 +30,8 @@ export interface GridServerOptions {
   fontOrigins?: FontOrigins;
   /** Which resolved addresses import_image may fetch from; public ones only by default (tests allow a local fake). */
   imageAddressAllowed?: (address: string) => boolean;
+  /** Folder to write Assist turns to as training data (`traces.ts`); left out, nothing is written. */
+  traceDir?: string;
 }
 
 export interface GridServer {
@@ -37,6 +40,8 @@ export interface GridServer {
   wsUrl: string;
   rooms: RoomRegistry;
   remote: RemoteAccess;
+  /** Set when Assist turns are being written down. */
+  traces?: TraceLog;
   close(): Promise<void>;
 }
 
@@ -127,7 +132,8 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     images: new ImageImporter(assets, options.imageAddressAllowed),
   };
   const sessions = new Map<string, AgentSession>();
-  const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST), services);
+  const traces = options.traceDir ? new TraceLog(options.traceDir) : undefined;
+  const assistant = new Assistant(rooms, roster, options.ollamaUrl ?? ollamaUrlFrom(process.env.OLLAMA_HOST), services, traces);
   const speech = new Speech(assistant.ollamaUrl);
   // Clients that skip sessions share one identity per owner.
   const sessionless = new Map<string, AgentIdentity>();
@@ -427,6 +433,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
     wsUrl: `ws://${host}:${port}`,
     rooms,
     remote,
+    traces,
     close: async () => {
       clearInterval(sweep);
       assistant.close();

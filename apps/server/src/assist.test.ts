@@ -1,8 +1,12 @@
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assistLimits, isRepeating, ollamaUrlFrom, toolResultLimit, type AssistEvent } from './assist';
 import { startGridServer, type GridServer } from './server';
+import type { TraceRecord, TraceTurn } from './traces';
 
 /**
  * A scripted stand-in for Ollama: replies are taken in order; requests are
@@ -465,5 +469,84 @@ describe('assist', () => {
     expect(ollamaUrlFrom('0.0.0.0')).toBe('http://0.0.0.0:11434');
     expect(ollamaUrlFrom('127.0.0.1:9999')).toBe('http://127.0.0.1:9999');
     expect(ollamaUrlFrom('http://box.local:11434')).toBe('http://box.local:11434');
+  });
+});
+
+describe('assist traces', () => {
+  let traced: GridServer;
+  let dir: string;
+  const read = async (): Promise<TraceRecord[]> => {
+    await traced.traces!.flushed();
+    return readdirSync(dir).flatMap((f) => readFileSync(join(dir, f), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as TraceRecord));
+  };
+  const say = (body: Record<string, unknown>) =>
+    fetch(`${traced.httpUrl}/assist/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ doc: 'traced', session: 'trace-session-1', model: 'big:27b', ...body }),
+    }).then((r) => r.text());
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'weft-traces-'));
+    traced = await startGridServer({ port: 0, dataDir: null, traceDir: dir, ollamaUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` });
+  });
+  afterAll(async () => {
+    await traced.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes a turn as the model saw it, and marks it when the user undoes it', async () => {
+    replies = [
+      {
+        role: 'assistant',
+        content: '',
+        thinking: 'One artboard with a heading.',
+        tool_calls: [{ function: { name: 'create_nodes', arguments: { nodes: [{ type: 'frame', name: 'Traced', frame: { x: 0, y: 0, width: 390 }, children: [{ type: 'text', tag: 'h1', text: 'Hi' }] }] } } }],
+      },
+      { role: 'assistant', content: 'Added a page.' },
+    ];
+    await say({ prompt: 'make a page', think: 'on' });
+    const [turn] = (await read()) as TraceTurn[];
+    expect(turn).toMatchObject({ type: 'turn', doc: 'traced', model: 'big:27b', cloud: false, think: 'on', outcome: 'answered', edits: 1, refused: 0, notices: [] });
+    expect(turn!.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool', 'assistant']);
+    expect(turn!.messages[0]!.content).toContain('You are the assistant built into the Weft editor');
+    // The reasoning is kept beside the reply it led to; arguments are kept as the objects the tool got.
+    expect(turn!.messages[2]).toMatchObject({ thinking: 'One artboard with a heading.', tool_calls: [{ function: { name: 'create_nodes', arguments: { nodes: [{ name: 'Traced' }] } } }] });
+    expect(turn!.messages[3]).toMatchObject({ role: 'tool', tool_name: 'create_nodes' });
+    expect(turn!.messages[4]).toEqual({ role: 'assistant', content: 'Added a page.' });
+    expect(turn!.tools.length).toBeGreaterThan(5);
+
+    await fetch(`${traced.httpUrl}/assist/undo`, { method: 'POST', body: JSON.stringify({ session: 'trace-session-1' }) });
+    expect((await read()).at(-1)).toMatchObject({ type: 'undo', turn: turn!.id, undone: 1 });
+  });
+
+  it('says how a turn that went wrong ended', async () => {
+    replies = [
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'update_nodes', arguments: { updates: [{ id: 'nope', text: 'x' }] } } }] },
+      { role: 'assistant', content: 'That node does not exist.' },
+    ];
+    await say({ prompt: 'rename nope' });
+    expect((await read()).at(-1)).toMatchObject({ type: 'turn', outcome: 'answered', refused: 1, edits: 0 });
+
+    // A call that never arrives, twice: the turn stops with a reason.
+    const lost = { stream: [{ thinking: 'Build it all in one call.' }, { wait: 120 }] };
+    const swallowed = assistLimits.swallowedMs;
+    assistLimits.swallowedMs = 50;
+    try {
+      replies = [lost, lost, lost];
+      await say({ prompt: 'build four components' });
+    } finally {
+      assistLimits.swallowedMs = swallowed;
+    }
+    const last = (await read()).at(-1) as TraceTurn;
+    expect(last.outcome).toBe('error');
+    expect(last.error).toBeTruthy();
+    expect(last.notices.length).toBeGreaterThan(0);
+  });
+});
+
+describe('without traces', () => {
+  it('writes nothing', () => {
+    expect(server.traces).toBeUndefined();
   });
 });
