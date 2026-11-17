@@ -519,6 +519,66 @@ describe('MCP tools', () => {
     expect(unsafe.text).toContain('Event handler attributes are not allowed');
   });
 
+  it('wraps existing layers in new ones with adopt, several places in one call', async () => {
+    const card = (name: string) => ({
+      tag: 'li',
+      name: `Form — ${name}`,
+      styles: { display: 'flex', flexDirection: 'column', gap: '2px', padding: '12px' },
+      attributes: { role: 'button', tabindex: '0' },
+      children: [
+        { name: 'Thumbnail', children: [{ tag: 'span', name: 'Thumbnail label', text: name.split(' ')[1]! }] },
+        { tag: 'span', name: 'Name', text: name },
+        { tag: 'span', name: 'Stats', text: '34 HP' },
+      ],
+    });
+    const made = await call('create_nodes', {
+      doc: 'wrap',
+      nodes: [{ tag: 'main', name: 'Sheet', frame: { width: 390 }, children: [{ tag: 'ul', name: 'Beast forms', children: [card('Brown bear'), card('Dire wolf')] }] }],
+    });
+    type Made = { id: string; children: Made[] };
+    const page = (made.data.created as Made[])[0]!;
+    const list = page.children[0]!;
+    const [bear, wolf] = list.children;
+    const kids = (c: Made) => c.children.map((k) => k.id);
+
+    // One call: a button in each card, holding what the card held, in order.
+    const wrapped = await call('create_nodes', {
+      doc: 'wrap',
+      nodes: [bear!, wolf!].map((c, i) => ({ tag: 'button', name: 'Select', attributes: { type: 'button', 'aria-pressed': i === 0 ? 'true' : 'false' }, styles: { display: 'flex', flexDirection: 'column', width: '100%' }, adopt: kids(c) })),
+    });
+    expect(wrapped.isError).toBe(false);
+    expect(wrapped.data.created).toEqual([expect.objectContaining({ name: 'Select', adopted: kids(bear!) }), expect.objectContaining({ name: 'Select', adopted: kids(wolf!) })]);
+    const outline = await call('get_canvas', { doc: 'wrap', rootId: list.id, detail: 'outline' });
+    type Outline = { id: string; tag: string; children?: Outline[] };
+    const [bearLi] = (outline.data.nodes as Outline[])[0]!.children!;
+    expect(bearLi!.children!.map((c) => c.tag)).toEqual(['button']);
+    expect(bearLi!.children![0]!.children!.map((c) => c.id)).toEqual(kids(bear!));
+
+    // Undo puts every layer back where it was, in one step.
+    await call('undo_agent_change', { doc: 'wrap' });
+    const back = await call('get_canvas', { doc: 'wrap', rootId: bear!.id, detail: 'outline' });
+    expect((back.data.nodes as Outline[])[0]!.children!.map((c) => c.id)).toEqual(kids(bear!));
+
+    // Refused before anything is made, with every problem listed.
+    const bad = await call('create_nodes', {
+      doc: 'wrap',
+      parentId: bear!.id,
+      nodes: [
+        { tag: 'div', adopt: [bear!.id, page.id, 'f_nothing'] },
+        { tag: 'span', text: 'x', adopt: [kids(wolf!)[0]!] },
+        { tag: 'div', adopt: [kids(wolf!)[0]!, kids(wolf!)[0]! + ''] },
+        { tag: 'div', adopt: [wolf!.id, kids(wolf!)[1]!] },
+      ],
+    });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('nodes[0].adopt[0]: "Form — Brown bear" holds the place this node goes');
+    expect(bad.text).toContain('nodes[0].adopt[1]: "Sheet" is an artboard');
+    expect(bad.text).toContain('nodes[0].adopt[2]: no layer f_nothing');
+    expect(bad.text).toContain('nodes[1].adopt: only a frame can hold other layers');
+    expect(bad.text).toContain('nodes[2].adopt[0]: "Thumbnail" is already adopted by nodes[1].adopt[0]');
+    expect(bad.text).toContain('nodes[3].adopt[1]: "Name" is inside "Form — Dire wolf", which nodes[3].adopt[0] already adopts');
+  });
+
   it('builds a component and its instances in one call, and keeps them in step', async () => {
     const made = await call('create_nodes', {
       doc: 'components',

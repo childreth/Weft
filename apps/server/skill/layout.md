@@ -76,6 +76,11 @@ These work in the exported page as they are, and on the canvas when the user tur
 
 Design desktop first, then check `get_screenshot` with `width: 390`. Typical mobile overrides: grids to `1fr`, rows to `flexDirection: column`, smaller `padding` and `gap`, smaller heading `fontSize`. Put them on the node that needs them, in `breakpoints.mobile` (or `tablet`). For something only wide screens have, use `breakpoints.desktop`, which never reaches tablet or mobile. If you hide the nav links on mobile, add a menu `button` with `aria-label: "Menu"` that's hidden on desktop and shown in `breakpoints.mobile`, so the links stay reachable.
 
+## Restructuring
+
+- To put existing layers inside a new one (a card's contents into a `button` or an `a`, a run of rows into a `section`), create the wrapper with `adopt`: the ids to move into it, in order. Without a `parentId` it goes where the first of them was, so one `create_nodes` call can wrap every card in a list. The layers keep their ids and styles; move the layout (flex, padding, width) onto the wrapper if it should hold them the way the old parent did.
+- Don't rebuild a section to change its structure: deleting and recreating loses ids, and a long nested call is where models make mistakes.
+
 ## Avoid
 
 - Wrapping every element in its own frame. If a frame has one child and no styles of its own, remove it.
