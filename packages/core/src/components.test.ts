@@ -709,6 +709,21 @@ describe('attribute props', () => {
     expect(drawn(doc, sneaky)).toEqual({ href: '#a' });
   });
 
+  it('clears a value left behind when its prop is unbound', () => {
+    const doc = new GridDocument();
+    const page = artboard(doc);
+    const link = doc.createNode({ type: 'text', tag: 'a', parentId: page, name: 'Link', text: 'Go', component: true, attributes: { href: '#a' } });
+    doc.updateNode(link, { bind: { attributes: { 'aria-label': 'linkLabel' } } });
+    const one = doc.createNode({ type: 'frame', parentId: page, name: 'One', instance: { component: link, props: { linkLabel: 'Go to one' } } });
+    doc.updateNode(link, { bind: null });
+    // The value stays stored (and isn't drawn); null clears it although the prop is gone.
+    expect(doc.getNode(one)!.instance!.props).toEqual({ linkLabel: 'Go to one' });
+    doc.updateNode(one, { props: { linkLabel: null } });
+    expect(doc.getNode(one)!.instance!.props).toEqual({});
+    // Setting a prop the component doesn't have is still refused.
+    expect(() => doc.updateNode(one, { props: { linkLabel: 'Back' } })).toThrow(/has no props/);
+  });
+
   it('keeps attribute bindings through copy, save and detach', () => {
     const doc = new GridDocument();
     const { week, plan } = tabs(doc);
