@@ -136,7 +136,6 @@ for (const t of turns) {
     skipped.set(why, (skipped.get(why) ?? 0) + 1);
     continue;
   }
-  byModel.set(t.model, (byModel.get(t.model) ?? 0) + 1);
   // The turn id decides the side, so exporting again with more traces never moves an example.
   const side = createHash('sha256').update(t.id).digest()[0]! / 256 < validShare ? 'valid' : 'train';
   const { messages, tools } = promptOf(t);
@@ -146,6 +145,7 @@ for (const t of turns) {
     skipped.set(why, (skipped.get(why) ?? 0) + 1);
     continue;
   }
+  byModel.set(t.model, (byModel.get(t.model) ?? 0) + 1);
   sizes.before += JSON.stringify({ messages: t.messages.map(toChat), tools: t.tools }).length;
   sizes.after += line.length;
   split[side].push(line);
