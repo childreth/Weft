@@ -184,7 +184,8 @@ for (let i = 0, attempts = 0; i < runs && attempts < runs * 20; attempts++) {
   const started = Date.now();
   i++;
 
-  const events = await turn(name, session, prompt, selection);
+  // One run going wrong (a dropped connection, a check that can't read the page) is that run's drop, not the batch's end.
+  const events = await turn(name, session, prompt, selection).catch((err: Error): Event[] => [{ type: 'error', message: `request failed: ${err.message}` }]);
   const error = events.find((e) => e.type === 'error')?.message;
   const edits = events.findLast((e) => e.type === 'done')?.edits ?? 0;
   const refused = events.filter((e) => e.type === 'tool_result' && !e.ok).length;
@@ -192,7 +193,13 @@ for (let i = 0, attempts = 0; i < runs && attempts < runs * 20; attempts++) {
   if (!failed) {
     const after = await measure(name, ids).catch((err: Error) => err);
     if (after instanceof Error) failed = after.message;
-    else failed = breakage.check({ target: node.id, parent, children, before, broken, after, edits });
+    else {
+      try {
+        failed = breakage.check({ target: node.id, parent, children, before, broken, after, edits });
+      } catch (err) {
+        failed = `check failed: ${(err as Error).message}`;
+      }
+    }
   }
   if (!failed) {
     const deleted = [...nodeIds].filter((id) => !room.doc.has(id));
