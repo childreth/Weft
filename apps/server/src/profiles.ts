@@ -25,10 +25,12 @@ export function profileFor(model: string, requested?: string): ProfileName {
 
 /**
  * The tools a quick fix uses: change layers, wrap them (`adopt`), remove them,
- * and read more when the selection isn't enough. `delete_nodes` and
- * `get_canvas` are there partly so the model still has to choose.
+ * read more when the selection isn't enough, and measure what the browser drew
+ * (`get_layout`: overflow and real sizes, which stored styles don't show; the
+ * second most used tool in traces). `delete_nodes` and `get_canvas` are there
+ * partly so the model still has to choose.
  */
-export const SMALL_TOOLS: readonly string[] = ['update_nodes', 'create_nodes', 'delete_nodes', 'get_canvas'];
+export const SMALL_TOOLS: readonly string[] = ['update_nodes', 'create_nodes', 'delete_nodes', 'get_canvas', 'get_layout'];
 
 /** Styles that decide how layers are laid out: what a layout fix reads. Colour, type and decoration are left out. */
 const LAYOUT_STYLE = /^(display|position|inset|top|right|bottom|left|zIndex|flex.*|grid.*|gap|rowGap|columnGap|align.*|justify.*|place.*|order|(min|max)?(Width|Height)|width|height|overflow.*|padding.*|margin.*|boxSizing|aspectRatio|listStyle.*)$/;

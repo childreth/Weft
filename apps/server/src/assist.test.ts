@@ -571,7 +571,7 @@ describe('assist with the small profile', () => {
 
     await ask('weft-fix:270m');
     const sent = requests.at(-1)!;
-    expect(sent.tools.map((t) => t.function.name).sort()).toEqual(['create_nodes', 'delete_nodes', 'get_canvas', 'update_nodes']);
+    expect(sent.tools.map((t) => t.function.name).sort()).toEqual(['create_nodes', 'delete_nodes', 'get_canvas', 'get_layout', 'update_nodes']);
     expect(sent.messages[0]!.content).toMatch(/^You make small fixes/);
     expect(sent.messages[0]!.content).toContain('"gap":"8px"');
     expect(sent.messages[0]!.content).not.toContain('color-primary');
