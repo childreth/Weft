@@ -70,6 +70,21 @@ const weighted = (items: readonly Breakage[]): Breakage => {
   return items.at(-1)!;
 };
 
+// A wrong name would otherwise come back as every run "dropped", which reads like a model that can't do the task.
+const ollama = process.env.OLLAMA_HOST ? (process.env.OLLAMA_HOST.startsWith('http') ? process.env.OLLAMA_HOST : `http://${process.env.OLLAMA_HOST}`) : 'http://127.0.0.1:11434';
+const installed = await fetch(`${ollama}/api/tags`)
+  .then((r) => r.json() as Promise<{ models: Array<{ name: string }> }>)
+  .then((r) => r.models.map((m) => m.name))
+  .catch(() => undefined);
+if (!installed) {
+  console.error(`Can't reach Ollama at ${ollama}`);
+  process.exit(1);
+}
+if (!installed.some((name) => name === model || name === `${model}:latest`)) {
+  console.error(`Ollama has no model "${model}". Installed: ${installed.join(', ')}`);
+  process.exit(1);
+}
+
 // A second Weft server on copies. Images and fonts are shared with the real data folder (content-addressed caches).
 const data = mkdtempSync(join(tmpdir(), 'weft-generate-'));
 for (const cache of ['assets', 'fonts']) if (existsSync(join(source, cache))) symlinkSync(join(source, cache), join(data, cache));
