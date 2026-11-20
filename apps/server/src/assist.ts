@@ -8,7 +8,7 @@ import type { AgentIdentity, AgentRoster } from './agents';
 import { ROOM_NAME, type RoomRegistry } from './room';
 import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from './tools';
 import type { TraceLog, TraceMessage, TraceTurn } from './traces';
-import { SMALL_TOOLS, profileFor, smallSelection, smallSystemPrompt, smallTool, type ProfileName } from './profiles';
+import { SMALL_TOOLS, parentsText, profileFor, selectionParts, smallSelection, smallSystemPrompt, smallTool, type ProfileName } from './profiles';
 
 /**
  * In-editor assistant backed by an Ollama model: local, or an Ollama cloud
@@ -421,13 +421,19 @@ export class Assistant {
     return (req.selection ?? [])
       .filter((id) => room.doc.has(id))
       .slice(0, 20)
-      .map((id) => compact(room.doc.getTree(id)[0]!, 4, room.doc));
+      .map((id) => {
+        const layer = compact(room.doc.getTree(id)[0]!, 4, room.doc);
+        const parentId = room.doc.getNode(id)!.parentId;
+        // The parent as a summary (its own styles, a child count): what a fix to how the selection sits together edits.
+        return parentId ? { ...layer, parent: compact(room.doc.getTree(parentId)[0]!, 0, room.doc) } : layer;
+      });
   }
 
   private systemPrompt(selected: Record<string, unknown>[], info: AssistModel | undefined, profile: ProfileName): string {
     if (profile === 'small') return smallSystemPrompt(selected.map(smallSelection));
+    const { layers, parents } = selectionParts(selected);
     const selection = selected.length
-      ? `When the user sent this request they had selected these nodes ("this", "these", "it" refer to them), with their styles: read them here instead of calling get_canvas. Your edits since are not reflected here:\n${JSON.stringify(selected)}`
+      ? `When the user sent this request they had selected these nodes ("this", "these", "it" refer to them), with their styles: read them here instead of calling get_canvas. Your edits since are not reflected here:\n${JSON.stringify(layers)}${parentsText(parents)}`
       : 'Nothing is selected. Call get_canvas to see the document.';
     return `${SERVER_INSTRUCTIONS}
 

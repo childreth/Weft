@@ -55,15 +55,46 @@ export function smallSelection(node: Json): Json {
       const kept = Object.fromEntries(Object.entries(value as Json).flatMap(([bp, styles]) => (layoutOnly(styles) ? [[bp, layoutOnly(styles)]] : [])));
       if (Object.keys(kept).length) out.breakpoints = kept;
     } else if (key === 'children' && Array.isArray(value)) out.children = value.map((c) => smallSelection(c as Json));
+    else if (key === 'parent' && value && typeof value === 'object') out.parent = smallSelection(value as Json);
     else out[key] = value;
   }
   return out;
 }
 
+/**
+ * The selection as a prompt shows it: each selected layer with a `parentId`,
+ * and their parents listed once after them. Assist records each selected layer
+ * with its `parent` inline (a summary: no children, `childCount` instead), so a
+ * trace can be rebuilt for any profile; this is where that turns into prompt.
+ *
+ * Without the parent, a model asked to space out the selected cards had no id
+ * for the layer whose `gap` does it, and read the canvas looking for one.
+ */
+export function selectionParts(selected: Json[]): { layers: Json[]; parents: Json[] } {
+  const parents = new Map<string, Json>();
+  const layers = selected.map(({ parent, ...layer }) => {
+    if (!parent || typeof parent !== 'object') return layer;
+    const p = parent as Json;
+    parents.set(p.id as string, p);
+    return { ...layer, parentId: p.id };
+  });
+  // A parent that is itself selected is already shown in full.
+  const shown = new Set(layers.map((l) => l.id));
+  return { layers, parents: [...parents.values()].filter((p) => !shown.has(p.id as string)) };
+}
+
+/** What the prompts say about the parents, after the selection. */
+export function parentsText(parents: Json[]): string {
+  return parents.length
+    ? `\n\nTheir parents (parentId above): a fix to how layers sit together (gap, direction, columns, alignment) belongs on the parent that lays them out.\n${JSON.stringify(parents)}`
+    : '';
+}
+
 /** The small profile's system prompt around the selected layers (already trimmed with `smallSelection`). */
 export function smallSystemPrompt(selected: Json[]): string {
+  const { layers, parents } = selectionParts(selected);
   const selection = selected.length
-    ? `Selected layers ("this", "these" and "it" mean them), with their layout styles:\n${JSON.stringify(selected)}`
+    ? `Selected layers ("this", "these" and "it" mean them), with their layout styles:\n${JSON.stringify(layers)}${parentsText(parents)}`
     : 'Nothing is selected. Call get_canvas to read the document.';
   return `You make small fixes to a design in Weft, whose layers are HTML elements styled with CSS. Make the change the user asks for in as few calls as possible, using node ids exactly as given. Then say in one sentence what you changed.
 
