@@ -19,7 +19,8 @@
 // be sent, so this is the dataset for a `weft-…` model. Turns that used a tool the profile doesn't
 // offer are left out. Without --profile, each example is the prompt as it was sent.
 //
-// --max-tokens leaves out examples longer than that (estimated at 4 characters a token). mlx-lm cuts
+// --max-tokens leaves out examples longer than that, estimated at 3.3 characters a token (JSON is
+// token-heavy: Qwen 3.5's tokenizer averaged 3.45 on these examples, so 4 let 6,400-token ones through). mlx-lm cuts
 // a sequence past its --max-seq-length from the end, which is where the reply it learns from is, so
 // a long example should be left out rather than cut; and memory in training grows with the longest.
 //
@@ -42,6 +43,8 @@ const models = values('model');
 const validShare = Number(values('valid')[0] ?? 0.1);
 const profile = values('profile')[0];
 const maxTokens = values('max-tokens')[0] ? Number(values('max-tokens')[0]) : undefined;
+/** A little under what Qwen 3.5's tokenizer averaged on exported examples (3.45), so a cap errs short. */
+const CHARS_PER_TOKEN = 3.3;
 if (profile !== undefined && profile !== 'small') {
   console.error(`--profile takes "small" (left out, examples keep the prompt they were sent)`);
   process.exit(1);
@@ -140,7 +143,7 @@ for (const t of turns) {
   const side = createHash('sha256').update(t.id).digest()[0]! / 256 < validShare ? 'valid' : 'train';
   const { messages, tools } = promptOf(t);
   const line = JSON.stringify({ messages: messages.map(toChat), tools });
-  if (maxTokens && line.length / 4 > maxTokens) {
+  if (maxTokens && line.length / CHARS_PER_TOKEN > maxTokens) {
     const why = `longer than ${maxTokens} tokens`;
     skipped.set(why, (skipped.get(why) ?? 0) + 1);
     continue;
@@ -160,7 +163,7 @@ for (const [model, n] of byModel) console.log(`    ${n} by ${model}`);
 const kept = split.train.length + split.valid.length;
 if (kept > 0) {
   const k = (n: number) => `${Math.round(n / kept / 1000)}k`;
-  console.log(`    ${profile ? `profile ${profile}: ` : ''}${k(sizes.after)} characters an example on average (about ${Math.round(sizes.after / kept / 4 / 100) / 10}k tokens)${profile ? `, from ${k(sizes.before)} as sent` : ''}`);
+  console.log(`    ${profile ? `profile ${profile}: ` : ''}${k(sizes.after)} characters an example on average (about ${Math.round(sizes.after / kept / CHARS_PER_TOKEN / 100) / 10}k tokens)${profile ? `, from ${k(sizes.before)} as sent` : ''}`);
 }
 for (const [why, n] of skipped) console.log(`  ${n} left out: ${why}`);
 if (split.valid.length === 0 && split.train.length > 0) console.log('  No validation examples yet: mlx-lm needs valid.jsonl to hold at least one. Collect more turns, or raise --valid.');
