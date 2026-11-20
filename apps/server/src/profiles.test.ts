@@ -40,7 +40,9 @@ describe('prompt profiles', () => {
       parents: [nav],
     });
     // A selected parent is shown in full already, not again as a parent.
-    expect(selectionParts([link('a'), { id: 'nav', tag: 'nav' }]).parents).toEqual([]);
+    expect(selectionParts([link('a'), link('b'), { id: 'nav', tag: 'nav' }]).parents).toEqual([]);
+    // One selected layer is the one to change: no parent, which pulled models away from it.
+    expect(selectionParts([link('a')])).toEqual({ layers: [{ id: 'a', tag: 'a', text: 'a' }], parents: [] });
     const prompt = smallSystemPrompt([link('a'), link('b')].map(smallSelection));
     expect(prompt).toContain('"parentId":"nav"');
     expect(prompt.match(/"id":"nav"/g)).toHaveLength(1);

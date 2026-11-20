@@ -62,19 +62,29 @@ export function smallSelection(node: Json): Json {
 }
 
 /**
- * The selection as a prompt shows it: each selected layer with a `parentId`,
- * and their parents listed once after them. Assist records each selected layer
- * with its `parent` inline (a summary: no children, `childCount` instead), so a
- * trace can be rebuilt for any profile; this is where that turns into prompt.
+ * The selection as a prompt shows it. Assist records each selected layer with
+ * its `parent` inline (a summary: no children, `childCount` instead), so a trace
+ * can be rebuilt for any profile; this is where that turns into prompt.
  *
- * Without the parent, a model asked to space out the selected cards had no id
- * for the layer whose `gap` does it, and read the canvas looking for one.
+ * A parent is shown only when two or more selected layers share it: selected
+ * siblings ("space these out") are laid out by it, and without it a model had
+ * no id for the layer whose gap does that (4B models kept 1–2 of 10 such fixes;
+ * with it, 8–9). A single selected layer is usually the one to change, and
+ * showing its parent too sent models there: on 60 layout fixes, adding parents
+ * to every selected layer took one from 23 to 10 of 50 where the layer itself
+ * was selected.
  */
 export function selectionParts(selected: Json[]): { layers: Json[]; parents: Json[] } {
+  const parentOf = (layer: Json) => (layer.parent && typeof layer.parent === 'object' ? (layer.parent as Json) : undefined);
+  const siblings = new Map<string, number>();
+  for (const layer of selected) {
+    const id = parentOf(layer)?.id as string | undefined;
+    if (id) siblings.set(id, (siblings.get(id) ?? 0) + 1);
+  }
   const parents = new Map<string, Json>();
-  const layers = selected.map(({ parent, ...layer }) => {
-    if (!parent || typeof parent !== 'object') return layer;
-    const p = parent as Json;
+  const layers = selected.map(({ parent: _parent, ...layer }, i) => {
+    const p = parentOf(selected[i]!);
+    if (!p || (siblings.get(p.id as string) ?? 0) < 2) return layer;
     parents.set(p.id as string, p);
     return { ...layer, parentId: p.id };
   });
@@ -86,7 +96,7 @@ export function selectionParts(selected: Json[]): { layers: Json[]; parents: Jso
 /** What the prompts say about the parents, after the selection. */
 export function parentsText(parents: Json[]): string {
   return parents.length
-    ? `\n\nTheir parents (parentId above): a fix to how layers sit together (gap, direction, columns, alignment) belongs on the parent that lays them out.\n${JSON.stringify(parents)}`
+    ? `\n\nThe selected layers with a parentId share this parent, which lays them out: a fix to how they sit together (gap, direction, columns, alignment) goes on it.\n${JSON.stringify(parents)}`
     : '';
 }
 
