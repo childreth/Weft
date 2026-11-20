@@ -2,6 +2,7 @@
 //
 //   cd apps/server && npx tsx ../../evals/traces/export.mts [--dir <traces>] [--out <folder>] [--model <name>]…
 //                                                           [--reasoning] [--with-refused] [--valid 0.1] [--profile small]
+//                                                           [--max-tokens 6000]
 //
 // Traces are written by a Weft server started with WEFT_TRACES=1 (apps/server/src/traces.ts): one
 // line per Assist turn, plus a line for each turn the user undid. A turn makes a training example
@@ -17,6 +18,10 @@
 // styles, and only the quick-fix tools with one-line descriptions. A model is trained on what it will
 // be sent, so this is the dataset for a `weft-…` model. Turns that used a tool the profile doesn't
 // offer are left out. Without --profile, each example is the prompt as it was sent.
+//
+// --max-tokens leaves out examples longer than that (estimated at 4 characters a token). mlx-lm cuts
+// a sequence past its --max-seq-length from the end, which is where the reply it learns from is, so
+// a long example should be left out rather than cut; and memory in training grows with the longest.
 //
 // The traces hold your documents' content, and so does the output: it defaults to a folder inside
 // .weft-data, which is never committed.
@@ -36,6 +41,7 @@ const out = values('out')[0] ?? join(dir, 'mlx');
 const models = values('model');
 const validShare = Number(values('valid')[0] ?? 0.1);
 const profile = values('profile')[0];
+const maxTokens = values('max-tokens')[0] ? Number(values('max-tokens')[0]) : undefined;
 if (profile !== undefined && profile !== 'small') {
   console.error(`--profile takes "small" (left out, examples keep the prompt they were sent)`);
   process.exit(1);
@@ -135,6 +141,11 @@ for (const t of turns) {
   const side = createHash('sha256').update(t.id).digest()[0]! / 256 < validShare ? 'valid' : 'train';
   const { messages, tools } = promptOf(t);
   const line = JSON.stringify({ messages: messages.map(toChat), tools });
+  if (maxTokens && line.length / 4 > maxTokens) {
+    const why = `longer than ${maxTokens} tokens`;
+    skipped.set(why, (skipped.get(why) ?? 0) + 1);
+    continue;
+  }
   sizes.before += JSON.stringify({ messages: t.messages.map(toChat), tools: t.tools }).length;
   sizes.after += line.length;
   split[side].push(line);
