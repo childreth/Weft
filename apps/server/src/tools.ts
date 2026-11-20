@@ -54,7 +54,7 @@ import type { FontCache } from './fonts';
 import { ImportError, type ImageImporter } from './import-image';
 import { strictObject } from './strict';
 import { describeTarget, FLOW_ACTIONS, FLOW_STATES, flowStepIssues, runFlow, type FlowPage } from './flow';
-import type { Renderer, Resource } from './render';
+import type { MeasuredLayer, Renderer, Resource } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
 import { readSkill, skillFiles } from './skill';
 
@@ -614,6 +614,50 @@ function renderResource(room: Room, services: ToolServices): Resource {
   };
 }
 
+/** Most layers one get_layout call measures, as in the editor (`LAYOUT_LIMIT`). */
+const LAYOUT_LIMIT = 400;
+
+/**
+ * get_layout with no editor open: the same answer as the editor's `getLayout`,
+ * measured in the renderer on each artboard's exported page at its own width.
+ * With no editor there's no selection, so it defaults to the artboards.
+ */
+async function measureHeadless(room: Room, services: ToolServices, ids: string[] | undefined, includeDescendants: boolean): Promise<unknown[]> {
+  let targets = ids?.length ? ids : room.doc.getChildren(null).map((n) => n.id);
+  if (includeDescendants) {
+    const all: string[] = [];
+    const walk = (id: string) => {
+      if (all.length >= LAYOUT_LIMIT) return;
+      all.push(id);
+      room.doc.getChildren(id).forEach((c) => walk(c.id));
+    };
+    targets.forEach(walk);
+    targets = all;
+  }
+  const artboardOf = (id: string) => {
+    let node = room.doc.getNode(id);
+    while (node?.parentId) node = room.doc.getNode(node.parentId);
+    return node?.id ?? id;
+  };
+  const byArtboard = new Map<string, string[]>();
+  for (const id of targets) if (room.doc.has(id)) byArtboard.set(artboardOf(id), [...(byArtboard.get(artboardOf(id)) ?? []), id]);
+  const measured = new Map<string, MeasuredLayer>();
+  for (const [artboardId, layerIds] of byArtboard) {
+    const width = room.doc.getNode(artboardId)!.frame!.width;
+    const text = layerIds.filter((id) => room.doc.getNode(id)!.type === 'text');
+    for (const m of await services.renderer.measure(renderHTML(room, artboardId, width), { width, ids: layerIds, text, resource: renderResource(room, services) })) {
+      measured.set(m.id, m);
+    }
+  }
+  return targets.map((id) => {
+    const node = room.doc.getNode(id);
+    if (!node) return { id, error: 'not found' };
+    const m = measured.get(id);
+    if (!m?.rendered) return { id, name: node.name, error: 'not rendered' };
+    return { id, name: node.name, tag: node.tag, artboardId: artboardOf(id), box: m.box, computed: m.computed, overflowing: m.overflowing, visible: m.visible };
+  });
+}
+
 export function createMcpServer(
   rooms: RoomRegistry,
   identity: AgentIdentity,
@@ -1161,7 +1205,7 @@ export function createMcpServer(
     {
       title: 'Get rendered layout',
       description:
-        'Measures nodes as actually rendered by the browser: boxes relative to their artboard (CSS px), key computed styles, and overflow flags. Requires the editor to be open. Defaults to the user selection, else all artboards.',
+        "Measures nodes as actually rendered by the browser: boxes relative to their artboard (CSS px), key computed styles, and overflow flags. Defaults to the user selection, else all artboards. With no editor open, each artboard is measured at its own width in a headless browser, and there's no selection to default to.",
       inputSchema: {
         doc: docParam,
         ids: z.array(z.string()).optional(),
@@ -1174,7 +1218,9 @@ export function createMcpServer(
       try {
         const { room, agent } = open(doc, model);
         agent.look(ids ?? [], ids?.length === 1 ? `Measuring ${nameOf(room, ids[0])}` : 'Measuring layout');
-        const layout = await room.callEditor<LayoutBox[]>('getLayout', { ids, includeDescendants });
+        const layout = room.hasEditorOpen
+          ? await room.callEditor<LayoutBox[]>('getLayout', { ids, includeDescendants })
+          : await measureHeadless(room, services, ids, includeDescendants);
         return ok({ nodes: layout });
       } catch (err) {
         return fail((err as Error).message);

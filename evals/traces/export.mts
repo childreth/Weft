@@ -2,6 +2,7 @@
 //
 //   cd apps/server && npx tsx ../../evals/traces/export.mts [--dir <traces>] [--out <folder>] [--model <name>]…
 //                                                           [--reasoning] [--with-refused] [--valid 0.1] [--profile small]
+//                                                           [--max-tokens 6000] [--last-only]
 //
 // Traces are written by a Weft server started with WEFT_TRACES=1 (apps/server/src/traces.ts): one
 // line per Assist turn, plus a line for each turn the user undid. A turn makes a training example
@@ -17,6 +18,16 @@
 // styles, and only the quick-fix tools with one-line descriptions. A model is trained on what it will
 // be sent, so this is the dataset for a `weft-…` model. Turns that used a tool the profile doesn't
 // offer are left out. Without --profile, each example is the prompt as it was sent.
+//
+// Each step is its own example: the conversation up to and including one assistant message (a tool
+// call, or the closing reply). mlx-lm's --mask-prompt trains only an example's last message, so one
+// example per turn taught only the closing sentence, and a model trained that way wrote fluent
+// summaries of edits it never made. --last-only keeps one example per turn.
+//
+// --max-tokens leaves out examples longer than that, estimated at 3.3 characters a token (JSON is
+// token-heavy: Qwen 3.5's tokenizer averaged 3.45 on these examples, so 4 let 6,400-token ones through). mlx-lm cuts
+// a sequence past its --max-seq-length from the end, which is where the reply it learns from is, so
+// a long example should be left out rather than cut; and memory in training grows with the longest.
 //
 // The traces hold your documents' content, and so does the output: it defaults to a folder inside
 // .weft-data, which is never committed.
@@ -36,6 +47,9 @@ const out = values('out')[0] ?? join(dir, 'mlx');
 const models = values('model');
 const validShare = Number(values('valid')[0] ?? 0.1);
 const profile = values('profile')[0];
+const maxTokens = values('max-tokens')[0] ? Number(values('max-tokens')[0]) : undefined;
+/** A little under what Qwen 3.5's tokenizer averaged on exported examples (3.45), so a cap errs short. */
+const CHARS_PER_TOKEN = 3.3;
 if (profile !== undefined && profile !== 'small') {
   console.error(`--profile takes "small" (left out, examples keep the prompt they were sent)`);
   process.exit(1);
@@ -96,6 +110,17 @@ function promptOf(t: TraceTurn): { messages: TraceMessage[]; tools: unknown[] } 
   return { messages: [{ role: 'system', content: system }, ...t.messages.slice(1)], tools };
 }
 
+/**
+ * A call's arguments without `doc` and `model`: Assist fills those in itself and
+ * never shows them in a tool's schema, but models write them anyway (Qwen signs
+ * its edits "model": "Claude Opus 5.5"), and a student would learn to.
+ */
+function withoutInjected(args: unknown): unknown {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+  const { doc: _doc, model: _model, ...rest } = args as Record<string, unknown>;
+  return rest;
+}
+
 /** One message in mlx-lm's (OpenAI-style) chat format. */
 function toChat(m: TraceMessage): Record<string, unknown> {
   if (m.role === 'tool') return { role: 'tool', name: m.tool_name, content: m.content };
@@ -104,7 +129,7 @@ function toChat(m: TraceMessage): Record<string, unknown> {
     role: 'assistant',
     content: m.content,
     // Only the name and arguments: Ollama adds its own fields (`index`) that chat templates don't expect.
-    ...(m.tool_calls && { tool_calls: m.tool_calls.map(({ function: { name, arguments: args } }) => ({ type: 'function', function: { name, arguments: args } })) }),
+    ...(m.tool_calls && { tool_calls: m.tool_calls.map(({ function: { name, arguments: args } }) => ({ type: 'function', function: { name, arguments: withoutInjected(args) } })) }),
     ...(flag('reasoning') && m.thinking && { reasoning_content: m.thinking }),
   };
 }
@@ -113,32 +138,48 @@ const skipped = new Map<string, number>();
 const byModel = new Map<string, number>();
 const split = { train: [] as string[], valid: [] as string[] };
 const sizes = { before: 0, after: 0 };
+let turnsUsed = 0;
+const lastOnly = flag('last-only');
 for (const t of turns) {
   const why = skip(t);
   if (why) {
     skipped.set(why, (skipped.get(why) ?? 0) + 1);
     continue;
   }
-  byModel.set(t.model, (byModel.get(t.model) ?? 0) + 1);
   // The turn id decides the side, so exporting again with more traces never moves an example.
   const side = createHash('sha256').update(t.id).digest()[0]! / 256 < validShare ? 'valid' : 'train';
   const { messages, tools } = promptOf(t);
-  const line = JSON.stringify({ messages: messages.map(toChat), tools });
+  // --mask-prompt trains only an example's last message. Ending one example at each assistant
+  // message teaches every step (the tool calls); one per turn would teach only the closing sentence.
+  const ends = lastOnly ? [messages.length] : messages.flatMap((m, i) => (m.role === 'assistant' ? [i + 1] : []));
+  let made = 0;
+  for (const end of ends) {
+    const line = JSON.stringify({ messages: messages.slice(0, end).map(toChat), tools });
+    if (maxTokens && line.length / CHARS_PER_TOKEN > maxTokens) {
+      const why = `a step longer than ${maxTokens} tokens`;
+      skipped.set(why, (skipped.get(why) ?? 0) + 1);
+      continue;
+    }
+    sizes.after += line.length;
+    split[side].push(line);
+    made++;
+  }
+  if (made === 0) continue;
+  turnsUsed++;
+  byModel.set(t.model, (byModel.get(t.model) ?? 0) + 1);
   sizes.before += JSON.stringify({ messages: t.messages.map(toChat), tools: t.tools }).length;
-  sizes.after += line.length;
-  split[side].push(line);
 }
 
 mkdirSync(out, { recursive: true });
 for (const side of ['train', 'valid'] as const) writeFileSync(join(out, `${side}.jsonl`), split[side].map((l) => `${l}\n`).join(''));
 
 console.log(`${turns.length} turns in ${dir}`);
-console.log(`  ${split.train.length + split.valid.length} examples: ${split.train.length} train, ${split.valid.length} valid → ${out}`);
-for (const [model, n] of byModel) console.log(`    ${n} by ${model}`);
+console.log(`  ${split.train.length + split.valid.length} examples (${lastOnly ? 'one per turn' : 'one per step'}) from ${turnsUsed} turns: ${split.train.length} train, ${split.valid.length} valid → ${out}`);
+for (const [model, n] of byModel) console.log(`    ${n} turns by ${model}`);
 const kept = split.train.length + split.valid.length;
 if (kept > 0) {
-  const k = (n: number) => `${Math.round(n / kept / 1000)}k`;
-  console.log(`    ${profile ? `profile ${profile}: ` : ''}${k(sizes.after)} characters an example on average (about ${Math.round(sizes.after / kept / 4 / 100) / 10}k tokens)${profile ? `, from ${k(sizes.before)} as sent` : ''}`);
+  const k = (n: number, of: number) => `${Math.round(n / of / 1000)}k`;
+  console.log(`    ${profile ? `profile ${profile}: ` : ''}${k(sizes.after, kept)} characters an example on average (about ${Math.round(sizes.after / kept / CHARS_PER_TOKEN / 100) / 10}k tokens)${profile ? `; a whole turn was ${k(sizes.before, turnsUsed)} as sent` : ''}`);
 }
 for (const [why, n] of skipped) console.log(`  ${n} left out: ${why}`);
 if (split.valid.length === 0 && split.train.length > 0) console.log('  No validation examples yet: mlx-lm needs valid.jsonl to hold at least one. Collect more turns, or raise --valid.');

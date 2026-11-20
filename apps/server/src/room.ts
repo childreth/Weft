@@ -325,6 +325,12 @@ export class RoomRegistry {
     return room;
   }
 
+  /** Saves and forgets a document, so the next `get` loads it again from disk (scripts that open many throwaway copies). */
+  unload(name: string): void {
+    this.rooms.get(name)?.close();
+    this.rooms.delete(name);
+  }
+
   names(): string[] {
     return [...this.rooms.keys()];
   }

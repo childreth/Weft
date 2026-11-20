@@ -148,6 +148,7 @@ function artboardOf(id: string): string {
 
 const round = (n: number) => Math.round(n * 10) / 10;
 
+/** With no editor open, the server measures the same way (`MEASURE_LAYERS` in apps/server/src/render.ts): keep the two in step. */
 function measureNode(id: string) {
   const node = scene.nodes.get(id);
   const el = nodeElements.get(id);

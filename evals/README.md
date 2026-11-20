@@ -9,6 +9,7 @@ evals/
   results/      One file per run, from results/TEMPLATE.md
   replay/       Replay evals: one captured Assist request, sent to a model many times
   traces/       Turning Assist traces into a fine-tuning dataset
+  generate/     Making traces: break layouts, have a teacher fix them, keep the checked fixes
 ```
 
 ## Running an eval
@@ -89,7 +90,27 @@ mlx_lm.lora --model <base model> --train --data ../../.weft-data/traces/mlx --ma
 
 It prints how many turns it kept, by model, and why it left the others out. Some things to know before training on them:
 
-- **The answer is the last reply.** Each example is a whole conversation, and `--mask-prompt` trains only on its final message, so a turn teaches the step that finished it. A turn of four calls teaches its last one; teaching the earlier steps means cutting the conversation at each assistant message, which the export doesn't do yet.
+- **One example per step.** `--mask-prompt` trains only an example's final message, so the export ends one example at each assistant message: a turn of a call and a closing reply makes two, and the call is what gets trained. One example per turn (`--last-only`) taught only the closing sentence: a Qwen 3 4B trained that way wrote fluent summaries of edits it never made.
 - **Train on what the model will be sent.** As sent to Qwen, an example is about 13,500 tokens: 6,200 of tool definitions (21 tools; it used one), 2,400 of server instructions, 3,700 of selection, and the turn itself. `--profile small` rebuilds it the way Assist prompts a tuned model (`weft-…`, `apps/server/src/profiles.ts`): a few lines of instructions, the selection's layout styles only, and five tools with one-line descriptions. That's about 5,500 tokens, mostly the selection. A model trained this way must be run with the same profile, and Assist does that by name. Turns that used a tool the profile doesn't offer are left out.
+- **Leave long examples out instead of cutting them.** `mlx_lm.lora` cuts a sequence past `--max-seq-length` from the end, which is the reply it learns from, and training memory grows with the longest example: a 12,000-token one ran Qwen 3.5 4B out of GPU memory on a 48 GB Mac. `--max-tokens 6000` drops the longest (about a fifth of generated fixes); train with `--max-seq-length` a little above it.
+- **Train on the template you'll run with.** mlx-lm renders examples with the base model's `chat_template.jinja`, and Ollama renders prompts with its own renderer; they must agree. `mlx-community/Qwen3-4B-Instruct-2507-4bit` ships the thinking Qwen 3 template, which wraps the last reply in an empty `<think>` block that Instruct-2507 never writes and Ollama never shows: remove it from a local copy of the model before training. Fuse with `--dequantize`: fusing into 4-bit rounded away half of what was learned (reply loss 1.0 with the adapter, 2.7 fused). Ollama's MLX import of these models needs `"mode": "affine"` in the config's quantization block and `RENDERER qwen3-vl-instruct` / `PARSER qwen3` in the Modelfile (the importer picks `qwen3-coder`, whose XML tool calls the parser can't read).
 - **Kept isn't the same as good.** A turn you didn't undo may still be wrong in a way you didn't notice. Read a sample before training, and keep the replay fixtures and their documents out: they're for measuring, and a model trained on its test learns nothing you can measure.
 - **Teachers:** a turn from a cloud model is still that provider's output; check its terms before training on it. Open-weight models (Qwen, Gemma) are the simpler teachers.
+
+## Generating fixes (more training data)
+
+Real use gives few clean turns. `generate/generate.mts` makes more of them: it copies a real document, breaks one layout in it on purpose, has a teacher model fix it through Assist, and keeps only the fixes that work.
+
+```sh
+cd apps/server
+npx tsx ../../evals/generate/generate.mts --model qwen3.8:27b-mlx --runs 50        # → .weft-data/traces/generated
+npx tsx ../../evals/traces/export.mts --dir ../../.weft-data/traces/generated --profile small
+```
+
+- **The breaks** (`generate/breakages.mts`): a row stacked into a column, a gap removed, padding removed, a child made wider than its container, flex lost, a grid collapsed to one column, and a control with nothing broken, where the right answer is to change nothing. Each comes with a few prompts a person might type, and the broken layer (or, for the ones about how items sit together, its children) is selected. A break that doesn't show on the measured page (a breakpoint overrides it) is skipped, and so is a layer that doesn't have what the break takes away (a grid already in one column, children already touching): there the prompt would ask for the broken state and the check would pass it.
+- **The check** reads the measured page (`get_layout`, headless), not the stored styles, so any fix that looks right passes: the children sit the way they did, with space between them again, inside their container, in as many columns. A fix also fails if it deleted a layer, touched one outside the broken layer and its parent, or had a call refused. A failed fix is undone, which writes the undo line the export drops; the run log (`<out>/runs/`) says why each was dropped, and the script ends with kept/ran per breakage and why attempts were skipped.
+- **Keep it apart from real traces.** Generated turns go to their own folder: train on them, and keep your real traces for validation. A model that does well only on generated breaks has learned the breaks, not the task.
+- **The teacher gets the full prompt** by default (`--profile full`): better instructions, better fixes, and the export rebuilds the small prompt. It's also offered every tool, so turns that used one the small profile lacks are left out of a `--profile small` export. If that's most of them, try `--profile small`.
+- **Models sign their calls.** Qwen often adds `"model": "Claude Opus 5.5"` to a call's arguments, though no schema Assist sends has it. The export drops `doc` and `model` from every call, so a student doesn't learn to.
+- `--seed` repeats a set of runs; `--only no-gap,one-column` picks breakages; `--docs` picks documents (default: every one in `.weft-data`). Nothing touches the originals: the copies live in a temp folder served by a second Weft server.
+
