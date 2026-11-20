@@ -83,12 +83,13 @@ Evals measure a model; traces collect material to teach one. Start Weft with `WE
 cd apps/server
 npx tsx ../../evals/traces/export.mts                          # every model → .weft-data/traces/mlx/{train,valid}.jsonl
 npx tsx ../../evals/traces/export.mts --model qwen3.8 --reasoning   # one teacher's turns, with its reasoning
+npx tsx ../../evals/traces/export.mts --profile small               # as a model tuned for Weft is sent them (see below)
 mlx_lm.lora --model <base model> --train --data ../../.weft-data/traces/mlx --mask-prompt
 ```
 
 It prints how many turns it kept, by model, and why it left the others out. Some things to know before training on them:
 
 - **The answer is the last reply.** Each example is a whole conversation, and `--mask-prompt` trains only on its final message, so a turn teaches the step that finished it. A turn of four calls teaches its last one; teaching the earlier steps means cutting the conversation at each assistant message, which the export doesn't do yet.
-- **The system prompt is long** (the server instructions, several thousand tokens) and the tools are longer. A small model with a short context may need them trimmed to what the task uses.
+- **Train on what the model will be sent.** As sent to Qwen, an example is about 13,500 tokens: 6,200 of tool definitions (21 tools; it used one), 2,400 of server instructions, 3,700 of selection, and the turn itself. `--profile small` rebuilds it the way Assist prompts a tuned model (`weft-…`, `apps/server/src/profiles.ts`): a few lines of instructions, the selection's layout styles only, and four tools with one-line descriptions. That's about 5,500 tokens, mostly the selection. A model trained this way must be run with the same profile, and Assist does that by name. Turns that used a tool the profile doesn't offer are left out.
 - **Kept isn't the same as good.** A turn you didn't undo may still be wrong in a way you didn't notice. Read a sample before training, and keep the replay fixtures and their documents out: they're for measuring, and a model trained on its test learns nothing you can measure.
 - **Teachers:** a turn from a cloud model is still that provider's output; check its terms before training on it. Open-weight models (Qwen, Gemma) are the simpler teachers.

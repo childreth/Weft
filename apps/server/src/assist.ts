@@ -8,6 +8,7 @@ import type { AgentIdentity, AgentRoster } from './agents';
 import { ROOM_NAME, type RoomRegistry } from './room';
 import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from './tools';
 import type { TraceLog, TraceMessage, TraceTurn } from './traces';
+import { SMALL_TOOLS, profileFor, smallSelection, smallSystemPrompt, smallTool, type ProfileName } from './profiles';
 
 /**
  * In-editor assistant backed by an Ollama model: local, or an Ollama cloud
@@ -262,6 +263,8 @@ export interface ChatRequest {
   selection?: string[];
   /** Left out: local models don't think (slow for small edits), cloud models use Ollama's default. */
   think?: ThinkChoice;
+  /** Which prompt to send (`profiles.ts`); left out, a `weft-…` model gets the small one and others the full one. */
+  profile?: ProfileName;
 }
 
 /** Ollama's `think` for a request, or undefined to leave it out. */
@@ -412,13 +415,19 @@ export class Assistant {
     return session;
   }
 
-  private systemPrompt(req: ChatRequest, info: AssistModel | undefined): string {
+  /** The selected layers as the model is shown them (every style; the small profile trims them). */
+  private selected(req: ChatRequest): Record<string, unknown>[] {
     const room = this.rooms.get(req.doc);
-    const selected = (req.selection ?? []).filter((id) => room.doc.has(id)).slice(0, 20);
+    return (req.selection ?? [])
+      .filter((id) => room.doc.has(id))
+      .slice(0, 20)
+      .map((id) => compact(room.doc.getTree(id)[0]!, 4, room.doc));
+  }
+
+  private systemPrompt(selected: Record<string, unknown>[], info: AssistModel | undefined, profile: ProfileName): string {
+    if (profile === 'small') return smallSystemPrompt(selected.map(smallSelection));
     const selection = selected.length
-      ? `When the user sent this request they had selected these nodes ("this", "these", "it" refer to them), with their styles: read them here instead of calling get_canvas. Your edits since are not reflected here:\n${JSON.stringify(
-          selected.map((id) => compact(room.doc.getTree(id)[0]!, 4, room.doc)),
-        )}`
+      ? `When the user sent this request they had selected these nodes ("this", "these", "it" refer to them), with their styles: read them here instead of calling get_canvas. Your edits since are not reflected here:\n${JSON.stringify(selected)}`
       : 'Nothing is selected. Call get_canvas to see the document.';
     return `${SERVER_INSTRUCTIONS}
 
@@ -445,7 +454,8 @@ ${selection}`;
     const depth = presence.undo.undoStack.length;
     session.history.push({ role: 'user', content: req.prompt });
     /** What a trace needs from the turn, gathered from what the editor is told. */
-    const outcome = { started: Date.now(), answered: false, errors: [] as string[], refused: 0, system: '', tools: [] as OllamaTool[], cloud: false };
+    const profile = profileFor(req.model, req.profile);
+    const outcome = { started: Date.now(), answered: false, errors: [] as string[], refused: 0, system: '', tools: [] as OllamaTool[], cloud: false, profile, selected: [] as Record<string, unknown>[] };
     const emit = (e: AssistEvent) => {
       if (e.type === 'message') outcome.answered = true;
       if (e.type === 'error') outcome.errors.push(e.message);
@@ -454,11 +464,12 @@ ${selection}`;
     };
     try {
       const info = (await this.models(signal).catch(() => [])).find((m) => m.name === req.model);
-      const tools = toolsFor(session.tools, info);
+      const tools = profile === 'small' ? session.tools.filter((t) => SMALL_TOOLS.includes(t.function.name)).map(smallTool) : toolsFor(session.tools, info);
       outcome.tools = tools;
       outcome.cloud = !!info?.cloud;
       // Snapshot the selection once: re-reading it after edits makes models think their change was already there.
-      const system = this.systemPrompt(req, info);
+      outcome.selected = this.selected(req);
+      const system = this.systemPrompt(outcome.selected, info, profile);
       /** One model call. Its reasoning is shown, not kept in the history sent back. */
       const ask = async (prompt: string, offered?: OllamaTool[], extra?: ChatMessage[]) => {
         outcome.system = prompt;
@@ -562,7 +573,17 @@ ${selection}`;
   private trace(
     req: ChatRequest,
     session: Session,
-    outcome: { started: number; answered: boolean; errors: string[]; refused: number; system: string; tools: OllamaTool[]; cloud: boolean },
+    outcome: {
+      started: number;
+      answered: boolean;
+      errors: string[];
+      refused: number;
+      system: string;
+      tools: OllamaTool[];
+      cloud: boolean;
+      profile: ProfileName;
+      selected: Record<string, unknown>[];
+    },
     aborted: boolean,
     edits: number,
   ): string | undefined {
@@ -586,7 +607,9 @@ ${selection}`;
       model: req.model,
       cloud: outcome.cloud,
       ...(req.think && { think: req.think }),
+      profile: outcome.profile,
       selection: req.selection ?? [],
+      selected: outcome.selected,
       outcome: aborted ? 'stopped' : outcome.answered ? 'answered' : 'error',
       ...(!outcome.answered && outcome.errors.length > 0 && { error: outcome.errors.at(-1) }),
       notices: outcome.answered ? outcome.errors : outcome.errors.slice(0, -1),
