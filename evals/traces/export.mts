@@ -96,6 +96,17 @@ function promptOf(t: TraceTurn): { messages: TraceMessage[]; tools: unknown[] } 
   return { messages: [{ role: 'system', content: system }, ...t.messages.slice(1)], tools };
 }
 
+/**
+ * A call's arguments without `doc` and `model`: Assist fills those in itself and
+ * never shows them in a tool's schema, but models write them anyway (Qwen signs
+ * its edits "model": "Claude Opus 5.5"), and a student would learn to.
+ */
+function withoutInjected(args: unknown): unknown {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+  const { doc: _doc, model: _model, ...rest } = args as Record<string, unknown>;
+  return rest;
+}
+
 /** One message in mlx-lm's (OpenAI-style) chat format. */
 function toChat(m: TraceMessage): Record<string, unknown> {
   if (m.role === 'tool') return { role: 'tool', name: m.tool_name, content: m.content };
@@ -104,7 +115,7 @@ function toChat(m: TraceMessage): Record<string, unknown> {
     role: 'assistant',
     content: m.content,
     // Only the name and arguments: Ollama adds its own fields (`index`) that chat templates don't expect.
-    ...(m.tool_calls && { tool_calls: m.tool_calls.map(({ function: { name, arguments: args } }) => ({ type: 'function', function: { name, arguments: args } })) }),
+    ...(m.tool_calls && { tool_calls: m.tool_calls.map(({ function: { name, arguments: args } }) => ({ type: 'function', function: { name, arguments: withoutInjected(args) } })) }),
     ...(flag('reasoning') && m.thinking && { reasoning_content: m.thinking }),
   };
 }

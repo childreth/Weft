@@ -142,6 +142,11 @@ for (let i = 0, attempts = 0; i < runs && attempts < runs * 20; attempts++) {
       skip(`${breakage.name}: layer not visible`);
       continue;
     }
+    const unready = breakage.ready?.(before, node.id, children);
+    if (unready) {
+      skip(`${breakage.name}: ${unready}`);
+      continue;
+    }
     words = breakage.apply(room.doc, node, before);
     broken = await measure(name, ids);
   } catch (err) {

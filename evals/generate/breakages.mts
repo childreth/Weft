@@ -36,6 +36,12 @@ export interface Breakage {
   weight: number;
   /** Layers this breakage can be applied to. */
   candidates(doc: GridDocument): SceneNode[];
+  /**
+   * Why the good layout doesn't have what this breakage takes away (a "grid"
+   * already in one column, children already overlapping), or undefined when it
+   * does. Without it a prompt can ask for the broken state and the check passes.
+   */
+  ready?(before: Layout, target: string, children: string[]): string | undefined;
   /** Breaks `node`; returns words the prompts can use (`{n}`). */
   apply(doc: GridDocument, node: SceneNode, before: Layout): Record<string, string> | void;
   /** The prompts read as well with the children selected as with the layer ("these"): a person may select either. */
@@ -116,11 +122,19 @@ const spacedAgain = (ctx: CheckContext) => {
   return now >= Math.max(4, was / 2) ? undefined : `children are ${Math.round(now)}px apart, were ${Math.round(was)}px`;
 };
 
+const isRow = (before: Layout, _t: string, children: string[]) =>
+  orientation(boxes(before, children)) === 'row' ? undefined : 'children not side by side';
+const isSpaced = (before: Layout, _t: string, children: string[]) =>
+  (spacing(boxes(before, children)) ?? 0) >= 4 ? undefined : 'children not spaced apart';
+const hasColumns = (before: Layout, _t: string, children: string[]) =>
+  columns(boxes(before, children)) >= 2 ? undefined : 'already one column';
+
 // ── The breakages ────────────────────────────────────────────────────────────
 
 export const BREAKAGES: Breakage[] = [
   {
     name: 'stacked-row',
+    ready: isRow,
     childrenSelectable: true,
     weight: 3,
     candidates: (doc) => layers(doc).filter((n) => isFlex(n) && (n.styles.flexDirection ?? 'row') === 'row' && shown(doc, n).length >= 2),
@@ -136,6 +150,7 @@ export const BREAKAGES: Breakage[] = [
   },
   {
     name: 'no-gap',
+    ready: isSpaced,
     childrenSelectable: true,
     weight: 3,
     candidates: (doc) => layers(doc).filter((n) => (isFlex(n) || isGrid(n)) && n.styles.gap && shown(doc, n).length >= 2),
@@ -199,6 +214,7 @@ export const BREAKAGES: Breakage[] = [
   },
   {
     name: 'lost-flex',
+    ready: isSpaced,
     childrenSelectable: true,
     weight: 2,
     candidates: (doc) => layers(doc).filter((n) => isFlex(n) && shown(doc, n).length >= 2),
@@ -213,6 +229,7 @@ export const BREAKAGES: Breakage[] = [
   },
   {
     name: 'one-column',
+    ready: hasColumns,
     childrenSelectable: true,
     weight: 2,
     candidates: (doc) => layers(doc).filter((n) => isGrid(n) && (n.styles.gridTemplateColumns ?? '').trim().split(/\s+(?![^(]*\))/).length >= 2 && shown(doc, n).length >= 2),
