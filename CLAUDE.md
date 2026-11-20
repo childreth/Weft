@@ -47,5 +47,5 @@ Goal: hosted Weft that outside agents (e.g. Muse, GrokBot) can connect to over M
 - Hosting split: `apps/web` is static (Netlify-able). `apps/server` is a long-lived process (WebSocket Yjs relay + in-memory docs + disk persistence), so it needs a persistent host with a volume (Fly/Railway/Render/VPS), not Netlify functions.
 - Before hosting or opening `/<doc>` (sync) to non-local clients: auth for browser sync, a configurable allowed-origin list replacing the hard-coded loopback set in `server.ts`, per-agent write rate limits, and per-token doc scoping. Per-agent tokens with names already exist (`remote.ts`).
 - Keep persistence behind an interface (today `.weft-data/` files) so it can move to a managed store.
-- `get_layout`/`select_nodes` need a connected editor (`callEditor`); remote agents must degrade gracefully when none is open.
+- `select_nodes` needs a connected editor (`callEditor`); remote agents must degrade gracefully when none is open. `get_layout` asks the editor when one is open and otherwise measures headless (`Renderer.measure`), in the same shape: keep `MEASURE_LAYERS` in `render.ts` and `measureNode` in `apps/web/src/editor/connection.ts` in step, since a model trained on one reads the other.
 - Keep agent identity/transport out of `core`; `GridDocument` commands stay origin-based so any client can plug in.
