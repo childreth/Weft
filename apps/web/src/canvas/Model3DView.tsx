@@ -1,8 +1,8 @@
 import { createElement, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { formatCameraOrbit, parseScene3D } from '@weft/core';
+import { formatCameraOrbit, hasAnimatedParts, parseScene3D } from '@weft/core';
 import { doc, run } from '../editor/editor';
 import { useEditor } from '../editor/store';
-import { initialOrbit, renderWeft3D, type OrbitState } from './threeEngine';
+import { buildWeft3DScene, initialOrbit, type OrbitState, type Weft3DSceneHandle } from './threeEngine';
 
 interface Model3DViewProps {
   nodeId?: string;
@@ -10,33 +10,43 @@ interface Model3DViewProps {
   src?: string;
   sceneJson?: string;
   cameraOrbit?: string;
+  animateAttr?: string;
   alt?: string;
 }
 
 /**
  * Renders a `<weft-3d>` node on the Weft canvas using the shared Three.js WebGL
- * renderer. In edit mode, pointer events pass through to the canvas; in interact
- * mode, dragging orbits the 3D camera live and scrolling zooms.
+ * renderer. Supports live 60fps spool/part animation with an on/off toggle, and
+ * full pointer orbit + wheel zoom in Interact mode.
  */
-export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, alt }: Model3DViewProps) {
+export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animateAttr, alt }: Model3DViewProps) {
   const hostRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const sceneRef = useRef<Weft3DSceneHandle | null>(null);
+  const elapsedRef = useRef(0);
   const interactingCount = useEditor((s) => s.interacting.size);
   const [isInteracting, setIsInteracting] = useState(false);
 
   const spec = useMemo(() => parseScene3D(sceneJson), [sceneJson]);
+  const animatable = useMemo(() => hasAnimatedParts(spec), [spec]);
   const baseOrbit = useMemo(() => initialOrbit(cameraOrbit, spec), [cameraOrbit, spec]);
   const [orbit, setOrbit] = useState<OrbitState>(baseOrbit);
+  const orbitRef = useRef<OrbitState>(baseOrbit);
+  orbitRef.current = orbit;
+
+  const [animating, setAnimating] = useState(animateAttr === 'true' || animateAttr === '');
   const [dirty, setDirty] = useState(false);
   const dragRef = useRef<{ x: number; y: number; theta: number; phi: number } | null>(null);
 
-  // Sync orbit state when document attributes change.
   useEffect(() => {
     setOrbit(baseOrbit);
     setDirty(false);
   }, [baseOrbit]);
 
-  // Detect whether this node's enclosing artboard is currently in interact mode.
+  useEffect(() => {
+    setAnimating(animateAttr === 'true' || animateAttr === '');
+  }, [animateAttr]);
+
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
@@ -46,24 +56,63 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, alt }:
     setIsInteracting(Boolean(artboardId && useEditor.getState().interacting.has(artboardId)));
   }, [interactingCount]);
 
-  // Render on mount, prop change, orbit change, or resize.
+  // Build reusable Three.js scene once per (src, sceneJson) and render on resize.
   useEffect(() => {
     const host = hostRef.current;
     const canvas = canvasRef.current;
     if (!host || !canvas) return;
     let cancelled = false;
+    let handle: Weft3DSceneHandle | null = null;
     const draw = () => {
-      if (cancelled) return;
-      void renderWeft3D({ canvas, hostEl: host, src, sceneJson, orbit });
+      if (cancelled || !handle) return;
+      handle.render(canvas, host, orbitRef.current, elapsedRef.current);
     };
-    draw();
+    void buildWeft3DScene(host, src, sceneJson).then((built) => {
+      if (cancelled) {
+        built.dispose();
+        return;
+      }
+      handle = built;
+      sceneRef.current = built;
+      draw();
+    });
     const ro = new ResizeObserver(draw);
     ro.observe(host);
     return () => {
       cancelled = true;
       ro.disconnect();
+      if (sceneRef.current === handle) sceneRef.current = null;
+      handle?.dispose();
     };
-  }, [src, sceneJson, orbit]);
+  }, [src, sceneJson]);
+
+  // Re-render when orbit changes while paused.
+  useEffect(() => {
+    const host = hostRef.current;
+    const canvas = canvasRef.current;
+    if (!host || !canvas || !sceneRef.current) return;
+    sceneRef.current.render(canvas, host, orbit, elapsedRef.current);
+  }, [orbit]);
+
+  // 60fps animation loop when animating is enabled.
+  useEffect(() => {
+    if (!animating || !animatable) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      elapsedRef.current += dt;
+      const host = hostRef.current;
+      const canvas = canvasRef.current;
+      if (host && canvas && sceneRef.current) {
+        sceneRef.current.render(canvas, host, orbitRef.current, elapsedRef.current);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [animating, animatable]);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!isInteracting) return;
@@ -103,6 +152,14 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, alt }:
     setDirty(false);
   };
 
+  const toggleAnimate = () => {
+    const next = !animating;
+    setAnimating(next);
+    if (nodeId) {
+      run(() => doc.updateNode(nodeId, { attributes: { 'data-animate': next ? 'true' : 'false' } }));
+    }
+  };
+
   const saveCamera = () => {
     if (!nodeId) return;
     const next = formatCameraOrbit(orbit.theta, orbit.phi, orbit.radius);
@@ -115,6 +172,17 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, alt }:
     display: 'block',
     position: 'relative',
     ...(props.style as Record<string, unknown> | undefined),
+  };
+
+  const btnStyle: Record<string, unknown> = {
+    padding: '6px 10px',
+    borderRadius: '4px',
+    border: '1px solid var(--color-outline-variant, #475569)',
+    backgroundColor: 'var(--color-surface-container-high, #1e293b)',
+    color: 'var(--color-on-surface, #f8fafc)',
+    fontSize: '12px',
+    fontWeight: 600,
+    cursor: 'pointer',
   };
 
   return createElement(
@@ -145,25 +213,25 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, alt }:
         touchAction: isInteracting ? 'none' : 'auto',
       },
     }),
+    isInteracting && animatable
+      ? createElement(
+          'button',
+          {
+            type: 'button',
+            'aria-pressed': animating ? 'true' : 'false',
+            onClick: toggleAnimate,
+            style: { ...btnStyle, position: 'absolute', left: '12px', bottom: '12px' },
+          },
+          animating ? 'Pause rotation' : 'Animate engine',
+        )
+      : null,
     isInteracting && dirty && nodeId
       ? createElement(
           'button',
           {
             type: 'button',
             onClick: saveCamera,
-            style: {
-              position: 'absolute',
-              right: '12px',
-              bottom: '12px',
-              padding: '6px 10px',
-              borderRadius: '4px',
-              border: '1px solid var(--color-outline-variant, #475569)',
-              backgroundColor: 'var(--color-surface-container-high, #1e293b)',
-              color: 'var(--color-on-surface, #f8fafc)',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            },
+            style: { ...btnStyle, position: 'absolute', right: '12px', bottom: '12px' },
           },
           'Save camera',
         )

@@ -54,12 +54,20 @@ export interface Repeat3D {
   arc?: number;
 }
 
+export interface Spin3D {
+  axis: 'x' | 'y' | 'z';
+  /** Angular velocity in radians per second (-30 to 30). */
+  speed: number;
+}
+
 export interface Part3D {
   type: Part3DType;
   name?: string;
   position?: Vec3;
   rotation?: Vec3;
   scale?: Vec3 | number;
+  /** Optional continuous rotation when animation is enabled. */
+  spin?: Spin3D;
   // Geometry parameters (used according to `type`)
   width?: number;
   height?: number;
@@ -160,6 +168,15 @@ function checkPart(part: unknown, path: string, counter: { n: number }): string 
   if (part.position !== undefined && !isVec3(part.position)) return `${path}.position must be [x, y, z]`;
   if (part.rotation !== undefined && !isVec3(part.rotation)) return `${path}.rotation must be [x, y, z]`;
   if (part.scale !== undefined && !isNum(part.scale) && !isVec3(part.scale)) return `${path}.scale must be a number or [x, y, z]`;
+  if (part.spin !== undefined) {
+    if (!isObj(part.spin)) return `${path}.spin must be an object`;
+    if (part.spin.axis !== 'x' && part.spin.axis !== 'y' && part.spin.axis !== 'z') {
+      return `${path}.spin.axis must be "x", "y", or "z"`;
+    }
+    if (!isNum(part.spin.speed) || part.spin.speed < -30 || part.spin.speed > 30) {
+      return `${path}.spin.speed must be a number between -30 and 30`;
+    }
+  }
   if (part.type === 'lathe') {
     if (!Array.isArray(part.points) || part.points.length < 2 || !part.points.every(isVec2)) {
       return `${path}.points must be an array of at least two [radius, y] pairs`;
@@ -228,6 +245,15 @@ export function scene3DIssue(raw: string): string | null {
 export function parseScene3D(raw: string | undefined): Scene3D | null {
   if (!raw || scene3DIssue(raw) !== null) return null;
   return JSON.parse(raw) as Scene3D;
+}
+
+/** Whether any part in `spec` defines a `spin` animation (or `autoRotate` is enabled). */
+export function hasAnimatedParts(spec: Scene3D | null): boolean {
+  if (!spec) return false;
+  if (spec.autoRotate) return true;
+  const check = (parts: Part3D[]): boolean =>
+    parts.some((p) => Boolean(p.spin) || (p.children ? check(p.children) : false));
+  return check(spec.parts);
 }
 
 /**

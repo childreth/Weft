@@ -1,11 +1,11 @@
-import { parseScene3D } from '@weft/core';
-import { initialOrbit, renderWeft3D, type OrbitState } from './threeEngine';
+import { hasAnimatedParts, parseScene3D } from '@weft/core';
+import { buildWeft3DScene, initialOrbit, type OrbitState } from './threeEngine';
 
 /**
  * Standalone browser runtime for exported artboards and headless Playwright
  * screenshots. Hydrates every `<weft-3d>` element on the page with Three.js,
- * wires live pointer orbit + wheel zoom, and resolves `window.__weft3dReady`
- * once all initial frames have painted.
+ * wires live pointer orbit + wheel zoom + animation toggle, and resolves
+ * `window.__weft3dReady` once all initial frames have painted.
  */
 declare global {
   interface Window {
@@ -13,12 +13,16 @@ declare global {
   }
 }
 
-function hydrateElement(el: HTMLElement): Promise<void> {
+async function hydrateElement(el: HTMLElement): Promise<void> {
   const src = el.getAttribute('src') ?? undefined;
   const sceneJson = el.getAttribute('data-scene') ?? undefined;
   const cameraOrbit = el.getAttribute('camera-orbit') ?? undefined;
+  const animateAttr = el.getAttribute('data-animate');
   const spec = parseScene3D(sceneJson);
+  const animatable = hasAnimatedParts(spec);
   let orbit: OrbitState = initialOrbit(cameraOrbit, spec);
+  let animating = animateAttr === 'true' || animateAttr === '';
+  let elapsed = 0;
 
   const canvas = document.createElement('canvas');
   canvas.style.display = 'block';
@@ -29,7 +33,52 @@ function hydrateElement(el: HTMLElement): Promise<void> {
   el.textContent = '';
   el.appendChild(canvas);
 
-  const render = () => renderWeft3D({ canvas, hostEl: el, src, sceneJson, orbit });
+  const handle = await buildWeft3DScene(el, src, sceneJson);
+  const render = () => handle.render(canvas, el, orbit, elapsed);
+  render();
+
+  let raf = 0;
+  let last = performance.now();
+  const loop = (now: number) => {
+    if (!animating) return;
+    elapsed += Math.min(0.1, (now - last) / 1000);
+    last = now;
+    render();
+    raf = requestAnimationFrame(loop);
+  };
+
+  if (animatable) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = animating ? 'Pause rotation' : 'Animate engine';
+    btn.setAttribute('aria-pressed', animating ? 'true' : 'false');
+    Object.assign(btn.style, {
+      position: 'absolute',
+      left: '12px',
+      bottom: '12px',
+      padding: '6px 10px',
+      borderRadius: '4px',
+      border: '1px solid var(--color-outline-variant, #475569)',
+      backgroundColor: 'var(--color-surface-container-high, #1e293b)',
+      color: 'var(--color-on-surface, #f8fafc)',
+      fontSize: '12px',
+      fontWeight: '600',
+      cursor: 'pointer',
+    });
+    btn.addEventListener('click', () => {
+      animating = !animating;
+      btn.textContent = animating ? 'Pause rotation' : 'Animate engine';
+      btn.setAttribute('aria-pressed', animating ? 'true' : 'false');
+      if (animating) {
+        last = performance.now();
+        raf = requestAnimationFrame(loop);
+      } else {
+        cancelAnimationFrame(raf);
+      }
+    });
+    el.appendChild(btn);
+    if (animating) raf = requestAnimationFrame(loop);
+  }
 
   let drag: { x: number; y: number; theta: number; phi: number } | null = null;
   canvas.addEventListener('pointerdown', (e) => {
@@ -43,7 +92,7 @@ function hydrateElement(el: HTMLElement): Promise<void> {
       theta: drag.theta - (e.clientX - drag.x) * 0.008,
       phi: Math.max(0.12, Math.min(Math.PI - 0.12, drag.phi - (e.clientY - drag.y) * 0.008)),
     };
-    void render();
+    render();
   });
   canvas.addEventListener('pointerup', () => {
     drag = null;
@@ -53,14 +102,13 @@ function hydrateElement(el: HTMLElement): Promise<void> {
     (e) => {
       e.preventDefault();
       orbit = { ...orbit, radius: Math.max(1.2, Math.min(40, orbit.radius * (e.deltaY > 0 ? 1.08 : 0.92))) };
-      void render();
+      render();
     },
     { passive: false },
   );
 
-  const ro = new ResizeObserver(() => void render());
+  const ro = new ResizeObserver(render);
   ro.observe(el);
-  return render();
 }
 
 function boot(): Promise<number> {

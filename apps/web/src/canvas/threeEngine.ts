@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { parseCameraOrbit, parseScene3D, type Material3D, type Part3D, type Scene3D } from '@weft/core';
+import { parseCameraOrbit, parseScene3D, type Material3D, type Part3D, type Scene3D, type Spin3D } from '@weft/core';
 
 export interface OrbitState {
   theta: number;
@@ -127,7 +127,7 @@ function createGeometry(part: Part3D): THREE.BufferGeometry | null {
       const pts = (part.points ?? [[0.5, -0.5], [0.5, 0.5]]).map(([r, y]) => new THREE.Vector2(r, y));
       return new THREE.LatheGeometry(
         pts,
-        part.radialSegments ?? 40,
+        part.radialSegments ?? 44,
         part.thetaStart ?? 0,
         part.thetaLength ?? Math.PI * 2,
       );
@@ -144,13 +144,22 @@ function applyTransform(obj: THREE.Object3D, part: Part3D): void {
   else if (Array.isArray(part.scale)) obj.scale.set(part.scale[0], part.scale[1], part.scale[2]);
 }
 
-function buildSinglePart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.Plane[]): THREE.Object3D {
+interface SpinTarget {
+  obj: THREE.Object3D;
+  spin: Spin3D;
+  base: [number, number, number];
+}
+
+function buildSinglePart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.Plane[], spinners: SpinTarget[]): THREE.Object3D {
   if (part.type === 'group') {
     const group = new THREE.Group();
     if (part.name) group.name = part.name;
     applyTransform(group, part);
     for (const child of part.children ?? []) {
-      group.add(buildPart(child, hostEl, clipPlanes));
+      group.add(buildPart(child, hostEl, clipPlanes, spinners));
+    }
+    if (part.spin) {
+      spinners.push({ obj: group, spin: part.spin, base: [group.rotation.x, group.rotation.y, group.rotation.z] });
     }
     return group;
   }
@@ -160,16 +169,19 @@ function buildSinglePart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: T
   const mesh = new THREE.Mesh(geom, mat);
   if (part.name) mesh.name = part.name;
   applyTransform(mesh, part);
+  if (part.spin) {
+    spinners.push({ obj: mesh, spin: part.spin, base: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z] });
+  }
   return mesh;
 }
 
-function buildPart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.Plane[]): THREE.Object3D {
-  if (!part.repeat) return buildSinglePart(part, hostEl, clipPlanes);
+function buildPart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.Plane[], spinners: SpinTarget[]): THREE.Object3D {
+  if (!part.repeat) return buildSinglePart(part, hostEl, clipPlanes, spinners);
   const { count, axis, radius = 0, step = 0, arc = Math.PI * 2 } = part.repeat;
   const group = new THREE.Group();
   if (part.name) group.name = `${part.name}-array`;
   for (let i = 0; i < count; i++) {
-    const item = buildSinglePart({ ...part, repeat: undefined }, hostEl, clipPlanes);
+    const item = buildSinglePart({ ...part, repeat: undefined, spin: undefined }, hostEl, clipPlanes, spinners);
     if (step !== 0) {
       const offset = (i - (count - 1) / 2) * step;
       if (axis === 'x') item.position.x += offset;
@@ -193,6 +205,9 @@ function buildPart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.P
       continue;
     }
     group.add(item);
+  }
+  if (part.spin) {
+    spinners.push({ obj: group, spin: part.spin, base: [group.rotation.x, group.rotation.y, group.rotation.z] });
   }
   return group;
 }
@@ -221,15 +236,15 @@ function addLights(scene: THREE.Scene, spec: Scene3D | null, hostEl: HTMLElement
   }
 
   const preset = spec?.lighting ?? 'studio';
-  const hemi = new THREE.HemisphereLight(0xeef6ff, 0x1c222a, preset === 'cad' ? 1.1 : 0.85);
+  const hemi = new THREE.HemisphereLight(0xeef6ff, 0x1c222a, preset === 'cad' ? 1.15 : 0.9);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xffffff, preset === 'dramatic' ? 2.4 : 1.9);
+  const key = new THREE.DirectionalLight(0xffffff, preset === 'dramatic' ? 2.5 : 1.9);
   key.position.set(5, 7, 6);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x7cc4f8, preset === 'dramatic' ? 1.4 : 0.9);
+  const rim = new THREE.DirectionalLight(0x7cc4f8, preset === 'dramatic' ? 1.5 : 0.9);
   rim.position.set(-6, 3, -5);
   scene.add(rim);
-  const fill = new THREE.DirectionalLight(0xf5a664, 0.55);
+  const fill = new THREE.DirectionalLight(0xf5a664, 0.65);
   fill.position.set(2, -4, 4);
   scene.add(fill);
 }
@@ -242,7 +257,6 @@ function loadGlb(url: string): Promise<THREE.Group> {
         url,
         (gltf) => {
           const root = gltf.scene || new THREE.Group();
-          // Normalize loaded model to fit cleanly inside a ~4-unit sphere centered at origin.
           const box = new THREE.Box3().setFromObject(root);
           const center = box.getCenter(new THREE.Vector3());
           const size = box.getSize(new THREE.Vector3());
@@ -288,22 +302,13 @@ export function initialOrbit(cameraOrbitAttr: string | undefined, sceneSpec: Sce
   return base;
 }
 
-export interface Render3DInput {
-  canvas: HTMLCanvasElement;
-  hostEl: HTMLElement;
-  src?: string;
-  sceneJson?: string;
-  orbit: OrbitState;
+export interface Weft3DSceneHandle {
+  render: (canvas: HTMLCanvasElement, hostEl: HTMLElement, orbit: OrbitState, elapsedSec?: number) => void;
+  dispose: () => void;
 }
 
-export async function renderWeft3D({ canvas, hostEl, src, sceneJson, orbit }: Render3DInput): Promise<void> {
-  const rect = hostEl.getBoundingClientRect();
-  const cssW = Math.max(1, Math.round(rect.width || canvas.clientWidth || 400));
-  const cssH = Math.max(1, Math.round(rect.height || canvas.clientHeight || 300));
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const pixelW = Math.max(1, Math.round(cssW * dpr));
-  const pixelH = Math.max(1, Math.round(cssH * dpr));
-
+/** Builds a reusable Three.js scene once so 60fps spin animation never reallocates geometry. */
+export async function buildWeft3DScene(hostEl: HTMLElement, src?: string, sceneJson?: string): Promise<Weft3DSceneHandle> {
   const spec = parseScene3D(sceneJson);
   const scene = new THREE.Scene();
   if (spec?.background && spec.background !== 'transparent') {
@@ -318,9 +323,10 @@ export async function renderWeft3D({ canvas, hostEl, src, sceneJson, orbit }: Re
 
   addLights(scene, spec, hostEl);
 
+  const spinners: SpinTarget[] = [];
   if (spec) {
     for (const part of spec.parts) {
-      scene.add(buildPart(part, hostEl, clipPlanes));
+      scene.add(buildPart(part, hostEl, clipPlanes, spinners));
     }
   }
   if (src) {
@@ -328,7 +334,6 @@ export async function renderWeft3D({ canvas, hostEl, src, sceneJson, orbit }: Re
       const glb = await loadGlb(src);
       scene.add(glb);
     } catch {
-      // Fallback subtle wireframe cube when a .glb fails to load.
       const fallback = new THREE.Mesh(
         new THREE.BoxGeometry(1.5, 1.5, 1.5),
         new THREE.MeshStandardMaterial({ color: 0x7cc4f8, wireframe: true }),
@@ -337,37 +342,70 @@ export async function renderWeft3D({ canvas, hostEl, src, sceneJson, orbit }: Re
     }
   }
 
-  const camera = new THREE.PerspectiveCamera(orbit.fov, cssW / cssH, 0.05, 200);
-  const phi = Math.max(0.08, Math.min(Math.PI - 0.08, orbit.phi));
-  const r = Math.max(0.5, orbit.radius);
-  camera.position.set(
-    orbit.target[0] + r * Math.sin(phi) * Math.sin(orbit.theta),
-    orbit.target[1] + r * Math.cos(phi),
-    orbit.target[2] + r * Math.sin(phi) * Math.cos(orbit.theta),
-  );
-  camera.lookAt(orbit.target[0], orbit.target[1], orbit.target[2]);
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 200);
+  let disposed = false;
 
-  const renderer = getRenderer();
-  renderer.setPixelRatio(1);
-  renderer.setSize(pixelW, pixelH, false);
-  renderer.render(scene, camera);
+  return {
+    render(canvas, el, orbit, elapsedSec = 0) {
+      if (disposed) return;
+      const rect = el.getBoundingClientRect();
+      const cssW = Math.max(1, Math.round(rect.width || canvas.clientWidth || 400));
+      const cssH = Math.max(1, Math.round(rect.height || canvas.clientHeight || 300));
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const pixelW = Math.max(1, Math.round(cssW * dpr));
+      const pixelH = Math.max(1, Math.round(cssH * dpr));
 
-  if (canvas.width !== pixelW || canvas.height !== pixelH) {
-    canvas.width = pixelW;
-    canvas.height = pixelH;
-  }
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.clearRect(0, 0, pixelW, pixelH);
-    ctx.drawImage(renderer.domElement, 0, 0, pixelW, pixelH);
-  }
+      for (const s of spinners) {
+        const delta = elapsedSec * s.spin.speed;
+        s.obj.rotation.set(
+          s.base[0] + (s.spin.axis === 'x' ? delta : 0),
+          s.base[1] + (s.spin.axis === 'y' ? delta : 0),
+          s.base[2] + (s.spin.axis === 'z' ? delta : 0),
+        );
+      }
 
-  // Dispose temporary procedural geometries/materials so repeated renders never leak GPU memory.
-  scene.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) {
-      obj.geometry.dispose();
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      for (const m of mats) m.dispose();
-    }
-  });
+      const autoTheta = spec?.autoRotate
+        ? elapsedSec * (typeof spec.autoRotate === 'number' ? spec.autoRotate : 0.35)
+        : 0;
+      camera.fov = orbit.fov;
+      camera.aspect = cssW / cssH;
+      camera.updateProjectionMatrix();
+
+      const phi = Math.max(0.08, Math.min(Math.PI - 0.08, orbit.phi));
+      const r = Math.max(0.5, orbit.radius);
+      const theta = orbit.theta + autoTheta;
+      camera.position.set(
+        orbit.target[0] + r * Math.sin(phi) * Math.sin(theta),
+        orbit.target[1] + r * Math.cos(phi),
+        orbit.target[2] + r * Math.sin(phi) * Math.cos(theta),
+      );
+      camera.lookAt(orbit.target[0], orbit.target[1], orbit.target[2]);
+
+      const renderer = getRenderer();
+      renderer.setPixelRatio(1);
+      renderer.setSize(pixelW, pixelH, false);
+      renderer.render(scene, camera);
+
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW;
+        canvas.height = pixelH;
+      }
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, pixelW, pixelH);
+        ctx.drawImage(renderer.domElement, 0, 0, pixelW, pixelH);
+      }
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      scene.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          for (const m of mats) m.dispose();
+        }
+      });
+    },
+  };
 }
