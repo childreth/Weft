@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { parseCameraOrbit, parseScene3D, type Material3D, type Part3D, type Scene3D, type Spin3D } from '@weft/core';
+import { parseCameraOrbit, parseScene3D, type Material3D, type Part3D, type ParticleStream3D, type Scene3D, type Spin3D } from '@weft/core';
 
 export interface OrbitState {
   theta: number;
@@ -19,8 +19,112 @@ const DEFAULT_ORBIT: OrbitState = {
 };
 
 let sharedRenderer: THREE.WebGLRenderer | null = null;
+let glowSpriteTexture: THREE.CanvasTexture | null = null;
 const gltfCache = new Map<string, Promise<THREE.Group>>();
 const loader = new GLTFLoader();
+
+function getGlowTexture(): THREE.CanvasTexture {
+  if (!glowSpriteTexture) {
+    const size = 64;
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext('2d')!;
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 1, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.28, 'rgba(255, 255, 255, 0.85)');
+    grad.addColorStop(0.65, 'rgba(255, 255, 255, 0.22)');
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    glowSpriteTexture = new THREE.CanvasTexture(c);
+  }
+  return glowSpriteTexture;
+}
+
+interface ParticleRunner {
+  update: (elapsedSec: number) => void;
+  dispose: () => void;
+}
+
+function buildParticleStream(stream: ParticleStream3D, hostEl: HTMLElement | null): { points: THREE.Points; runner: ParticleRunner } {
+  const count = Math.floor(stream.count);
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const seeds = new Float32Array(count * 3); // [phase, radialFrac, baseAngle]
+
+  // Deterministic pseudo-random distribution so screenshots & reloads look consistent.
+  let s = (count * 7919 + Math.round(stream.fromX * 100) * 101) >>> 0;
+  const rand = () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0xffffffff;
+  };
+  for (let i = 0; i < count; i++) {
+    seeds[i * 3] = rand();
+    seeds[i * 3 + 1] = rand();
+    seeds[i * 3 + 2] = rand() * Math.PI * 2;
+  }
+
+  const startColor = new THREE.Color(resolveColor(stream.color, hostEl, '#7cc4f8'));
+  const endColor = new THREE.Color(resolveColor(stream.endColor ?? stream.color, hostEl, '#7cc4f8'));
+  const tmpColor = new THREE.Color();
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+  const mat = new THREE.PointsMaterial({
+    size: stream.size ?? 0.14,
+    map: getGlowTexture(),
+    vertexColors: true,
+    transparent: true,
+    opacity: stream.opacity ?? 0.85,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+  });
+
+  const points = new THREE.Points(geom, mat);
+  if (stream.name) points.name = stream.name;
+
+  const span = stream.toX - stream.fromX || 1;
+  const swirl = stream.swirl ?? 0;
+
+  const update = (elapsedSec: number) => {
+    const posAttr = geom.getAttribute('position') as THREE.BufferAttribute;
+    const colAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+    for (let i = 0; i < count; i++) {
+      const phase = seeds[i * 3]!;
+      const rFrac = seeds[i * 3 + 1]!;
+      const baseAngle = seeds[i * 3 + 2]!;
+      const t = (((phase + (elapsedSec * stream.speed) / Math.abs(span)) % 1) + 1) % 1;
+      const x = stream.fromX + t * span;
+      const r = stream.innerRadius + rFrac * (stream.outerRadius - stream.innerRadius);
+      const angle = baseAngle + t * span * swirl;
+      posAttr.setXYZ(i, x, Math.cos(angle) * r, Math.sin(angle) * r);
+
+      // Smooth fade-in at entry and fade-out at exit of each streamline.
+      const fade = Math.sin(t * Math.PI);
+      const brightness = 0.25 + 0.75 * fade;
+      tmpColor.copy(startColor).lerp(endColor, t).multiplyScalar(brightness);
+      colAttr.setXYZ(i, tmpColor.r, tmpColor.g, tmpColor.b);
+    }
+    posAttr.needsUpdate = true;
+    colAttr.needsUpdate = true;
+  };
+
+  update(0);
+  return {
+    points,
+    runner: {
+      update,
+      dispose() {
+        geom.dispose();
+        mat.dispose();
+      },
+    },
+  };
+}
 
 function getRenderer(): THREE.WebGLRenderer {
   if (!sharedRenderer) {
@@ -324,9 +428,15 @@ export async function buildWeft3DScene(hostEl: HTMLElement, src?: string, sceneJ
   addLights(scene, spec, hostEl);
 
   const spinners: SpinTarget[] = [];
+  const particleRunners: ParticleRunner[] = [];
   if (spec) {
     for (const part of spec.parts) {
       scene.add(buildPart(part, hostEl, clipPlanes, spinners));
+    }
+    for (const stream of spec.particles ?? []) {
+      const { points, runner } = buildParticleStream(stream, hostEl);
+      scene.add(points);
+      particleRunners.push(runner);
     }
   }
   if (src) {
@@ -363,6 +473,7 @@ export async function buildWeft3DScene(hostEl: HTMLElement, src?: string, sceneJ
           s.base[2] + (s.spin.axis === 'z' ? delta : 0),
         );
       }
+      for (const p of particleRunners) p.update(elapsedSec);
 
       const autoTheta = spec?.autoRotate
         ? elapsedSec * (typeof spec.autoRotate === 'number' ? spec.autoRotate : 0.35)
@@ -399,6 +510,7 @@ export async function buildWeft3DScene(hostEl: HTMLElement, src?: string, sceneJ
     dispose() {
       if (disposed) return;
       disposed = true;
+      for (const p of particleRunners) p.dispose();
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
           obj.geometry.dispose();

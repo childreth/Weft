@@ -111,6 +111,24 @@ export interface ClipPlane3D {
   constant: number;
 }
 
+export interface ParticleStream3D {
+  name?: string;
+  /** Number of particles in this stream (1–600). */
+  count: number;
+  fromX: number;
+  toX: number;
+  innerRadius: number;
+  outerRadius: number;
+  /** Axial flow speed in scene units per second. */
+  speed: number;
+  /** Optional helical swirl around the X axis (radians per unit distance). */
+  swirl?: number;
+  size?: number;
+  color: string;
+  endColor?: string;
+  opacity?: number;
+}
+
 export interface Scene3D {
   /** Background color (hex, CSS token, or "transparent"). Defaults to transparent. */
   background?: string;
@@ -119,6 +137,7 @@ export interface Scene3D {
   lights?: Light3D[];
   clipPlane?: ClipPlane3D;
   autoRotate?: boolean | number;
+  particles?: ParticleStream3D[];
   parts: Part3D[];
 }
 
@@ -230,6 +249,24 @@ export function scene3DIssue(raw: string): string | null {
       return 'data-scene.clipPlane must have { normal: [x,y,z], constant: number }';
     }
   }
+  if (parsed.particles !== undefined) {
+    if (!Array.isArray(parsed.particles) || parsed.particles.length > 16) {
+      return 'data-scene.particles must be an array of at most 16 streams';
+    }
+    for (let i = 0; i < parsed.particles.length; i++) {
+      const s = parsed.particles[i];
+      const p = `data-scene.particles[${i}]`;
+      if (!isObj(s)) return `${p} must be an object`;
+      if (!isNum(s.count) || s.count < 1 || s.count > 600) return `${p}.count must be between 1 and 600`;
+      if (!isNum(s.fromX) || !isNum(s.toX) || !isNum(s.innerRadius) || !isNum(s.outerRadius) || !isNum(s.speed)) {
+        return `${p} requires numeric fromX, toX, innerRadius, outerRadius, and speed`;
+      }
+      const c1 = checkColor(s.color, `${p}.color`);
+      if (c1) return c1;
+      const c2 = checkColor(s.endColor, `${p}.endColor`);
+      if (c2) return c2;
+    }
+  }
   if (!Array.isArray(parsed.parts) || parsed.parts.length === 0) {
     return 'data-scene.parts must be a non-empty array of 3D parts';
   }
@@ -247,10 +284,10 @@ export function parseScene3D(raw: string | undefined): Scene3D | null {
   return JSON.parse(raw) as Scene3D;
 }
 
-/** Whether any part in `spec` defines a `spin` animation (or `autoRotate` is enabled). */
+/** Whether any part in `spec` defines a `spin` animation, `particles`, or `autoRotate`. */
 export function hasAnimatedParts(spec: Scene3D | null): boolean {
   if (!spec) return false;
-  if (spec.autoRotate) return true;
+  if (spec.autoRotate || (spec.particles && spec.particles.length > 0)) return true;
   const check = (parts: Part3D[]): boolean =>
     parts.some((p) => Boolean(p.spin) || (p.children ? check(p.children) : false));
   return check(spec.parts);
