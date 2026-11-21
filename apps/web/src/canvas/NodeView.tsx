@@ -5,6 +5,7 @@ import { doc, history, run, scene, useChildren, useNode } from '../editor/editor
 import { useEditor } from '../editor/store';
 import { holdsSelection, isRevealable, reactAttributes } from './behaviors';
 import { nodeElements } from './elements';
+import { Model3DView } from './Model3DView';
 
 function registerRef(id: string) {
   return (el: HTMLElement | null) => {
@@ -95,6 +96,18 @@ function drawnLayer(layer: SceneTree): ReactElement {
   };
   if (layer.attributes.src !== undefined) props.src = displaySrc(layer.attributes.src);
   if (layer.tag === 'img') props.draggable = false;
+  if (layer.tag === 'weft-3d') {
+    return (
+      <Model3DView
+        key={layer.id}
+        props={props}
+        src={props.src as string | undefined}
+        sceneJson={layer.attributes['data-scene']}
+        cameraOrbit={layer.attributes['camera-orbit']}
+        alt={layer.attributes.alt}
+      />
+    );
+  }
   if (layer.type === 'text') {
     if (layer.tag === 'textarea') return createElement(layer.tag, { ...props, defaultValue: layer.text ?? '' });
     return createElement(layer.tag, props, layer.text);
@@ -118,6 +131,17 @@ function InstanceView({ node, props }: { node: SceneNode; props: Record<string, 
   const own: Record<string, unknown> = { ...props, ...reactAttributes(tree.attributes), style: toStyle(tree, false) };
   if (tree.theme) own['data-theme'] = tree.theme;
   if (tree.attributes.src !== undefined) own.src = displaySrc(tree.attributes.src);
+  if (tree.tag === 'weft-3d') {
+    return (
+      <Model3DView
+        props={own}
+        src={own.src as string | undefined}
+        sceneJson={tree.attributes['data-scene']}
+        cameraOrbit={tree.attributes['camera-orbit']}
+        alt={tree.attributes.alt}
+      />
+    );
+  }
   if (tree.type === 'text') return createElement(tree.tag, own, tree.text);
   if (VOID_TAGS.has(tree.tag)) return createElement(tree.tag, own);
   return createElement(tree.tag, own, tree.children.map(drawnLayer));
@@ -155,6 +179,18 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
     if (node.tag === 'textarea') return createElement(node.tag, { ...props, defaultValue: node.text ?? '' });
     if (editing) return <EditableText node={node} props={props} />;
     return createElement(node.tag, props, node.text);
+  }
+  if (node.tag === 'weft-3d') {
+    return (
+      <Model3DView
+        nodeId={id}
+        props={props}
+        src={props.src as string | undefined}
+        sceneJson={node.attributes['data-scene']}
+        cameraOrbit={node.attributes['camera-orbit']}
+        alt={node.attributes.alt}
+      />
+    );
   }
   if (VOID_TAGS.has(node.tag)) return createElement(node.tag, props);
   return createElement(

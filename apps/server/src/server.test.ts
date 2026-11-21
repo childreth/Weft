@@ -57,7 +57,7 @@ describe('MCP tools', () => {
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
         'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'export_html', 'import_file',
-        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens', 'test_flow', 'import_image',
+        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens', 'test_flow', 'import_image', 'import_model',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');

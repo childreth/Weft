@@ -1,4 +1,4 @@
-import { GridError, IMAGE_TYPES, exportArtboardHTML, flattenTree, readWeftFile, type ImageExt } from '@weft/core';
+import { ASSET_TYPES, GridError, IMAGE_TYPES, exportArtboardHTML, flattenTree, readWeftFile, type AssetExt } from '@weft/core';
 import { collectAssets, imageFiles, insertImages, storeAssets } from './assets';
 import { imageTarget } from './clipboard';
 import { doc, docName, run } from './editor';
@@ -78,7 +78,7 @@ export async function exportArtboard(id: string) {
   const assets = await collectAssets(flattenTree(doc.getExpandedTree(id)));
   const assetUrl = (name: string) => {
     const data = assets[name];
-    return data && `data:${IMAGE_TYPES[name.split('.')[1] as ImageExt]};base64,${data}`;
+    return data && `data:${ASSET_TYPES[name.split('.')[1] as AssetExt]};base64,${data}`;
   };
   const html = run(() => exportArtboardHTML(doc, id, { assetUrl }));
   if (html) download(`${fileName(doc.getNode(id)?.name ?? 'artboard')}.html`, html, 'text/html');
