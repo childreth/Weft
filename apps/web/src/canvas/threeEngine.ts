@@ -407,7 +407,13 @@ export function initialOrbit(cameraOrbitAttr: string | undefined, sceneSpec: Sce
 }
 
 export interface Weft3DSceneHandle {
-  render: (canvas: HTMLCanvasElement, hostEl: HTMLElement, orbit: OrbitState, elapsedSec?: number) => void;
+  render: (
+    canvas: HTMLCanvasElement,
+    hostEl: HTMLElement,
+    orbit: OrbitState,
+    elapsedSec?: number,
+    highlight?: string[],
+  ) => void;
   dispose: () => void;
 }
 
@@ -455,9 +461,74 @@ export async function buildWeft3DScene(hostEl: HTMLElement, src?: string, sceneJ
   const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 200);
   let disposed = false;
 
+  // Record base material values so view highlighting can dim non-focused parts and restore cleanly.
+  interface MeshMeta {
+    mesh: THREE.Mesh;
+    mat: THREE.MeshStandardMaterial;
+    names: string[];
+    baseOpacity: number;
+    baseTransparent: boolean;
+    baseEmissive: THREE.Color;
+    baseEmissiveIntensity: number;
+  }
+  const meshMeta: MeshMeta[] = [];
+  scene.traverse((obj) => {
+    if (obj instanceof THREE.Mesh && obj.material instanceof THREE.MeshStandardMaterial) {
+      const names: string[] = [];
+      for (let cur: THREE.Object3D | null = obj; cur; cur = cur.parent) {
+        if (cur.name) names.push(cur.name.toLowerCase());
+      }
+      meshMeta.push({
+        mesh: obj,
+        mat: obj.material,
+        names,
+        baseOpacity: obj.material.opacity,
+        baseTransparent: obj.material.transparent,
+        baseEmissive: obj.material.emissive.clone(),
+        baseEmissiveIntensity: obj.material.emissiveIntensity,
+      });
+    }
+  });
+  let lastHighlightKey = '';
+
+  const applyHighlight = (highlight?: string[]) => {
+    const key = highlight && highlight.length ? highlight.join('|').toLowerCase() : '';
+    if (key === lastHighlightKey) return;
+    lastHighlightKey = key;
+    const needles = key ? key.split('|') : [];
+    for (const m of meshMeta) {
+      if (needles.length === 0) {
+        m.mat.opacity = m.baseOpacity;
+        m.mat.transparent = m.baseTransparent;
+        m.mat.emissive.copy(m.baseEmissive);
+        m.mat.emissiveIntensity = m.baseEmissiveIntensity;
+      } else {
+        const matched = needles.some((n) => m.names.some((name) => name.includes(n)));
+        if (matched) {
+          m.mat.opacity = m.baseOpacity;
+          m.mat.transparent = m.baseTransparent;
+          if (m.baseEmissiveIntensity > 0) {
+            m.mat.emissive.copy(m.baseEmissive);
+            m.mat.emissiveIntensity = Math.min(1.6, m.baseEmissiveIntensity * 1.35);
+          } else {
+            m.mat.emissive.copy(m.mat.color);
+            m.mat.emissiveIntensity = 0.28;
+          }
+        } else {
+          m.mat.transparent = true;
+          m.mat.opacity = Math.min(m.baseOpacity, 0.22);
+          m.mat.emissive.copy(m.baseEmissive);
+          m.mat.emissiveIntensity = m.baseEmissiveIntensity * 0.2;
+        }
+      }
+      m.mat.needsUpdate = true;
+    }
+  };
+
   return {
-    render(canvas, el, orbit, elapsedSec = 0) {
+    render(canvas, el, orbit, elapsedSec = 0, highlight) {
       if (disposed) return;
+      applyHighlight(highlight);
       const rect = el.getBoundingClientRect();
       const cssW = Math.max(1, Math.round(rect.width || canvas.clientWidth || 400));
       const cssH = Math.max(1, Math.round(rect.height || canvas.clientHeight || 300));

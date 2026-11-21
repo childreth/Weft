@@ -129,6 +129,19 @@ export interface ParticleStream3D {
   opacity?: number;
 }
 
+export interface ViewPreset3D {
+  /** Short title shown in the summary overlay (e.g. "St. 1–2 · Fan & Intake"). */
+  label: string;
+  /** Concise explanation of what this part/stage does. */
+  summary?: string;
+  /** Camera orbit string ("<theta>deg <phi>deg <radius>"). */
+  orbit: string;
+  /** Camera look-at target [x, y, z]. */
+  target?: Vec3;
+  /** Case-insensitive part name substrings to highlight while this view is active. */
+  highlight?: string[];
+}
+
 export interface Scene3D {
   /** Background color (hex, CSS token, or "transparent"). Defaults to transparent. */
   background?: string;
@@ -138,6 +151,8 @@ export interface Scene3D {
   clipPlane?: ClipPlane3D;
   autoRotate?: boolean | number;
   particles?: ParticleStream3D[];
+  /** Named interactive camera/focus presets triggered by buttons with `data-3d-target` + `data-3d-view`. */
+  views?: Record<string, ViewPreset3D>;
   parts: Part3D[];
 }
 
@@ -265,6 +280,19 @@ export function scene3DIssue(raw: string): string | null {
       if (c1) return c1;
       const c2 = checkColor(s.endColor, `${p}.endColor`);
       if (c2) return c2;
+    }
+  }
+  if (parsed.views !== undefined) {
+    if (!isObj(parsed.views)) return 'data-scene.views must be an object mapping view keys to view presets';
+    for (const [key, v] of Object.entries(parsed.views)) {
+      const p = `data-scene.views.${key}`;
+      if (!isObj(v)) return `${p} must be an object`;
+      if (typeof v.label !== 'string' || !v.label.trim()) return `${p}.label must be a non-empty string`;
+      if (typeof v.orbit !== 'string' || !parseCameraOrbit(v.orbit)) return `${p}.orbit must be "<theta>deg <phi>deg <radius>"`;
+      if (v.target !== undefined && !isVec3(v.target)) return `${p}.target must be [x, y, z]`;
+      if (v.highlight !== undefined && (!Array.isArray(v.highlight) || !v.highlight.every((h) => typeof h === 'string'))) {
+        return `${p}.highlight must be an array of strings`;
+      }
     }
   }
   if (!Array.isArray(parsed.parts) || parsed.parts.length === 0) {

@@ -1,5 +1,5 @@
-import { createElement, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { formatCameraOrbit, hasAnimatedParts, parseScene3D } from '@weft/core';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { formatCameraOrbit, hasAnimatedParts, parseCameraOrbit, parseScene3D, type ViewPreset3D } from '@weft/core';
 import { doc, run } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { buildWeft3DScene, initialOrbit, type OrbitState, type Weft3DSceneHandle } from './threeEngine';
@@ -14,16 +14,21 @@ interface Model3DViewProps {
   alt?: string;
 }
 
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
 /**
  * Renders a `<weft-3d>` node on the Weft canvas using the shared Three.js WebGL
- * renderer. Supports live 60fps spool/part animation with an on/off toggle, and
- * full pointer orbit + wheel zoom in Interact mode.
+ * renderer. Supports live 60fps spool/particle animation with an on/off toggle,
+ * pointer orbit + wheel zoom in Interact mode, and declarative view presets
+ * triggered by buttons with `data-3d-target="<id>"` + `data-3d-view="<key>"`.
  */
 export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animateAttr, alt }: Model3DViewProps) {
   const hostRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneRef = useRef<Weft3DSceneHandle | null>(null);
   const elapsedRef = useRef(0);
+  const transitionRef = useRef<number>(0);
   const interactingCount = useEditor((s) => s.interacting.size);
   const [isInteracting, setIsInteracting] = useState(false);
 
@@ -34,12 +39,20 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
   const orbitRef = useRef<OrbitState>(baseOrbit);
   orbitRef.current = orbit;
 
+  const [activeViewKey, setActiveViewKey] = useState<string | null>(null);
+  const activeView: ViewPreset3D | null = activeViewKey && spec?.views ? (spec.views[activeViewKey] ?? null) : null;
+  const highlightRef = useRef<string[] | undefined>(undefined);
+  highlightRef.current = activeView?.highlight;
+
   const [animating, setAnimating] = useState(animateAttr === 'true' || animateAttr === '');
   const [dirty, setDirty] = useState(false);
   const dragRef = useRef<{ x: number; y: number; theta: number; phi: number } | null>(null);
 
+  const elementId = typeof props.id === 'string' ? props.id : undefined;
+
   useEffect(() => {
     setOrbit(baseOrbit);
+    setActiveViewKey(null);
     setDirty(false);
   }, [baseOrbit]);
 
@@ -56,6 +69,78 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     setIsInteracting(Boolean(artboardId && useEditor.getState().interacting.has(artboardId)));
   }, [interactingCount]);
 
+  const animateCameraTo = useCallback((to: OrbitState) => {
+    cancelAnimationFrame(transitionRef.current);
+    const from = { ...orbitRef.current, target: [...orbitRef.current.target] as [number, number, number] };
+    const start = performance.now();
+    const duration = 480;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const e = easeOutCubic(t);
+      const next: OrbitState = {
+        theta: lerp(from.theta, to.theta, e),
+        phi: lerp(from.phi, to.phi, e),
+        radius: lerp(from.radius, to.radius, e),
+        fov: lerp(from.fov, to.fov, e),
+        target: [
+          lerp(from.target[0], to.target[0], e),
+          lerp(from.target[1], to.target[1], e),
+          lerp(from.target[2], to.target[2], e),
+        ],
+      };
+      setOrbit(next);
+      if (t < 1) transitionRef.current = requestAnimationFrame(step);
+    };
+    transitionRef.current = requestAnimationFrame(step);
+  }, []);
+
+  const selectView = useCallback(
+    (key: string | null) => {
+      const nextKey = key && key === activeViewKey ? null : key;
+      setActiveViewKey(nextKey);
+      const root = hostRef.current?.getRootNode();
+      if (elementId && (root instanceof ShadowRoot || root instanceof Document)) {
+        for (const btn of root.querySelectorAll<HTMLElement>(`[data-3d-target="${CSS.escape(elementId)}"]`)) {
+          btn.setAttribute('aria-pressed', btn.getAttribute('data-3d-view') === nextKey ? 'true' : 'false');
+        }
+      }
+      if (!nextKey || !spec?.views?.[nextKey]) {
+        animateCameraTo(baseOrbit);
+        return;
+      }
+      const preset = spec.views[nextKey]!;
+      const parsed = parseCameraOrbit(preset.orbit);
+      const targetOrbit: OrbitState = {
+        theta: parsed?.theta ?? baseOrbit.theta,
+        phi: parsed?.phi ?? baseOrbit.phi,
+        radius: parsed?.radius ?? baseOrbit.radius,
+        target: preset.target ? [...preset.target] : [...baseOrbit.target],
+        fov: baseOrbit.fov,
+      };
+      animateCameraTo(targetOrbit);
+    },
+    [activeViewKey, animateCameraTo, baseOrbit, elementId, spec],
+  );
+
+  // Listen for clicks on external station/view buttons inside the same artboard while interacting.
+  useEffect(() => {
+    if (!isInteracting || !elementId || !spec?.views) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const root = host.getRootNode();
+    if (!(root instanceof ShadowRoot) && !(root instanceof Document)) return;
+    const onClick = (e: Event) => {
+      const target = (e.target as HTMLElement | null)?.closest?.<HTMLElement>(`[data-3d-target="${CSS.escape(elementId)}"]`);
+      if (!target) return;
+      const viewKey = target.getAttribute('data-3d-view');
+      if (viewKey === null) return;
+      e.preventDefault();
+      selectView(viewKey === '' || viewKey === 'reset' ? null : viewKey);
+    };
+    root.addEventListener('click', onClick);
+    return () => root.removeEventListener('click', onClick);
+  }, [isInteracting, elementId, spec, selectView]);
+
   // Build reusable Three.js scene once per (src, sceneJson) and render on resize.
   useEffect(() => {
     const host = hostRef.current;
@@ -65,7 +150,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     let handle: Weft3DSceneHandle | null = null;
     const draw = () => {
       if (cancelled || !handle) return;
-      handle.render(canvas, host, orbitRef.current, elapsedRef.current);
+      handle.render(canvas, host, orbitRef.current, elapsedRef.current, highlightRef.current);
     };
     void buildWeft3DScene(host, src, sceneJson).then((built) => {
       if (cancelled) {
@@ -80,19 +165,20 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     ro.observe(host);
     return () => {
       cancelled = true;
+      cancelAnimationFrame(transitionRef.current);
       ro.disconnect();
       if (sceneRef.current === handle) sceneRef.current = null;
       handle?.dispose();
     };
   }, [src, sceneJson]);
 
-  // Re-render when orbit changes while paused.
+  // Re-render when orbit or active highlight changes while paused.
   useEffect(() => {
     const host = hostRef.current;
     const canvas = canvasRef.current;
     if (!host || !canvas || !sceneRef.current) return;
-    sceneRef.current.render(canvas, host, orbit, elapsedRef.current);
-  }, [orbit]);
+    sceneRef.current.render(canvas, host, orbit, elapsedRef.current, activeView?.highlight);
+  }, [orbit, activeView]);
 
   // 60fps animation loop when animating is enabled.
   useEffect(() => {
@@ -106,7 +192,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
       const host = hostRef.current;
       const canvas = canvasRef.current;
       if (host && canvas && sceneRef.current) {
-        sceneRef.current.render(canvas, host, orbitRef.current, elapsedRef.current);
+        sceneRef.current.render(canvas, host, orbitRef.current, elapsedRef.current, highlightRef.current);
       }
       raf = requestAnimationFrame(tick);
     };
@@ -116,6 +202,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!isInteracting) return;
+    cancelAnimationFrame(transitionRef.current);
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = { x: e.clientX, y: e.clientY, theta: orbit.theta, phi: orbit.phi };
@@ -140,6 +227,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
 
   const onWheel = (e: ReactWheelEvent<HTMLCanvasElement>) => {
     if (!isInteracting) return;
+    cancelAnimationFrame(transitionRef.current);
     e.stopPropagation();
     const factor = e.deltaY > 0 ? 1.08 : 0.92;
     setOrbit((prev) => ({ ...prev, radius: Math.max(1.2, Math.min(40, prev.radius * factor)) }));
@@ -148,7 +236,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
 
   const onDoubleClick = () => {
     if (!isInteracting) return;
-    setOrbit(baseOrbit);
+    selectView(null);
     setDirty(false);
   };
 
@@ -213,6 +301,59 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
         touchAction: isInteracting ? 'none' : 'auto',
       },
     }),
+    isInteracting && activeView
+      ? createElement(
+          'div',
+          {
+            role: 'status',
+            'aria-live': 'polite',
+            style: {
+              position: 'absolute',
+              left: '12px',
+              top: '12px',
+              maxWidth: '320px',
+              padding: '10px 12px',
+              borderRadius: '4px',
+              border: '1px solid var(--color-outline-variant, #333e4b)',
+              backgroundColor: 'color-mix(in srgb, var(--color-surface-container, #1c222a) 92%, transparent)',
+              color: 'var(--color-on-surface, #e6ecf2)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              pointerEvents: 'auto',
+            },
+          },
+          createElement(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' } },
+            createElement('strong', { style: { fontSize: '13px', fontWeight: 700 } }, activeView.label),
+            createElement(
+              'button',
+              {
+                type: 'button',
+                onClick: () => selectView(null),
+                style: {
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--color-primary, #7cc4f8)',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  padding: '0',
+                },
+              },
+              'Full view',
+            ),
+          ),
+          activeView.summary
+            ? createElement(
+                'p',
+                { style: { margin: 0, fontSize: '12px', lineHeight: 1.45, color: 'var(--color-on-surface-variant, #a9b6c4)' } },
+                activeView.summary,
+              )
+            : null,
+        )
+      : null,
     isInteracting && animatable
       ? createElement(
           'button',
