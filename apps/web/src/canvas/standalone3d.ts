@@ -1,4 +1,4 @@
-import { hasAnimatedParts, parseCameraOrbit, parseScene3D, type ViewPreset3D } from '@weft/core';
+import { hasAnimatedParts, hasExplodableParts, parseCameraOrbit, parseScene3D, type ViewPreset3D } from '@weft/core';
 import { buildWeft3DScene, initialOrbit, type OrbitState } from './threeEngine';
 
 /**
@@ -16,22 +16,28 @@ declare global {
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 async function hydrateElement(el: HTMLElement): Promise<void> {
   const src = el.getAttribute('src') ?? undefined;
   const sceneJson = el.getAttribute('data-scene') ?? undefined;
   const cameraOrbit = el.getAttribute('camera-orbit') ?? undefined;
   const animateAttr = el.getAttribute('data-animate');
+  const explodedAttr = el.getAttribute('data-exploded');
   const elementId = el.getAttribute('id') ?? undefined;
   const spec = parseScene3D(sceneJson);
   const animatable = hasAnimatedParts(spec);
+  const explodable = hasExplodableParts(spec);
   const baseOrbit = initialOrbit(cameraOrbit, spec);
   let orbit: OrbitState = { ...baseOrbit, target: [...baseOrbit.target] };
   let animating = animateAttr === 'true' || animateAttr === '';
+  let exploded = explodedAttr !== 'false';
+  let explodeFactor = exploded ? 1 : 0;
   let elapsed = 0;
   let activeViewKey: string | null = null;
   let activeView: ViewPreset3D | null = null;
   let transitionRaf = 0;
+  let explodeRaf = 0;
 
   const canvas = document.createElement('canvas');
   canvas.style.display = 'block';
@@ -43,7 +49,7 @@ async function hydrateElement(el: HTMLElement): Promise<void> {
   el.appendChild(canvas);
 
   const handle = await buildWeft3DScene(el, src, sceneJson);
-  const render = () => handle.render(canvas, el, orbit, elapsed, activeView?.highlight);
+  const render = () => handle.render(canvas, el, orbit, elapsed, activeView?.highlight, explodeFactor);
   render();
 
   const hud = document.createElement('div');
@@ -166,15 +172,17 @@ async function hydrateElement(el: HTMLElement): Promise<void> {
     raf = requestAnimationFrame(loop);
   };
 
-  if (animatable) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = animating ? 'Pause rotation' : 'Animate engine';
-    btn.setAttribute('aria-pressed', animating ? 'true' : 'false');
+  const controlsBar = document.createElement('div');
+  Object.assign(controlsBar.style, {
+    position: 'absolute',
+    left: '12px',
+    bottom: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  });
+  const styleBtn = (btn: HTMLButtonElement) => {
     Object.assign(btn.style, {
-      position: 'absolute',
-      left: '12px',
-      bottom: '12px',
       padding: '6px 10px',
       borderRadius: '4px',
       border: '1px solid var(--color-outline-variant, #475569)',
@@ -184,6 +192,14 @@ async function hydrateElement(el: HTMLElement): Promise<void> {
       fontWeight: '600',
       cursor: 'pointer',
     });
+  };
+
+  if (animatable) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = animating ? 'Pause rotation' : 'Animate engine';
+    btn.setAttribute('aria-pressed', animating ? 'true' : 'false');
+    styleBtn(btn);
     btn.addEventListener('click', () => {
       animating = !animating;
       btn.textContent = animating ? 'Pause rotation' : 'Animate engine';
@@ -195,9 +211,38 @@ async function hydrateElement(el: HTMLElement): Promise<void> {
         cancelAnimationFrame(raf);
       }
     });
-    el.appendChild(btn);
+    controlsBar.appendChild(btn);
     if (animating) raf = requestAnimationFrame(loop);
   }
+
+  if (explodable) {
+    const expBtn = document.createElement('button');
+    expBtn.type = 'button';
+    expBtn.textContent = exploded ? 'Assemble' : 'Explode view';
+    expBtn.setAttribute('aria-pressed', exploded ? 'true' : 'false');
+    styleBtn(expBtn);
+    expBtn.addEventListener('click', () => {
+      exploded = !exploded;
+      expBtn.textContent = exploded ? 'Assemble' : 'Explode view';
+      expBtn.setAttribute('aria-pressed', exploded ? 'true' : 'false');
+      if (!exploded && activeViewKey) selectView(null);
+      cancelAnimationFrame(explodeRaf);
+      const from = explodeFactor;
+      const target = exploded ? 1 : 0;
+      const start = performance.now();
+      const duration = 520;
+      const step = (now: number) => {
+        const t = Math.min(1, (now - start) / duration);
+        explodeFactor = lerp(from, target, easeInOutCubic(t));
+        render();
+        if (t < 1) explodeRaf = requestAnimationFrame(step);
+      };
+      explodeRaf = requestAnimationFrame(step);
+    });
+    controlsBar.appendChild(expBtn);
+  }
+
+  if (controlsBar.childElementCount > 0) el.appendChild(controlsBar);
 
   let drag: { x: number; y: number; theta: number; phi: number } | null = null;
   canvas.addEventListener('pointerdown', (e) => {

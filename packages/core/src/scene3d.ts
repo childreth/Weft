@@ -66,6 +66,8 @@ export interface Part3D {
   position?: Vec3;
   rotation?: Vec3;
   scale?: Vec3 | number;
+  /** Offset [dx, dy, dz] added to `position` when the exploded view is toggled on. */
+  explodeOffset?: Vec3;
   /** Optional continuous rotation when animation is enabled. */
   spin?: Spin3D;
   // Geometry parameters (used according to `type`)
@@ -202,6 +204,7 @@ function checkPart(part: unknown, path: string, counter: { n: number }): string 
   if (part.position !== undefined && !isVec3(part.position)) return `${path}.position must be [x, y, z]`;
   if (part.rotation !== undefined && !isVec3(part.rotation)) return `${path}.rotation must be [x, y, z]`;
   if (part.scale !== undefined && !isNum(part.scale) && !isVec3(part.scale)) return `${path}.scale must be a number or [x, y, z]`;
+  if (part.explodeOffset !== undefined && !isVec3(part.explodeOffset)) return `${path}.explodeOffset must be [dx, dy, dz]`;
   if (part.spin !== undefined) {
     if (!isObj(part.spin)) return `${path}.spin must be an object`;
     if (part.spin.axis !== 'x' && part.spin.axis !== 'y' && part.spin.axis !== 'z') {
@@ -318,6 +321,14 @@ export function hasAnimatedParts(spec: Scene3D | null): boolean {
   if (spec.autoRotate || (spec.particles && spec.particles.length > 0)) return true;
   const check = (parts: Part3D[]): boolean =>
     parts.some((p) => Boolean(p.spin) || (p.children ? check(p.children) : false));
+  return check(spec.parts);
+}
+
+/** Whether any part in `spec` defines an `explodeOffset` for exploded/assembled toggling. */
+export function hasExplodableParts(spec: Scene3D | null): boolean {
+  if (!spec) return false;
+  const check = (parts: Part3D[]): boolean =>
+    parts.some((p) => Boolean(p.explodeOffset) || (p.children ? check(p.children) : false));
   return check(spec.parts);
 }
 

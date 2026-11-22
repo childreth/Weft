@@ -105,6 +105,7 @@ function drawnLayer(layer: SceneTree): ReactElement {
         sceneJson={layer.attributes['data-scene']}
         cameraOrbit={layer.attributes['camera-orbit']}
         animateAttr={layer.attributes['data-animate']}
+        explodedAttr={layer.attributes['data-exploded']}
         alt={layer.attributes.alt}
       />
     );
@@ -140,6 +141,7 @@ function InstanceView({ node, props }: { node: SceneNode; props: Record<string, 
         sceneJson={tree.attributes['data-scene']}
         cameraOrbit={tree.attributes['camera-orbit']}
         animateAttr={tree.attributes['data-animate']}
+        explodedAttr={tree.attributes['data-exploded']}
         alt={tree.attributes.alt}
       />
     );
@@ -191,6 +193,7 @@ export const NodeView = memo(function NodeView({ id, isRoot = false }: { id: str
         sceneJson={node.attributes['data-scene']}
         cameraOrbit={node.attributes['camera-orbit']}
         animateAttr={node.attributes['data-animate']}
+        explodedAttr={node.attributes['data-exploded']}
         alt={node.attributes.alt}
       />
     );

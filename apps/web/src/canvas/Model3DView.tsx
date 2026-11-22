@@ -1,5 +1,5 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { formatCameraOrbit, hasAnimatedParts, parseCameraOrbit, parseScene3D, type ViewPreset3D } from '@weft/core';
+import { formatCameraOrbit, hasAnimatedParts, hasExplodableParts, parseCameraOrbit, parseScene3D, type ViewPreset3D } from '@weft/core';
 import { doc, run } from '../editor/editor';
 import { useEditor } from '../editor/store';
 import { buildWeft3DScene, initialOrbit, type OrbitState, type Weft3DSceneHandle } from './threeEngine';
@@ -11,29 +11,33 @@ interface Model3DViewProps {
   sceneJson?: string;
   cameraOrbit?: string;
   animateAttr?: string;
+  explodedAttr?: string;
   alt?: string;
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 /**
  * Renders a `<weft-3d>` node on the Weft canvas using the shared Three.js WebGL
  * renderer. Supports live 60fps spool/particle animation with an on/off toggle,
- * pointer orbit + wheel zoom in Interact mode, and declarative view presets
- * triggered by buttons with `data-3d-target="<id>"` + `data-3d-view="<key>"`.
+ * smooth exploded/assembled toggling, pointer orbit + wheel zoom in Interact
+ * mode, and declarative view presets.
  */
-export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animateAttr, alt }: Model3DViewProps) {
+export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animateAttr, explodedAttr, alt }: Model3DViewProps) {
   const hostRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneRef = useRef<Weft3DSceneHandle | null>(null);
   const elapsedRef = useRef(0);
   const transitionRef = useRef<number>(0);
+  const explodeRafRef = useRef<number>(0);
   const interactingCount = useEditor((s) => s.interacting.size);
   const [isInteracting, setIsInteracting] = useState(false);
 
   const spec = useMemo(() => parseScene3D(sceneJson), [sceneJson]);
   const animatable = useMemo(() => hasAnimatedParts(spec), [spec]);
+  const explodable = useMemo(() => hasExplodableParts(spec), [spec]);
   const baseOrbit = useMemo(() => initialOrbit(cameraOrbit, spec), [cameraOrbit, spec]);
   const [orbit, setOrbit] = useState<OrbitState>(baseOrbit);
   const orbitRef = useRef<OrbitState>(baseOrbit);
@@ -43,6 +47,12 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
   const activeView: ViewPreset3D | null = activeViewKey && spec?.views ? (spec.views[activeViewKey] ?? null) : null;
   const highlightRef = useRef<string[] | undefined>(undefined);
   highlightRef.current = activeView?.highlight;
+
+  const initialExploded = explodedAttr !== 'false';
+  const [exploded, setExploded] = useState(initialExploded);
+  const [explodeFactor, setExplodeFactor] = useState(initialExploded ? 1 : 0);
+  const explodeFactorRef = useRef(initialExploded ? 1 : 0);
+  explodeFactorRef.current = explodeFactor;
 
   const [animating, setAnimating] = useState(animateAttr === 'true' || animateAttr === '');
   const [dirty, setDirty] = useState(false);
@@ -59,6 +69,12 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
   useEffect(() => {
     setAnimating(animateAttr === 'true' || animateAttr === '');
   }, [animateAttr]);
+
+  useEffect(() => {
+    const next = explodedAttr !== 'false';
+    setExploded(next);
+    setExplodeFactor(next ? 1 : 0);
+  }, [explodedAttr]);
 
   useEffect(() => {
     const el = hostRef.current;
@@ -94,10 +110,41 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     transitionRef.current = requestAnimationFrame(step);
   }, []);
 
+  const animateExplodeTo = useCallback((target: number) => {
+    cancelAnimationFrame(explodeRafRef.current);
+    const from = explodeFactorRef.current;
+    const start = performance.now();
+    const duration = 540;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const val = lerp(from, target, easeInOutCubic(t));
+      setExplodeFactor(val);
+      if (t < 1) explodeRafRef.current = requestAnimationFrame(step);
+    };
+    explodeRafRef.current = requestAnimationFrame(step);
+  }, []);
+
+  const toggleExplode = useCallback(() => {
+    const next = !exploded;
+    setExploded(next);
+    animateExplodeTo(next ? 1 : 0);
+    if (!next && activeViewKey) {
+      setActiveViewKey(null);
+      animateCameraTo(baseOrbit);
+    }
+    if (nodeId) {
+      run(() => doc.updateNode(nodeId, { attributes: { 'data-exploded': next ? 'true' : 'false' } }));
+    }
+  }, [exploded, animateExplodeTo, activeViewKey, animateCameraTo, baseOrbit, nodeId]);
+
   const selectView = useCallback(
     (key: string | null) => {
       const nextKey = key && key === activeViewKey ? null : key;
       setActiveViewKey(nextKey);
+      if (nextKey && explodable && !exploded) {
+        setExploded(true);
+        animateExplodeTo(1);
+      }
       const root = hostRef.current?.getRootNode();
       if (elementId && (root instanceof ShadowRoot || root instanceof Document)) {
         for (const btn of root.querySelectorAll<HTMLElement>(`[data-3d-target="${CSS.escape(elementId)}"]`)) {
@@ -150,7 +197,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     let handle: Weft3DSceneHandle | null = null;
     const draw = () => {
       if (cancelled || !handle) return;
-      handle.render(canvas, host, orbitRef.current, elapsedRef.current, highlightRef.current);
+      handle.render(canvas, host, orbitRef.current, elapsedRef.current, highlightRef.current, explodeFactorRef.current);
     };
     void buildWeft3DScene(host, src, sceneJson).then((built) => {
       if (cancelled) {
@@ -166,19 +213,20 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     return () => {
       cancelled = true;
       cancelAnimationFrame(transitionRef.current);
+      cancelAnimationFrame(explodeRafRef.current);
       ro.disconnect();
       if (sceneRef.current === handle) sceneRef.current = null;
       handle?.dispose();
     };
   }, [src, sceneJson]);
 
-  // Re-render when orbit or active highlight changes while paused.
+  // Re-render when orbit, explodeFactor, or active highlight changes while paused.
   useEffect(() => {
     const host = hostRef.current;
     const canvas = canvasRef.current;
     if (!host || !canvas || !sceneRef.current) return;
-    sceneRef.current.render(canvas, host, orbit, elapsedRef.current, activeView?.highlight);
-  }, [orbit, activeView]);
+    sceneRef.current.render(canvas, host, orbit, elapsedRef.current, activeView?.highlight, explodeFactor);
+  }, [orbit, activeView, explodeFactor]);
 
   // 60fps animation loop when animating is enabled.
   useEffect(() => {
@@ -192,7 +240,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
       const host = hostRef.current;
       const canvas = canvasRef.current;
       if (host && canvas && sceneRef.current) {
-        sceneRef.current.render(canvas, host, orbitRef.current, elapsedRef.current, highlightRef.current);
+        sceneRef.current.render(canvas, host, orbitRef.current, elapsedRef.current, highlightRef.current, explodeFactorRef.current);
       }
       raf = requestAnimationFrame(tick);
     };
@@ -354,16 +402,43 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
             : null,
         )
       : null,
-    isInteracting && animatable
+    isInteracting && (animatable || explodable)
       ? createElement(
-          'button',
+          'div',
           {
-            type: 'button',
-            'aria-pressed': animating ? 'true' : 'false',
-            onClick: toggleAnimate,
-            style: { ...btnStyle, position: 'absolute', left: '12px', bottom: '12px' },
+            style: {
+              position: 'absolute',
+              left: '12px',
+              bottom: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            },
           },
-          animating ? 'Pause rotation' : 'Animate engine',
+          animatable
+            ? createElement(
+                'button',
+                {
+                  type: 'button',
+                  'aria-pressed': animating ? 'true' : 'false',
+                  onClick: toggleAnimate,
+                  style: btnStyle,
+                },
+                animating ? 'Pause rotation' : 'Animate engine',
+              )
+            : null,
+          explodable
+            ? createElement(
+                'button',
+                {
+                  type: 'button',
+                  'aria-pressed': exploded ? 'true' : 'false',
+                  onClick: toggleExplode,
+                  style: btnStyle,
+                },
+                exploded ? 'Assemble' : 'Explode view',
+              )
+            : null,
         )
       : null,
     isInteracting && dirty && nodeId

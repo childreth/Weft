@@ -254,16 +254,31 @@ interface SpinTarget {
   base: [number, number, number];
 }
 
-function buildSinglePart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.Plane[], spinners: SpinTarget[]): THREE.Object3D {
+interface ExplodeTarget {
+  obj: THREE.Object3D;
+  base: [number, number, number];
+  offset: [number, number, number];
+}
+
+function buildSinglePart(
+  part: Part3D,
+  hostEl: HTMLElement | null,
+  clipPlanes: THREE.Plane[],
+  spinners: SpinTarget[],
+  exploders: ExplodeTarget[],
+): THREE.Object3D {
   if (part.type === 'group') {
     const group = new THREE.Group();
     if (part.name) group.name = part.name;
     applyTransform(group, part);
     for (const child of part.children ?? []) {
-      group.add(buildPart(child, hostEl, clipPlanes, spinners));
+      group.add(buildPart(child, hostEl, clipPlanes, spinners, exploders));
     }
     if (part.spin) {
       spinners.push({ obj: group, spin: part.spin, base: [group.rotation.x, group.rotation.y, group.rotation.z] });
+    }
+    if (part.explodeOffset) {
+      exploders.push({ obj: group, base: [group.position.x, group.position.y, group.position.z], offset: [...part.explodeOffset] });
     }
     return group;
   }
@@ -276,16 +291,25 @@ function buildSinglePart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: T
   if (part.spin) {
     spinners.push({ obj: mesh, spin: part.spin, base: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z] });
   }
+  if (part.explodeOffset) {
+    exploders.push({ obj: mesh, base: [mesh.position.x, mesh.position.y, mesh.position.z], offset: [...part.explodeOffset] });
+  }
   return mesh;
 }
 
-function buildPart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.Plane[], spinners: SpinTarget[]): THREE.Object3D {
-  if (!part.repeat) return buildSinglePart(part, hostEl, clipPlanes, spinners);
+function buildPart(
+  part: Part3D,
+  hostEl: HTMLElement | null,
+  clipPlanes: THREE.Plane[],
+  spinners: SpinTarget[],
+  exploders: ExplodeTarget[],
+): THREE.Object3D {
+  if (!part.repeat) return buildSinglePart(part, hostEl, clipPlanes, spinners, exploders);
   const { count, axis, radius = 0, step = 0, arc = Math.PI * 2 } = part.repeat;
   const group = new THREE.Group();
   if (part.name) group.name = `${part.name}-array`;
   for (let i = 0; i < count; i++) {
-    const item = buildSinglePart({ ...part, repeat: undefined, spin: undefined }, hostEl, clipPlanes, spinners);
+    const item = buildSinglePart({ ...part, repeat: undefined, spin: undefined, explodeOffset: undefined }, hostEl, clipPlanes, spinners, exploders);
     if (step !== 0) {
       const offset = (i - (count - 1) / 2) * step;
       if (axis === 'x') item.position.x += offset;
@@ -312,6 +336,9 @@ function buildPart(part: Part3D, hostEl: HTMLElement | null, clipPlanes: THREE.P
   }
   if (part.spin) {
     spinners.push({ obj: group, spin: part.spin, base: [group.rotation.x, group.rotation.y, group.rotation.z] });
+  }
+  if (part.explodeOffset) {
+    exploders.push({ obj: group, base: [group.position.x, group.position.y, group.position.z], offset: [...part.explodeOffset] });
   }
   return group;
 }
@@ -413,6 +440,7 @@ export interface Weft3DSceneHandle {
     orbit: OrbitState,
     elapsedSec?: number,
     highlight?: string[],
+    explodeFactor?: number,
   ) => void;
   dispose: () => void;
 }
@@ -434,10 +462,11 @@ export async function buildWeft3DScene(hostEl: HTMLElement, src?: string, sceneJ
   addLights(scene, spec, hostEl);
 
   const spinners: SpinTarget[] = [];
+  const exploders: ExplodeTarget[] = [];
   const particleRunners: ParticleRunner[] = [];
   if (spec) {
     for (const part of spec.parts) {
-      scene.add(buildPart(part, hostEl, clipPlanes, spinners));
+      scene.add(buildPart(part, hostEl, clipPlanes, spinners, exploders));
     }
     for (const stream of spec.particles ?? []) {
       const { points, runner } = buildParticleStream(stream, hostEl);
@@ -526,9 +555,16 @@ export async function buildWeft3DScene(hostEl: HTMLElement, src?: string, sceneJ
   };
 
   return {
-    render(canvas, el, orbit, elapsedSec = 0, highlight) {
+    render(canvas, el, orbit, elapsedSec = 0, highlight, explodeFactor = 1) {
       if (disposed) return;
       applyHighlight(highlight);
+      for (const e of exploders) {
+        e.obj.position.set(
+          e.base[0] + e.offset[0] * explodeFactor,
+          e.base[1] + e.offset[1] * explodeFactor,
+          e.base[2] + e.offset[2] * explodeFactor,
+        );
+      }
       const rect = el.getBoundingClientRect();
       const cssW = Math.max(1, Math.round(rect.width || canvas.clientWidth || 400));
       const cssH = Math.max(1, Math.round(rect.height || canvas.clientHeight || 300));
