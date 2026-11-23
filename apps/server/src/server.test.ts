@@ -676,6 +676,27 @@ describe('MCP tools', () => {
     expect(JSON.stringify(page)).toContain('Design in the browser');
   });
 
+  it('outlines a large canvas less deep, and says how to read one part in full', async () => {
+    const room = server.rooms.get('big-outline');
+    for (let a = 0; a < 20; a++) {
+      const board = room.doc.createNode({ type: 'frame', parentId: null, name: `Screen ${a}`, frame: { x: a * 400, y: 0, width: 390, height: 800 } });
+      const list = room.doc.createNode({ type: 'frame', parentId: board, name: 'List' });
+      for (let i = 0; i < 20; i++) room.doc.createNode({ type: 'text', parentId: list, text: `Reading ${i} on screen ${a}: 120 mg/dL after lunch` });
+    }
+    const brief = await call('get_canvas', { doc: 'big-outline', detail: 'outline' });
+    expect(brief.text.length).toBeLessThan(24_000);
+    expect(brief.data.note).toContain('rootId');
+    const screen = brief.data.nodes.find((n: { name: string }) => n.name === 'Screen 3');
+    expect(screen.children[0]).toMatchObject({ name: 'List', childCount: 20 });
+    // Asked for a depth, it gets it; one part comes back whole.
+    const deep = await call('get_canvas', { doc: 'big-outline', detail: 'outline', maxDepth: 12 });
+    expect(deep.data.note).toBeUndefined();
+    expect(deep.text).toContain('Reading 19 on screen 19');
+    const part = await call('get_canvas', { doc: 'big-outline', detail: 'outline', rootId: screen.id });
+    expect(part.data.note).toBeUndefined();
+    expect(part.text).toContain('Reading 19 on screen 3');
+  });
+
   it('accepts definition lists and tables', async () => {
     const room = server.rooms.get('tags');
     const [page] = room.doc.getTree();
@@ -1167,6 +1188,21 @@ describe('sync relay', () => {
     const listed = (await call('list_tokens', { doc: 'themes', group: 'color' })).data;
     expect(listed.themes.ember).toMatchObject({ 'color.primary': '#c2410c' });
     expect(listed.themes.dark['color.surface']).toMatch(/^#[0-9a-f]{6}$/);
+
+    // With many themes, each is listed in brief (its main colors and anything not a color); "theme" lists one in full.
+    await call('set_tokens', { doc: 'themes', seed: '#2f6f4f', theme: 'grove' });
+    await call('set_tokens', { doc: 'themes', theme: 'grove', tokens: { 'radius.md': '14px' } });
+    const many = (await call('list_tokens', { doc: 'themes' })).data;
+    expect(many.note).toContain('"theme"');
+    expect(Object.keys(many.themes)).toEqual(expect.arrayContaining(['ember', 'grove', 'grove-dark', 'dark']));
+    expect(many.themes.grove).toMatchObject({ 'color.primary': expect.any(String), 'radius.md': '14px' });
+    expect(many.themes.grove['color.error-container']).toBeUndefined();
+    const one = (await call('list_tokens', { doc: 'themes', theme: 'grove' })).data;
+    expect(Object.keys(one.themes)).toEqual(['grove']);
+    expect(one.themes.grove['color.error-container']).toMatch(/^#/);
+    expect((await call('list_tokens', { doc: 'themes', theme: 'nope' })).text).toContain('Unknown theme "nope"');
+    await call('undo_agent_change', { doc: 'themes' });
+    await call('undo_agent_change', { doc: 'themes' });
 
     expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'nope' }] })).text).toContain('Unknown theme "nope"');
     // The seed page colors with the tokens, so the theme shows: no warning.

@@ -260,9 +260,19 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
 const ok = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
+/** Unindented, for reads that can be long: indenting a token list made it a third bigger. */
+const okCompact = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(data) }] });
+/** The colors a theme is shown by in a brief list_tokens: what sets its look. */
+const THEME_BRIEF_COLORS = new Set(['primary', 'on-primary', 'primary-container', 'secondary', 'tertiary', 'surface', 'on-surface', 'surface-container', 'outline-variant'].map((r) => `color.${r}`));
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
 const OUTLINE_TEXT = 60;
+/**
+ * The most a whole-canvas outline sends before it gets shallower. A model shown part of a read asks for it
+ * again: on a 110,000-character outline, Inkling read the canvas and then the tokens again and again, minutes
+ * per read. One level fewer at a time, so a small document still comes back whole.
+ */
+const OUTLINE_BUDGET = 24_000;
 
 /** Finds a node, to read what an instance's component is. */
 type NodeLookup = { getNode(id: string): { tag: string } | undefined };
@@ -734,13 +744,14 @@ export function createMcpServer(
       inputSchema: {
         doc: docParam,
         rootId: z.string().optional().describe('Return only this node and its descendants'),
-        maxDepth: z.coerce.number().int().min(0).max(50).default(12),
+        maxDepth: z.coerce.number().int().min(0).max(50).optional().describe('Levels below each root (default 12; an outline of a large canvas comes back shallower unless you pass it)'),
         detail: z.enum(['full', 'outline']).default('full').describe('"outline": structure and text only, no styles or attributes'),
         model: modelParam,
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, rootId, maxDepth, detail, model }) => {
+    async ({ doc, rootId, maxDepth: depth, detail, model }) => {
+      const maxDepth = depth ?? 12;
       try {
         const { room, agent } = open(doc, model);
         agent.look(rootId ? [rootId] : [], rootId ? `Looking at ${nameOf(room, rootId)}` : 'Reading the canvas');
@@ -749,8 +760,16 @@ export function createMcpServer(
         const components = all.length ? { components: all } : {};
         if (detail === 'outline') {
           // Unindented: the outline exists to be small.
-          const nodes = room.doc.getTree(rootId).map((t) => outline(t, maxDepth, room.doc));
-          return { content: [{ type: 'text', text: JSON.stringify({ document: doc, ...components, nodes }) }] };
+          const trees = room.doc.getTree(rootId);
+          const read = (levels: number, note?: string) =>
+            JSON.stringify({ document: doc, ...(note && { note }), ...components, nodes: trees.map((t) => outline(t, levels, room.doc)) });
+          let levels = maxDepth;
+          let text = read(levels);
+          // Asked for a depth: it gets that depth. Otherwise a large canvas comes back as much as fits.
+          while (depth === undefined && text.length > OUTLINE_BUDGET && levels > 1) text = read(--levels);
+          // First, so it's read even if the rest is cut.
+          if (levels < maxDepth) text = read(levels, `Large canvas, so this outline stops ${levels} levels below each ${rootId ? 'root' : 'artboard'} (deeper layers are counted in childCount). To see one part all the way down, call get_canvas with its id as rootId and detail "outline".`);
+          return { content: [{ type: 'text', text }] };
         }
         return ok({ document: doc, ...components, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth, room.doc)) });
       } catch (err) {
@@ -1109,10 +1128,11 @@ export function createMcpServer(
       inputSchema: {
         doc: docParam,
         group: z.string().optional().describe('Filter by top-level group: color, space, radius, font-family, font-size, …'),
+        theme: z.string().optional().describe('List every token this theme overrides (without it, each theme shows only its main colors and its non-color overrides)'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, group }) => {
+    async ({ doc, group, theme }) => {
       // The document's own tokens and its Google Fonts (as font-family tokens) are included.
       const { doc: document } = rooms.get(doc);
       const own = document.getTokens();
@@ -1128,13 +1148,26 @@ export function createMcpServer(
           ...(t.name in own && { document: true }),
         }));
       // Each theme's overrides; a frame with that theme uses them in place of the values above.
+      const modes = set.modes ?? {};
+      if (theme !== undefined && !(theme in modes)) return fail(`Unknown theme "${theme}". Themes: ${Object.keys(modes).join(', ')}`);
+      // Every theme declares every color role, so a document with many themes listed thousands of values
+      // (48,000 characters for 19 themes): a model shown part of that read asks for it again. In brief, a theme is
+      // the colors that set its look and whatever else it changes; "theme" lists one in full.
+      const brief = theme === undefined && Object.keys(modes).length > 2;
       const themes = Object.fromEntries(
-        Object.entries(set.modes ?? {}).map(([name, overrides]) => [
-          name,
-          Object.fromEntries(flattenTokens(overrides).filter((t) => !group || t.path[0] === group).map((t) => [t.name, t.value])),
-        ]),
+        Object.entries(modes)
+          .filter(([name]) => theme === undefined || name === theme)
+          .map(([name, overrides]) => [
+            name,
+            Object.fromEntries(
+              flattenTokens(overrides)
+                .filter((t) => (!group || t.path[0] === group) && (!brief || t.path[0] !== 'color' || THEME_BRIEF_COLORS.has(t.name)))
+                .map((t) => [t.name, t.value]),
+            ),
+          ]),
       );
-      return ok({ tokens, themes });
+      const note = brief ? { note: 'Each theme shows only its main colors and the other tokens it changes. list_tokens with "theme" lists all of one.' } : {};
+      return okCompact({ ...note, tokens, themes });
     },
   );
 
