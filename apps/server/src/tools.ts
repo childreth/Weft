@@ -81,6 +81,7 @@ Model:
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
+- Building a whole page or screen in one create_nodes call: send it flat, not as one deep tree. Give a node a "key" and list what goes inside it after it, each with "parent": that key: {"nodes": [{"key": "page", "tag": "main", "frame": {"width": 390}}, {"key": "hero", "parent": "page", "tag": "section"}, {"parent": "hero", "tag": "h1", "text": "…"}]}. Children can still be nested as "children" where a branch is small.
 - Wrapping: to put existing layers inside a new one (a card's contents into a button or a link, a few rows into a section), create it with "adopt": the ids to move into it, in order. With no parentId, the new node goes where the first of them was, so one call wraps several cards: {"nodes": [{"tag": "button", "adopt": ["<thumb 1>", "<title 1>"]}, {"tag": "button", "adopt": ["<thumb 2>", "<title 2>"]}]}. Moving them one by one would be a call each. They keep their ids, styles and everything else.
 - Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
 
@@ -157,7 +158,45 @@ interface NodeSpec {
   children?: NodeSpec[];
 }
 
-type NodeSpecInput = Omit<NodeSpec, 'type' | 'children'> & { type?: NodeSpec['type']; children?: NodeSpecInput[] };
+type NodeSpecInput = Omit<NodeSpec, 'type' | 'children'> & { type?: NodeSpec['type']; children?: NodeSpecInput[]; key?: string; parent?: string };
+
+/**
+ * A flat create_nodes list made into the nested trees everything else checks and builds: a node with `parent`
+ * goes, in list order, at the end of the children of the node earlier in the list whose `key` that is.
+ * Flat because a model writing a whole page as one nested tree has to close fifteen levels of brackets at the
+ * end, and that is where it miscounts: Inkling 2 lost 6 calls in 10 that way, each correct up to its last few
+ * characters. Only earlier nodes can be parents, which also rules out cycles.
+ */
+function nestFlat(input: readonly NodeSpecInput[], isLayer: (id: string) => boolean): NodeSpecInput[] {
+  const issues: string[] = [];
+  const byKey = new Map<string, NodeSpecInput>();
+  const roots: NodeSpecInput[] = [];
+  const copy = ({ key, parent: _parent, children, ...spec }: NodeSpecInput, at: string): NodeSpecInput => {
+    const node: NodeSpecInput = { ...spec, ...(children && { children: children.map((c, i) => copy(c, `${at}.children[${i}]`)) }) };
+    if (key !== undefined) {
+      if (byKey.has(key)) issues.push(`${at}.key: "${key}" is already the key of another node in this call`);
+      byKey.set(key, node);
+    }
+    return node;
+  };
+  input.forEach((spec, i) => {
+    const at = `nodes[${i}]`;
+    if (spec.parent === undefined) return roots.push(copy(spec, at));
+    // Looked up before this node's own keys are added: a parent has to come earlier in the list.
+    const parent = byKey.get(spec.parent);
+    const node = copy(spec, at);
+    if (!parent && isLayer(spec.parent)) {
+      issues.push(`${at}.parent: "${spec.parent}" is an existing layer; "parent" names a "key" in this call. To add to an existing layer, pass its id as the call's parentId`);
+    } else if (!parent) {
+      const known = [...byKey.keys()];
+      issues.push(
+        `${at}.parent: no node before it has the key "${spec.parent}"${known.length ? ` (keys so far: ${some(known.map((k) => `"${k}"`))})` : ''}. List a parent before its children, with "key"`,
+      );
+    } else (parent.children ??= []).push(node);
+  });
+  throwIssues(issues);
+  return roots;
+}
 
 /** Small models often leave `type` out: a node with text and no children is text, anything else a frame. */
 const withTypes = ({ children, ...spec }: NodeSpecInput): NodeSpec => ({
@@ -197,6 +236,16 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     })
       .optional()
       .describe("Makes this node an instance: it draws that component's layers and follows its changes. No tag, text or children; styles apply to its root (width, gridColumn, alignSelf)"),
+    key: z
+      .string()
+      .optional()
+      .describe('A name for this new node within this call only, for later nodes in the list to name as their "parent"'),
+    parent: z
+      .string()
+      .optional()
+      .describe(
+        'The "key" of a node earlier in this call\'s nodes list: this node goes inside it, after the ones before it. Lets a page be sent as a flat list instead of one deeply nested tree. Top-level list entries only',
+      ),
     adopt: z
       .array(z.string())
       .min(1)
@@ -211,9 +260,19 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
 const ok = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
+/** Unindented, for reads that can be long: indenting a token list made it a third bigger. */
+const okCompact = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(data) }] });
+/** The colors a theme is shown by in a brief list_tokens: what sets its look. */
+const THEME_BRIEF_COLORS = new Set(['primary', 'on-primary', 'primary-container', 'secondary', 'tertiary', 'surface', 'on-surface', 'surface-container', 'outline-variant'].map((r) => `color.${r}`));
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
 const OUTLINE_TEXT = 60;
+/**
+ * The most a whole-canvas outline sends before it gets shallower. A model shown part of a read asks for it
+ * again: on a 110,000-character outline, Inkling read the canvas and then the tokens again and again, minutes
+ * per read. One level fewer at a time, so a small document still comes back whole.
+ */
+const OUTLINE_BUDGET = 24_000;
 
 /** Finds a node, to read what an instance's component is. */
 type NodeLookup = { getNode(id: string): { tag: string } | undefined };
@@ -729,13 +788,14 @@ export function createMcpServer(
       inputSchema: {
         doc: docParam,
         rootId: z.string().optional().describe('Return only this node and its descendants'),
-        maxDepth: z.coerce.number().int().min(0).max(50).default(12),
+        maxDepth: z.coerce.number().int().min(0).max(50).optional().describe('Levels below each root (default 12; an outline of a large canvas comes back shallower unless you pass it)'),
         detail: z.enum(['full', 'outline']).default('full').describe('"outline": structure and text only, no styles or attributes'),
         model: modelParam,
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, rootId, maxDepth, detail, model }) => {
+    async ({ doc, rootId, maxDepth: depth, detail, model }) => {
+      const maxDepth = depth ?? 12;
       try {
         const { room, agent } = open(doc, model);
         agent.look(rootId ? [rootId] : [], rootId ? `Looking at ${nameOf(room, rootId)}` : 'Reading the canvas');
@@ -744,8 +804,16 @@ export function createMcpServer(
         const components = all.length ? { components: all } : {};
         if (detail === 'outline') {
           // Unindented: the outline exists to be small.
-          const nodes = room.doc.getTree(rootId).map((t) => outline(t, maxDepth, room.doc));
-          return { content: [{ type: 'text', text: JSON.stringify({ document: doc, ...components, nodes }) }] };
+          const trees = room.doc.getTree(rootId);
+          const read = (levels: number, note?: string) =>
+            JSON.stringify({ document: doc, ...(note && { note }), ...components, nodes: trees.map((t) => outline(t, levels, room.doc)) });
+          let levels = maxDepth;
+          let text = read(levels);
+          // Asked for a depth: it gets that depth. Otherwise a large canvas comes back as much as fits.
+          while (depth === undefined && text.length > OUTLINE_BUDGET && levels > 1) text = read(--levels);
+          // First, so it's read even if the rest is cut.
+          if (levels < maxDepth) text = read(levels, `Large canvas, so this outline stops ${levels} levels below each ${rootId ? 'root' : 'artboard'} (deeper layers are counted in childCount). To see one part all the way down, call get_canvas with its id as rootId and detail "outline".`);
+          return { content: [{ type: 'text', text }] };
         }
         return ok({ document: doc, ...components, nodes: room.doc.getTree(rootId).map((t) => compact(t, maxDepth, room.doc)) });
       } catch (err) {
@@ -790,8 +858,8 @@ export function createMcpServer(
     },
     async ({ doc, parentId, beforeId, nodes: input, model }) => {
       const { room, agent } = open(doc, model);
-      const nodes = input.map(withTypes);
       return mutate(room, agent, 'create_nodes', (touched, report) => {
+        const nodes = nestFlat(input, (id) => room.doc.has(id)).map(withTypes);
         const places = nodes.map((spec) => placeOf(room, spec, parentId, beforeId));
         throwIssues([...treeIssues(nodes), ...adoptIssues(room, nodes, places)]);
         const created = nodes.map((spec, i) => createTree(room, agent.identity.origin, spec, places[i]!.parentId, places[i]!.beforeId, touched));
@@ -1104,10 +1172,11 @@ export function createMcpServer(
       inputSchema: {
         doc: docParam,
         group: z.string().optional().describe('Filter by top-level group: color, space, radius, font-family, font-size, …'),
+        theme: z.string().optional().describe('List every token this theme overrides (without it, each theme shows only its main colors and its non-color overrides)'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ doc, group }) => {
+    async ({ doc, group, theme }) => {
       // The document's own tokens and its Google Fonts (as font-family tokens) are included.
       const { doc: document } = rooms.get(doc);
       const own = document.getTokens();
@@ -1123,13 +1192,26 @@ export function createMcpServer(
           ...(t.name in own && { document: true }),
         }));
       // Each theme's overrides; a frame with that theme uses them in place of the values above.
+      const modes = set.modes ?? {};
+      if (theme !== undefined && !(theme in modes)) return fail(`Unknown theme "${theme}". Themes: ${Object.keys(modes).join(', ')}`);
+      // Every theme declares every color role, so a document with many themes listed thousands of values
+      // (48,000 characters for 19 themes): a model shown part of that read asks for it again. In brief, a theme is
+      // the colors that set its look and whatever else it changes; "theme" lists one in full.
+      const brief = theme === undefined && Object.keys(modes).length > 2;
       const themes = Object.fromEntries(
-        Object.entries(set.modes ?? {}).map(([name, overrides]) => [
-          name,
-          Object.fromEntries(flattenTokens(overrides).filter((t) => !group || t.path[0] === group).map((t) => [t.name, t.value])),
-        ]),
+        Object.entries(modes)
+          .filter(([name]) => theme === undefined || name === theme)
+          .map(([name, overrides]) => [
+            name,
+            Object.fromEntries(
+              flattenTokens(overrides)
+                .filter((t) => (!group || t.path[0] === group) && (!brief || t.path[0] !== 'color' || THEME_BRIEF_COLORS.has(t.name)))
+                .map((t) => [t.name, t.value]),
+            ),
+          ]),
       );
-      return ok({ tokens, themes });
+      const note = brief ? { note: 'Each theme shows only its main colors and the other tokens it changes. list_tokens with "theme" lists all of one.' } : {};
+      return okCompact({ ...note, tokens, themes });
     },
   );
 

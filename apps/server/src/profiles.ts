@@ -115,6 +115,13 @@ ${selection}`;
 const QUIET_KEYS = new Set(['$schema', 'default', 'minItems', 'maxItems', 'minimum', 'maximum', 'exclusiveMinimum', 'maxLength', 'pattern']);
 
 /**
+ * Arguments the small profile doesn't show, by tool: added after the tuned models were trained, so showing them
+ * would change the tool list a model learned on and make its scores incomparable. The server still takes them.
+ * `create_nodes`' flat list (`key` / `parent`) is for building whole pages; the small profile makes small fixes.
+ */
+const SMALL_HIDDEN: Record<string, readonly string[]> = { create_nodes: ['key', 'parent'] };
+
+/**
  * A tool with its descriptions cut to their first sentence, at every level, and
  * the schema keys that say nothing to a model (limits, `additionalProperties:
  * false`, `propertyNames` that are just strings) left out. Names, types, enums
@@ -123,12 +130,15 @@ const QUIET_KEYS = new Set(['$schema', 'default', 'minItems', 'maxItems', 'minim
  */
 export function smallTool<T extends { function: { name: string; description: string; parameters: Json } }>(tool: T): T {
   /** `names` is true for a `properties` map, whose keys are property names, not schema keywords. */
+  const hidden = SMALL_HIDDEN[tool.function.name] ?? [];
   const trim = (value: unknown, names = false): unknown => {
     if (Array.isArray(value)) return value.map((v) => trim(v));
     if (!value || typeof value !== 'object') return value;
     const out: Json = {};
     for (const [key, v] of Object.entries(value as Json)) {
-      if (names) out[key] = trim(v);
+      if (names) {
+        if (!hidden.includes(key)) out[key] = trim(v);
+      }
       else if (QUIET_KEYS.has(key) || (key === 'additionalProperties' && v === false)) continue;
       else if (key === 'propertyNames' && JSON.stringify(v) === '{"type":"string"}') continue;
       else if (key === 'description' && typeof v === 'string') out[key] = firstSentence(v);

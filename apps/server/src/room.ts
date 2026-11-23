@@ -184,8 +184,9 @@ export class Room {
     return this.agents.size;
   }
 
+  /** Hides idle agents' cursors. Agents themselves (and their undo) go only when their session ends. */
   sweepAgents(now = Date.now()): void {
-    for (const [key, p] of this.agents) if (now - p.lastSeen > AGENT_IDLE_MS) this.removeAgent(key);
+    for (const p of this.agents.values()) if (now - p.lastSeen > AGENT_IDLE_MS) p.hide();
   }
 
   // ── Browser RPC (computed layout, viewport control) ──────────────────────
