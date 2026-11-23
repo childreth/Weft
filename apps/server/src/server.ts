@@ -16,7 +16,8 @@ import { FontCache, type FontOrigins } from './fonts';
 import { ImageImporter } from './import-image';
 import { Renderer } from './render';
 import { ROOM_NAME, RoomRegistry } from './room';
-import { MAX_IMAGE_BYTES, decodeFontQuery } from '@weft/core';
+import { MAX_IMAGE_BYTES, MAX_MODEL_BYTES, decodeFontQuery } from '@weft/core';
+import { get3DRuntime } from './runtime3d';
 import { SESSION_IDLE_MINUTES, createMcpServer } from './tools';
 
 export interface GridServerOptions {
@@ -337,7 +338,16 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
       return void res.writeHead(200, { 'content-type': file.type, 'cache-control': 'public, max-age=31536000, immutable' }).end(file.body);
     }
 
-    // Images: POST the file's bytes to store it (returns its asset name); GET /assets/<name> serves it.
+    // The <weft-3d> runtime, for the editor's Export to embed: an exported page has to draw its models offline.
+    if (pathname === '/runtime/weft-3d.js') {
+      if (!originAllowed(req)) return json(res, 403, { error: 'Forbidden origin' });
+      allowLocalOrigin(req, res);
+      const runtime = req.method === 'GET' ? get3DRuntime() : null;
+      if (!runtime) return json(res, 404, { error: 'The 3D runtime is not built: run "pnpm --filter @weft/web build:3d-runtime"' });
+      return void res.writeHead(200, { 'content-type': runtime.type, 'cache-control': 'no-cache', vary: 'origin' }).end(runtime.body);
+    }
+
+    // Images and 3D models: POST the file's bytes to store it (returns its asset name); GET /assets/<name> serves it.
     if (pathname === '/assets' || pathname.startsWith('/assets/')) {
       if (!originAllowed(req)) return json(res, 403, { error: 'Forbidden origin' });
       allowLocalOrigin(req, res);
@@ -345,10 +355,10 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
       if (pathname === '/assets' && req.method === 'POST') {
         try {
           const expected = url.searchParams.get('name') ?? undefined;
-          return json(res, 200, services.assets.put(await readBody(req, MAX_IMAGE_BYTES + 1), expected));
+          return json(res, 200, services.assets.put(await readBody(req, Math.max(MAX_IMAGE_BYTES, MAX_MODEL_BYTES) + 1), expected));
         } catch (err) {
           const tooLarge = (err as Error).message === 'Request body too large';
-          if (err instanceof AssetError || tooLarge) return json(res, tooLarge ? 413 : 400, { error: tooLarge ? `Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB` : (err as Error).message });
+          if (err instanceof AssetError || tooLarge) return json(res, tooLarge ? 413 : 400, { error: tooLarge ? `Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB, 3D models ${MAX_MODEL_BYTES / 1024 / 1024} MB` : (err as Error).message });
           throw err;
         }
       }

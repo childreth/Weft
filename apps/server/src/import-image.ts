@@ -2,7 +2,7 @@ import { lookup as dnsLookup } from 'node:dns';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
-import { IMAGE_TYPES, MAX_IMAGE_BYTES, assetRef, imageSize } from '@weft/core';
+import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_MODEL_BYTES, MODEL_TYPES, assetRef, imageSize, sniffModel } from '@weft/core';
 import { AssetError, type AssetStore } from './assets';
 
 /**
@@ -127,6 +127,40 @@ export class ImageImporter {
     }
   }
 
+  /** Fetches a binary glTF 2.0 (`.glb`) 3D model from a public http(s) URL into the asset store. */
+  async importModel(source: string, signal?: AbortSignal): Promise<{ src: string; type: string; bytes: number }> {
+    const timeout = AbortSignal.timeout(TIMEOUT_MS);
+    const abort = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    let url = this.parse(source);
+    for (let hop = 0; ; hop++) {
+      let res: Fetched;
+      try {
+        res = await this.get(url, abort, MAX_MODEL_BYTES, Object.values(MODEL_TYPES).join(', '));
+      } catch (err) {
+        if (err instanceof ImportError) throw err;
+        if (timeout.aborted) throw new ImportError(`${url.hostname} didn't answer within ${TIMEOUT_MS / 1000} seconds`);
+        throw new ImportError(`Couldn't reach ${url.hostname} (${(err as NodeJS.ErrnoException).code ?? (err as Error).message}). Check the URL, or the network may be offline`);
+      }
+      if (res.status >= 300 && res.status < 400 && res.location) {
+        if (hop === MAX_REDIRECTS) throw new ImportError('Too many redirects');
+        url = this.parse(new URL(res.location, url).href);
+        continue;
+      }
+      if (res.status !== 200) throw new ImportError(`${url.hostname} answered ${res.status} for that URL`);
+      if (!sniffModel(res.body)) {
+        const got = res.contentType ? ` The URL returned ${res.contentType.split(';')[0]}` : '';
+        throw new ImportError(`Not a valid binary glTF 2.0 (.glb) model.${got}`);
+      }
+      try {
+        const stored = this.assets.put(res.body);
+        return { src: assetRef(stored.name), type: stored.type, bytes: stored.bytes };
+      } catch (err) {
+        if (err instanceof AssetError) throw new ImportError(err.message);
+        throw err;
+      }
+    }
+  }
+
   /** A URL this may fetch: http(s), no credentials, and not a private address written out. */
   private parse(source: string): URL {
     let url: URL;
@@ -143,7 +177,7 @@ export class ImageImporter {
     return url;
   }
 
-  private get(url: URL, signal: AbortSignal): Promise<Fetched> {
+  private get(url: URL, signal: AbortSignal, maxBytes = MAX_IMAGE_BYTES, accept = Object.values(IMAGE_TYPES).join(', ')): Promise<Fetched> {
     return new Promise((resolve, reject) => {
       const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
       const req = send(
@@ -151,7 +185,7 @@ export class ImageImporter {
         {
           lookup: this.lookup,
           signal,
-          headers: { accept: Object.values(IMAGE_TYPES).join(', '), 'user-agent': 'Mozilla/5.0 (compatible; image-import)' },
+          headers: { accept, 'user-agent': 'Mozilla/5.0 (compatible; weft-asset-import)' },
         },
         (res: IncomingMessage) => {
           const status = res.statusCode ?? 0;
@@ -162,15 +196,15 @@ export class ImageImporter {
           }
           const tooLarge = () => {
             req.destroy();
-            reject(new ImportError(`Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB`));
+            reject(new ImportError(`Assets can be up to ${maxBytes / 1024 / 1024} MB`));
           };
-          if (Number(res.headers['content-length']) > MAX_IMAGE_BYTES) return tooLarge();
+          if (Number(res.headers['content-length']) > maxBytes) return tooLarge();
           const chunks: Buffer[] = [];
           let size = 0;
           res.on('data', (chunk: Buffer) => {
             size += chunk.length;
             // The length a server states isn't trusted: count what arrives.
-            if (size > MAX_IMAGE_BYTES) return tooLarge();
+            if (size > maxBytes) return tooLarge();
             chunks.push(chunk);
           });
           res.on('end', () => done(Buffer.concat(chunks)));

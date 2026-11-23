@@ -1,0 +1,380 @@
+/**
+ * Declarative 3D scenes for `<weft-3d>` layers.
+ *
+ * A `<weft-3d>` node can display either an uploaded `.glb` asset (`src="asset:<sha256>.glb"`),
+ * a declarative procedural Three.js scene (`data-scene='<JSON>'`), or both. Keeping procedural
+ * 3D declarative means agents and humans can build rotatable, cutaway 3D schematics that stay
+ * pure data in Yjs, validate strictly in core, and react live to Weft color tokens.
+ */
+
+export const MAX_SCENE3D_CHARS = 200_000;
+export const MAX_SCENE3D_PARTS = 256;
+/**
+ * Meshes a scene may draw once `repeat` is applied: parts × their copies, nested
+ * repeats multiplied. Every editor that opens the document builds them, so one
+ * scene past this could freeze all of them (and the screenshot renderer).
+ */
+export const MAX_SCENE3D_MESHES = 4096;
+/** Most segments a curved part may have around (`radialSegments`) or along (`tubularSegments`). */
+export const MAX_SCENE3D_SEGMENTS = 256;
+/** Most profile points a `lathe` may have. */
+export const MAX_SCENE3D_POINTS = 256;
+
+export type Vec3 = [number, number, number];
+export type Vec2 = [number, number];
+
+export type Part3DType =
+  | 'box'
+  | 'cylinder'
+  | 'cone'
+  | 'sphere'
+  | 'torus'
+  | 'lathe'
+  | 'ring'
+  | 'capsule'
+  | 'group';
+
+export const PART3D_TYPES: ReadonlySet<string> = new Set<Part3DType>([
+  'box', 'cylinder', 'cone', 'sphere', 'torus', 'lathe', 'ring', 'capsule', 'group',
+]);
+
+export interface Material3D {
+  /** Hex color or Weft CSS token (e.g. "var(--color-primary)"). */
+  color?: string;
+  metalness?: number;
+  roughness?: number;
+  /** Emissive hex or CSS token. */
+  emissive?: string;
+  emissiveIntensity?: number;
+  opacity?: number;
+  wireframe?: boolean;
+  side?: 'front' | 'back' | 'double';
+}
+
+export interface Repeat3D {
+  /** Number of copies (1–120). */
+  count: number;
+  /** Axis around which copies are arrayed radially (or linearly when `step` is set). */
+  axis: 'x' | 'y' | 'z';
+  /** Radial offset from the axis (creates radial arrays like fan blades or bolts). */
+  radius?: number;
+  /** Linear spacing along the axis (creates axial stages like compressor blade rows). */
+  step?: number;
+  /** Total angle span in radians for radial arrays (defaults to 2π). */
+  arc?: number;
+}
+
+export interface Spin3D {
+  axis: 'x' | 'y' | 'z';
+  /** Angular velocity in radians per second (-30 to 30). */
+  speed: number;
+}
+
+export interface Part3D {
+  type: Part3DType;
+  name?: string;
+  position?: Vec3;
+  rotation?: Vec3;
+  scale?: Vec3 | number;
+  /** Offset [dx, dy, dz] added to `position` when the exploded view is toggled on. */
+  explodeOffset?: Vec3;
+  /** Optional continuous rotation when animation is enabled. */
+  spin?: Spin3D;
+  // Geometry parameters (used according to `type`)
+  width?: number;
+  height?: number;
+  depth?: number;
+  radius?: number;
+  radiusTop?: number;
+  radiusBottom?: number;
+  innerRadius?: number;
+  outerRadius?: number;
+  tube?: number;
+  radialSegments?: number;
+  tubularSegments?: number;
+  openEnded?: boolean;
+  /** Angular sweep in radians (e.g. Math.PI * 1.35 for a cutaway cylinder/cone/lathe). */
+  thetaStart?: number;
+  thetaLength?: number;
+  /** Profile [radius, y] points for `lathe` geometry. */
+  points?: Vec2[];
+  /** Optional radial or axial repetition. */
+  repeat?: Repeat3D;
+  material?: Material3D;
+  children?: Part3D[];
+}
+
+export interface Camera3D {
+  position?: Vec3;
+  target?: Vec3;
+  fov?: number;
+}
+
+export interface Light3D {
+  type: 'ambient' | 'directional' | 'point' | 'hemisphere';
+  color?: string;
+  groundColor?: string;
+  intensity?: number;
+  position?: Vec3;
+}
+
+export interface ClipPlane3D {
+  normal: Vec3;
+  constant: number;
+}
+
+export interface ParticleStream3D {
+  name?: string;
+  /** Number of particles in this stream (1–600). */
+  count: number;
+  fromX: number;
+  toX: number;
+  innerRadius: number;
+  outerRadius: number;
+  /** Axial flow speed in scene units per second. */
+  speed: number;
+  /** Optional helical swirl around the X axis (radians per unit distance). */
+  swirl?: number;
+  size?: number;
+  color: string;
+  endColor?: string;
+  opacity?: number;
+}
+
+export interface ViewPreset3D {
+  /** Short title shown in the summary overlay (e.g. "St. 1–2 · Fan & Intake"). */
+  label: string;
+  /** Concise explanation of what this part/stage does. */
+  summary?: string;
+  /** Camera orbit string ("<theta>deg <phi>deg <radius>"). */
+  orbit: string;
+  /** Camera look-at target [x, y, z]. */
+  target?: Vec3;
+  /** Case-insensitive part name substrings to highlight while this view is active. */
+  highlight?: string[];
+}
+
+export interface Scene3D {
+  /** Background color (hex, CSS token, or "transparent"). Defaults to transparent. */
+  background?: string;
+  camera?: Camera3D;
+  lighting?: 'studio' | 'dramatic' | 'cad';
+  lights?: Light3D[];
+  clipPlane?: ClipPlane3D;
+  autoRotate?: boolean | number;
+  particles?: ParticleStream3D[];
+  /** Named interactive camera/focus presets triggered by buttons with `data-3d-target` + `data-3d-view`. */
+  views?: Record<string, ViewPreset3D>;
+  parts: Part3D[];
+}
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isVec3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every(isNum);
+const isVec2 = (v: unknown): v is Vec2 => Array.isArray(v) && v.length === 2 && v.every(isNum);
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const SAFE_COLOR = /^(?:#[0-9a-f]{3,8}|var\(--[a-z0-9-]+\)|transparent|[a-z]{3,20})$/i;
+
+function checkColor(value: unknown, path: string): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !SAFE_COLOR.test(value.trim())) {
+    return `${path} must be a hex color, "transparent", or a CSS token like var(--color-primary)`;
+  }
+  return null;
+}
+
+function checkMaterial(mat: unknown, path: string): string | null {
+  if (mat === undefined) return null;
+  if (!isObj(mat)) return `${path} must be an object`;
+  const c1 = checkColor(mat.color, `${path}.color`);
+  if (c1) return c1;
+  const c2 = checkColor(mat.emissive, `${path}.emissive`);
+  if (c2) return c2;
+  if (mat.metalness !== undefined && (!isNum(mat.metalness) || mat.metalness < 0 || mat.metalness > 1)) {
+    return `${path}.metalness must be a number between 0 and 1`;
+  }
+  if (mat.roughness !== undefined && (!isNum(mat.roughness) || mat.roughness < 0 || mat.roughness > 1)) {
+    return `${path}.roughness must be a number between 0 and 1`;
+  }
+  if (mat.opacity !== undefined && (!isNum(mat.opacity) || mat.opacity < 0 || mat.opacity > 1)) {
+    return `${path}.opacity must be a number between 0 and 1`;
+  }
+  if (mat.side !== undefined && mat.side !== 'front' && mat.side !== 'back' && mat.side !== 'double') {
+    return `${path}.side must be "front", "back", or "double"`;
+  }
+  return null;
+}
+
+function checkPart(part: unknown, path: string, counter: { n: number; meshes: number }, copies = 1): string | null {
+  if (!isObj(part)) return `${path} must be an object`;
+  counter.n += 1;
+  if (counter.n > MAX_SCENE3D_PARTS) return `Scene has more than ${MAX_SCENE3D_PARTS} parts`;
+  // Copies multiply down the tree: a part repeated 12 times inside a group repeated 10 times draws 120.
+  const drawn = copies * (isObj(part.repeat) && isNum(part.repeat.count) ? Math.max(1, Math.floor(part.repeat.count)) : 1);
+  counter.meshes += drawn;
+  if (counter.meshes > MAX_SCENE3D_MESHES) return `Scene draws more than ${MAX_SCENE3D_MESHES} parts once repeats are counted; use fewer copies`;
+  for (const key of ['radialSegments', 'tubularSegments'] as const) {
+    const v = part[key];
+    if (v !== undefined && (!isNum(v) || v < 3 || v > MAX_SCENE3D_SEGMENTS)) return `${path}.${key} must be between 3 and ${MAX_SCENE3D_SEGMENTS}`;
+  }
+  for (const key of ['width', 'height', 'depth', 'radius', 'radiusTop', 'radiusBottom', 'innerRadius', 'outerRadius', 'tube', 'thetaStart', 'thetaLength'] as const) {
+    if (part[key] !== undefined && !isNum(part[key])) return `${path}.${key} must be a number`;
+  }
+  if (typeof part.type !== 'string' || !PART3D_TYPES.has(part.type)) {
+    return `${path}.type must be one of: ${[...PART3D_TYPES].join(', ')}`;
+  }
+  if (part.position !== undefined && !isVec3(part.position)) return `${path}.position must be [x, y, z]`;
+  if (part.rotation !== undefined && !isVec3(part.rotation)) return `${path}.rotation must be [x, y, z]`;
+  if (part.scale !== undefined && !isNum(part.scale) && !isVec3(part.scale)) return `${path}.scale must be a number or [x, y, z]`;
+  if (part.explodeOffset !== undefined && !isVec3(part.explodeOffset)) return `${path}.explodeOffset must be [dx, dy, dz]`;
+  if (part.spin !== undefined) {
+    if (!isObj(part.spin)) return `${path}.spin must be an object`;
+    if (part.spin.axis !== 'x' && part.spin.axis !== 'y' && part.spin.axis !== 'z') {
+      return `${path}.spin.axis must be "x", "y", or "z"`;
+    }
+    if (!isNum(part.spin.speed) || part.spin.speed < -30 || part.spin.speed > 30) {
+      return `${path}.spin.speed must be a number between -30 and 30`;
+    }
+  }
+  if (part.type === 'lathe') {
+    if (!Array.isArray(part.points) || part.points.length < 2 || !part.points.every(isVec2)) {
+      return `${path}.points must be an array of at least two [radius, y] pairs`;
+    }
+    if (part.points.length > MAX_SCENE3D_POINTS) return `${path}.points can have at most ${MAX_SCENE3D_POINTS} pairs`;
+  }
+  if (part.repeat !== undefined) {
+    if (!isObj(part.repeat)) return `${path}.repeat must be an object`;
+    if (!isNum(part.repeat.count) || part.repeat.count < 1 || part.repeat.count > 120) {
+      return `${path}.repeat.count must be between 1 and 120`;
+    }
+    if (part.repeat.axis !== 'x' && part.repeat.axis !== 'y' && part.repeat.axis !== 'z') {
+      return `${path}.repeat.axis must be "x", "y", or "z"`;
+    }
+  }
+  const matErr = checkMaterial(part.material, `${path}.material`);
+  if (matErr) return matErr;
+  if (part.children !== undefined) {
+    if (!Array.isArray(part.children)) return `${path}.children must be an array`;
+    for (let i = 0; i < part.children.length; i++) {
+      const childErr = checkPart(part.children[i], `${path}.children[${i}]`, counter, drawn);
+      if (childErr) return childErr;
+    }
+  }
+  return null;
+}
+
+/** Validates a `data-scene` attribute JSON string; returns an error message or null when valid. */
+export function scene3DIssue(raw: string): string | null {
+  if (raw.length > MAX_SCENE3D_CHARS) {
+    return `3D scene JSON is too large (over ${MAX_SCENE3D_CHARS / 1000}K characters)`;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return 'Attribute "data-scene" must be valid JSON';
+  }
+  if (!isObj(parsed)) return 'Attribute "data-scene" must be a JSON object';
+  const bgErr = checkColor(parsed.background, 'data-scene.background');
+  if (bgErr) return bgErr;
+  if (parsed.camera !== undefined) {
+    if (!isObj(parsed.camera)) return 'data-scene.camera must be an object';
+    if (parsed.camera.position !== undefined && !isVec3(parsed.camera.position)) return 'data-scene.camera.position must be [x, y, z]';
+    if (parsed.camera.target !== undefined && !isVec3(parsed.camera.target)) return 'data-scene.camera.target must be [x, y, z]';
+    if (parsed.camera.fov !== undefined && (!isNum(parsed.camera.fov) || parsed.camera.fov < 10 || parsed.camera.fov > 120)) {
+      return 'data-scene.camera.fov must be between 10 and 120';
+    }
+  }
+  if (parsed.clipPlane !== undefined) {
+    if (!isObj(parsed.clipPlane) || !isVec3(parsed.clipPlane.normal) || !isNum(parsed.clipPlane.constant)) {
+      return 'data-scene.clipPlane must have { normal: [x,y,z], constant: number }';
+    }
+  }
+  if (parsed.particles !== undefined) {
+    if (!Array.isArray(parsed.particles) || parsed.particles.length > 16) {
+      return 'data-scene.particles must be an array of at most 16 streams';
+    }
+    for (let i = 0; i < parsed.particles.length; i++) {
+      const s = parsed.particles[i];
+      const p = `data-scene.particles[${i}]`;
+      if (!isObj(s)) return `${p} must be an object`;
+      if (!isNum(s.count) || s.count < 1 || s.count > 600) return `${p}.count must be between 1 and 600`;
+      if (!isNum(s.fromX) || !isNum(s.toX) || !isNum(s.innerRadius) || !isNum(s.outerRadius) || !isNum(s.speed)) {
+        return `${p} requires numeric fromX, toX, innerRadius, outerRadius, and speed`;
+      }
+      const c1 = checkColor(s.color, `${p}.color`);
+      if (c1) return c1;
+      const c2 = checkColor(s.endColor, `${p}.endColor`);
+      if (c2) return c2;
+    }
+  }
+  if (parsed.views !== undefined) {
+    if (!isObj(parsed.views)) return 'data-scene.views must be an object mapping view keys to view presets';
+    for (const [key, v] of Object.entries(parsed.views)) {
+      const p = `data-scene.views.${key}`;
+      if (!isObj(v)) return `${p} must be an object`;
+      if (typeof v.label !== 'string' || !v.label.trim()) return `${p}.label must be a non-empty string`;
+      if (typeof v.orbit !== 'string' || !parseCameraOrbit(v.orbit)) return `${p}.orbit must be "<theta>deg <phi>deg <radius>"`;
+      if (v.target !== undefined && !isVec3(v.target)) return `${p}.target must be [x, y, z]`;
+      if (v.highlight !== undefined && (!Array.isArray(v.highlight) || !v.highlight.every((h) => typeof h === 'string'))) {
+        return `${p}.highlight must be an array of strings`;
+      }
+    }
+  }
+  if (!Array.isArray(parsed.parts) || parsed.parts.length === 0) {
+    return 'data-scene.parts must be a non-empty array of 3D parts';
+  }
+  const counter = { n: 0, meshes: 0 };
+  for (let i = 0; i < parsed.parts.length; i++) {
+    const err = checkPart(parsed.parts[i], `data-scene.parts[${i}]`, counter);
+    if (err) return err;
+  }
+  return null;
+}
+
+/** Parses a validated `data-scene` string into a `Scene3D`, or returns null if invalid. */
+export function parseScene3D(raw: string | undefined): Scene3D | null {
+  if (!raw || scene3DIssue(raw) !== null) return null;
+  return JSON.parse(raw) as Scene3D;
+}
+
+/** Whether any part in `spec` defines a `spin` animation, `particles`, or `autoRotate`. */
+export function hasAnimatedParts(spec: Scene3D | null): boolean {
+  if (!spec) return false;
+  if (spec.autoRotate || (spec.particles && spec.particles.length > 0)) return true;
+  const check = (parts: Part3D[]): boolean =>
+    parts.some((p) => Boolean(p.spin) || (p.children ? check(p.children) : false));
+  return check(spec.parts);
+}
+
+/** Whether any part in `spec` defines an `explodeOffset` for exploded/assembled toggling. */
+export function hasExplodableParts(spec: Scene3D | null): boolean {
+  if (!spec) return false;
+  const check = (parts: Part3D[]): boolean =>
+    parts.some((p) => Boolean(p.explodeOffset) || (p.children ? check(p.children) : false));
+  return check(spec.parts);
+}
+
+/**
+ * Parses `camera-orbit` attribute: "<thetaDeg>deg <phiDeg>deg <radius>"
+ * (e.g. "35deg 72deg 6.5" or "0.6rad 1.2rad 6.5").
+ */
+export function parseCameraOrbit(value: string | undefined): { theta: number; phi: number; radius: number } | null {
+  if (!value) return null;
+  const parts = value.trim().split(/\s+/);
+  if (parts.length !== 3) return null;
+  const angle = (s: string) => {
+    if (s.endsWith('deg')) return (parseFloat(s) * Math.PI) / 180;
+    if (s.endsWith('rad')) return parseFloat(s);
+    return (parseFloat(s) * Math.PI) / 180;
+  };
+  const theta = angle(parts[0]!);
+  const phi = angle(parts[1]!);
+  const radius = parseFloat(parts[2]!);
+  if (!Number.isFinite(theta) || !Number.isFinite(phi) || !Number.isFinite(radius) || radius <= 0) return null;
+  return { theta, phi, radius };
+}
+
+export function formatCameraOrbit(theta: number, phi: number, radius: number): string {
+  const deg = (r: number) => Math.round((r * 180) / Math.PI);
+  return `${deg(theta)}deg ${deg(phi)}deg ${Math.round(radius * 100) / 100}`;
+}

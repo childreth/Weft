@@ -16,14 +16,28 @@ export const IMAGE_TYPES = {
 } as const;
 export type ImageExt = keyof typeof IMAGE_TYPES;
 
+export const MODEL_TYPES = {
+  glb: 'model/gltf-binary',
+} as const;
+export type ModelExt = keyof typeof MODEL_TYPES;
+
+export const ASSET_TYPES = {
+  ...IMAGE_TYPES,
+  ...MODEL_TYPES,
+} as const;
+export type AssetExt = keyof typeof ASSET_TYPES;
+
 /** Uploads above this are refused. */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/** 3D `.glb` uploads above this are refused. */
+export const MAX_MODEL_BYTES = 50 * 1024 * 1024;
 /** Inline `data:` images (an agent's small SVG illustration) stay in the document, so they're kept small. */
 export const MAX_INLINE_IMAGE_CHARS = 100_000;
 
 /** `<sha256>.<ext>`: an asset's file name, and what follows `asset:` in a ref. */
-export const ASSET_NAME = /^([0-9a-f]{64})\.(png|jpg|webp|gif|avif)$/;
-const ASSET_REF = /^asset:([0-9a-f]{64}\.(?:png|jpg|webp|gif|avif))$/;
+export const ASSET_NAME = /^([0-9a-f]{64})\.(png|jpg|webp|gif|avif|glb)$/;
+const ASSET_REF = /^asset:([0-9a-f]{64}\.(?:png|jpg|webp|gif|avif|glb))$/;
+const MODEL_ASSET_REF = /^asset:([0-9a-f]{64}\.glb)$/;
 const INLINE_IMAGE = /^data:image\/(?:png|jpeg|webp|gif|avif|svg\+xml)[;,]/i;
 
 export const assetRef = (name: string) => `asset:${name}`;
@@ -43,6 +57,21 @@ export function sniffImage(bytes: Uint8Array): ImageExt | null {
   if (ascii(0, 'RIFF') && ascii(8, 'WEBP')) return 'webp';
   if (ascii(4, 'ftypavif') || ascii(4, 'ftypavis')) return 'avif';
   return null;
+}
+
+/** Sniffs a binary glTF 2.0 (`.glb`) header ("glTF", little-endian version 2). */
+export function sniffModel(bytes: Uint8Array): ModelExt | null {
+  if (bytes.length < 12) return null;
+  if (bytes[0] === 0x67 && bytes[1] === 0x6c && bytes[2] === 0x54 && bytes[3] === 0x46) {
+    const version = bytes[4]! | (bytes[5]! << 8) | (bytes[6]! << 16) | (bytes[7]! << 24);
+    if (version === 2) return 'glb';
+  }
+  return null;
+}
+
+/** Any supported uploaded asset type (image or 3D model) from its leading bytes. */
+export function sniffAsset(bytes: Uint8Array): AssetExt | null {
+  return sniffImage(bytes) ?? sniffModel(bytes);
 }
 
 /**
@@ -108,14 +137,24 @@ export function imageSrcIssue(src: string): string | null {
   return 'Attribute "src" must be an uploaded image (asset:<sha256>.<ext>) or a small data:image URI; remote URLs are not loaded';
 }
 
+/** Why `src` can't be a 3D model source, or null when it can. */
+export function modelSrcIssue(src: string): string | null {
+  if (MODEL_ASSET_REF.test(src)) return null;
+  return 'Attribute "src" on <weft-3d> must be an uploaded .glb model (asset:<sha256>.glb); remote URLs are not loaded';
+}
+
 /** `src` if a renderer may load it; anything else (a remote URL from an old document) renders as no image. */
 export const loadableSrc = (src: string | undefined): string | undefined => (src !== undefined && imageSrcIssue(src) === null ? src : undefined);
 
-/** Images need alt text: a description, or "" when the image is decorative. */
+/** Images and 3D models need alt text: a description, or "" when decorative. */
 export function altIssue(tag: string, attributes: Readonly<Record<string, string | null | undefined>>): string | null {
-  return tag === 'img' && typeof attributes.alt !== 'string'
-    ? 'Images need an "alt" attribute: describe the image, or "" if it\'s only decorative'
-    : null;
+  if (tag === 'img' && typeof attributes.alt !== 'string') {
+    return 'Images need an "alt" attribute: describe the image, or "" if it\'s only decorative';
+  }
+  if (tag === 'weft-3d' && typeof attributes.alt !== 'string') {
+    return '3D models (<weft-3d>) need an "alt" attribute: describe what the model shows, or "" if it\'s only decorative';
+  }
+  return null;
 }
 
 /** The asset names a set of nodes uses, for saving or exporting them with their images. */
