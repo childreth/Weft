@@ -53,6 +53,55 @@ const MEASURE_BOXES = `function ({ selector, depth, max }) {
   return out;
 }`;
 
+/** One layer as `measure` gives it: `rendered: false` when the page has no element for it. */
+export interface MeasuredLayer {
+  id: string;
+  rendered: boolean;
+  box?: { x: number; y: number; width: number; height: number };
+  computed?: Record<string, string>;
+  overflowing?: boolean;
+  visible?: boolean;
+}
+
+/**
+ * The editor's `measureNode` (apps/web/src/editor/connection.ts) run in an
+ * exported page: boxes relative to the artboard, the computed styles that decide
+ * layout, and overflow. Keep the two in step. Source text, like MEASURE_BOXES.
+ */
+const MEASURE_LAYERS = `function ({ ids, text }) {
+  const root = document.querySelector('.weft-artboard').firstElementChild;
+  const origin = root.getBoundingClientRect();
+  const round = function (n) { return Math.round(n * 10) / 10; };
+  return ids.map(function (id) {
+    const el = document.querySelector('[data-gf-id="' + CSS.escape(id) + '"]');
+    if (!el) return { id: id, rendered: false };
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    const computed = { display: cs.display };
+    if (cs.display.includes('grid')) {
+      computed.gridTemplateColumns = cs.gridTemplateColumns;
+      computed.gridTemplateRows = cs.gridTemplateRows;
+    }
+    if (cs.display.includes('flex')) computed.flexDirection = cs.flexDirection;
+    if (cs.display.includes('grid') || cs.display.includes('flex')) computed.gap = cs.gap;
+    if (text.includes(id)) {
+      computed.fontSize = cs.fontSize;
+      computed.lineHeight = cs.lineHeight;
+      computed.fontWeight = cs.fontWeight;
+      computed.color = cs.color;
+    }
+    if (cs.backgroundColor !== 'rgba(0, 0, 0, 0)') computed.backgroundColor = cs.backgroundColor;
+    return {
+      id: id,
+      rendered: true,
+      box: { x: round(r.left - origin.left), y: round(r.top - origin.top), width: round(r.width), height: round(r.height) },
+      computed: computed,
+      overflowing: el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1,
+      visible: r.width > 0 && r.height > 0,
+    };
+  });
+}`;
+
 export interface RenderBox {
   id: string;
   tag: string;
@@ -154,6 +203,21 @@ export class Renderer {
         truncated: box.height > MAX_HEIGHT,
         boxes,
       };
+    } finally {
+      await context.close();
+    }
+  }
+
+  /**
+   * Measures layers of `html` (an artboard page) at `width` CSS px, the way the
+   * editor's `getLayout` does on the canvas and in the same shape, so an agent
+   * reads the same thing with or without an editor open. `text` lists the ids of
+   * text layers, which also report their type styles.
+   */
+  async measure(html: string, opts: { width: number; ids: string[]; text: string[]; resource?: Resource }): Promise<MeasuredLayer[]> {
+    const { context, page } = await this.open(html, { width: opts.width, height: 800, resource: opts.resource });
+    try {
+      return (await page.evaluate(`(${MEASURE_LAYERS})(${JSON.stringify({ ids: opts.ids, text: opts.text })})`)) as MeasuredLayer[];
     } finally {
       await context.close();
     }

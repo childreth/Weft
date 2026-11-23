@@ -1042,10 +1042,20 @@ describe('MCP tools', () => {
     expect(data.tokens).toContainEqual(expect.objectContaining({ name: 'space.4', use: 'var(--space-4)', value: '16px' }));
   });
 
-  it('reports a helpful error when no editor is open for layout', async () => {
-    const res = await call('get_layout', { doc: 'nolayout' });
-    expect(res.isError).toBe(true);
-    expect(res.text).toMatch(/No Weft editor is open/);
+  it('measures layout in a headless browser when no editor is open', async () => {
+    const room = server.rooms.get('nolayout');
+    const [page] = room.doc.getTree();
+    const features = page!.children.find((c) => c.name === 'Features')!;
+    const all = await call('get_layout', { doc: 'nolayout' });
+    expect(all.data.nodes).toEqual([expect.objectContaining({ id: page!.id, artboardId: page!.id, box: expect.objectContaining({ x: 0, y: 0, width: page!.frame!.width }) })]);
+    const res = await call('get_layout', { doc: 'nolayout', ids: [features.id, 'nope'], includeDescendants: true });
+    const [section, ...rest] = res.data.nodes;
+    expect(section).toMatchObject({ id: features.id, name: 'Features', artboardId: page!.id, visible: true, overflowing: false });
+    expect(section.box.y).toBeGreaterThan(0);
+    expect(section.computed.display).toBeTruthy();
+    const text = rest.find((n: { id: string }) => room.doc.getNode(n.id)?.type === 'text');
+    expect(text.computed.fontSize).toMatch(/px$/);
+    expect(rest.at(-1)).toEqual({ id: 'nope', error: 'not found' });
   });
 });
 

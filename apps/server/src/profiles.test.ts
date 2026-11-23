@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { profileFor, smallSelection, smallSystemPrompt, smallTool } from './profiles';
+import { profileFor, selectionParts, smallSelection, smallSystemPrompt, smallTool } from './profiles';
 
 describe('prompt profiles', () => {
   it('gives models built for Weft the small profile, unless asked otherwise', () => {
@@ -30,6 +30,24 @@ describe('prompt profiles', () => {
     });
     expect(smallSystemPrompt([])).toContain('Nothing is selected');
     expect(smallSystemPrompt([{ id: 'a' }])).toContain('[{"id":"a"}]');
+  });
+
+  it("shows each selected layer's parent once, trimmed like the selection", () => {
+    const nav = { id: 'nav', tag: 'nav', name: 'Nav', styles: { display: 'flex', gap: '24px', color: 'red' }, childCount: 3 };
+    const link = (id: string) => ({ id, tag: 'a', text: id, parent: nav });
+    expect(selectionParts([link('a'), link('b')])).toEqual({
+      layers: [{ id: 'a', tag: 'a', text: 'a', parentId: 'nav' }, { id: 'b', tag: 'a', text: 'b', parentId: 'nav' }],
+      parents: [nav],
+    });
+    // A selected parent is shown in full already, not again as a parent.
+    expect(selectionParts([link('a'), link('b'), { id: 'nav', tag: 'nav' }]).parents).toEqual([]);
+    // One selected layer is the one to change: no parent, which pulled models away from it.
+    expect(selectionParts([link('a')])).toEqual({ layers: [{ id: 'a', tag: 'a', text: 'a' }], parents: [] });
+    const prompt = smallSystemPrompt([link('a'), link('b')].map(smallSelection));
+    expect(prompt).toContain('"parentId":"nav"');
+    expect(prompt.match(/"id":"nav"/g)).toHaveLength(1);
+    expect(prompt).toContain('"styles":{"display":"flex","gap":"24px"}');
+    expect(prompt).not.toContain('color');
   });
 
   it("cuts a tool's descriptions to a sentence and drops what tells a model nothing", () => {
