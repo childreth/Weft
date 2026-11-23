@@ -1,0 +1,65 @@
+{
+ "name": "inkling-health-app",
+ "doc": "default",
+ "model": "inkling-2-mini:26b-a5b-nvfp4",
+ "prompt": "can you create me a health app for someone who is more diabetic use the bubblegum theme",
+ "selection": [],
+ "steps": [
+  {
+   "name": "get_canvas",
+   "arguments": {
+    "detail": "outline"
+   }
+  },
+  {
+   "name": "list_tokens",
+   "arguments": {
+    "group": "color"
+   }
+  },
+  {
+   "name": "search_icons",
+   "arguments": {
+    "limit": 10,
+    "query": "favorite"
+   }
+  },
+  {
+   "name": "search_fonts",
+   "arguments": {
+    "limit": 6,
+    "query": "rounded"
+   }
+  },
+  {
+   "name": "add_fonts",
+   "arguments": {
+    "fonts": [
+     {
+      "family": "M PLUS Rounded 1c",
+      "weights": [
+       400,
+       500,
+       700,
+       800
+      ]
+     },
+     {
+      "family": "Material Symbols Rounded"
+     }
+    ]
+   }
+  },
+  {
+   "name": "set_tokens",
+   "arguments": {
+    "theme": "bubblegum",
+    "tokens": {
+     "font-family.body": "{font-family.m-plus-rounded-1c}",
+     "font-family.heading": "{font-family.m-plus-rounded-1c}"
+    }
+   }
+  }
+ ],
+ "contextTokens": 131072
+}

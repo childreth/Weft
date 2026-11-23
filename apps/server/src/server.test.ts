@@ -733,6 +733,45 @@ describe('MCP tools', () => {
     expect(room.doc.getNode(pricing.children[1].children[0].id)!.text).toBe('Free');
   });
 
+  it('builds a page sent as a flat list, each node naming its parent by key', async () => {
+    const { data, isError } = await call('create_nodes', {
+      doc: 'flat',
+      nodes: [
+        { key: 'page', tag: 'main', name: 'Page', frame: { width: 390 } },
+        { key: 'hero', parent: 'page', tag: 'section', name: 'Hero' },
+        { parent: 'hero', tag: 'h1', text: 'Glucose' },
+        // Nested children still work inside a flat list, and a key on one of them can be a parent too.
+        { parent: 'page', tag: 'ul', name: 'Log', children: [{ key: 'first', tag: 'li', name: 'Row' }] },
+        { parent: 'hero', tag: 'p', text: 'In range' },
+        { parent: 'first', tag: 'span', text: '112' },
+      ],
+    });
+    expect(isError).toBe(false);
+    // One artboard, not six: everything with a parent went inside it, in list order.
+    expect(data.created).toHaveLength(1);
+    const room = server.rooms.get('flat');
+    const tree = room.doc.getTree(data.created[0].id)[0]!;
+    const shape = (n: { name: string; text?: string; children: unknown[] }): unknown => (n.children.length ? { [n.name]: n.children.map((c) => shape(c as never)) } : (n.text ?? n.name));
+    expect(shape(tree)).toEqual({ Page: [{ Hero: ['Glucose', 'In range'] }, { Log: [{ Row: ['112'] }] }] });
+
+    const before = room.doc.getChildren(null).length;
+    const refused = await call('create_nodes', {
+      doc: 'flat',
+      nodes: [
+        { key: 'a', tag: 'main', frame: { width: 390 } },
+        { parent: 'b', tag: 'p', text: 'too early' },
+        { key: 'b', parent: 'a', tag: 'section' },
+        { key: 'a', parent: 'a', tag: 'div' },
+        { parent: tree.id, tag: 'p', text: 'an existing layer' },
+      ],
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('nodes[1].parent: no node before it has the key "b" (keys so far: "a")');
+    expect(refused.text).toContain('nodes[3].key: "a" is already the key of another node in this call');
+    expect(refused.text).toContain(`nodes[4].parent: "${tree.id}" is an existing layer`);
+    expect(room.doc.getChildren(null)).toHaveLength(before);
+  });
+
   it('accepts numbers sent as strings', async () => {
     const { data, isError } = await call('get_canvas', { doc: 'read', maxDepth: '0' });
     expect(isError).toBe(false);

@@ -81,6 +81,7 @@ Model:
 - Native behavior, no scripts: details/summary for disclosure (same "name" attribute = only one open); a popover (any frame with attributes {"popover": ""} and an "id", opened by a button with {"popovertarget": "<id>"}); a dialog (tag dialog with an "id", opened by a button with {"commandfor": "<id>", "command": "show-modal"}, closed by one with "command": "close"); select with option children; textarea (its text is the starting value). Boolean attributes take "" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.
 
 - Responsive comparison: duplicate_node with frame {"width": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.
+- Building a whole page or screen in one create_nodes call: send it flat, not as one deep tree. Give a node a "key" and list what goes inside it after it, each with "parent": that key: {"nodes": [{"key": "page", "tag": "main", "frame": {"width": 390}}, {"key": "hero", "parent": "page", "tag": "section"}, {"parent": "hero", "tag": "h1", "text": "…"}]}. Children can still be nested as "children" where a branch is small.
 - Wrapping: to put existing layers inside a new one (a card's contents into a button or a link, a few rows into a section), create it with "adopt": the ids to move into it, in order. With no parentId, the new node goes where the first of them was, so one call wraps several cards: {"nodes": [{"tag": "button", "adopt": ["<thumb 1>", "<title 1>"]}, {"tag": "button", "adopt": ["<thumb 2>", "<title 2>"]}]}. Moving them one by one would be a call each. They keep their ids, styles and everything else.
 - Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.
 
@@ -157,7 +158,45 @@ interface NodeSpec {
   children?: NodeSpec[];
 }
 
-type NodeSpecInput = Omit<NodeSpec, 'type' | 'children'> & { type?: NodeSpec['type']; children?: NodeSpecInput[] };
+type NodeSpecInput = Omit<NodeSpec, 'type' | 'children'> & { type?: NodeSpec['type']; children?: NodeSpecInput[]; key?: string; parent?: string };
+
+/**
+ * A flat create_nodes list made into the nested trees everything else checks and builds: a node with `parent`
+ * goes, in list order, at the end of the children of the node earlier in the list whose `key` that is.
+ * Flat because a model writing a whole page as one nested tree has to close fifteen levels of brackets at the
+ * end, and that is where it miscounts: Inkling 2 lost 6 calls in 10 that way, each correct up to its last few
+ * characters. Only earlier nodes can be parents, which also rules out cycles.
+ */
+function nestFlat(input: readonly NodeSpecInput[], isLayer: (id: string) => boolean): NodeSpecInput[] {
+  const issues: string[] = [];
+  const byKey = new Map<string, NodeSpecInput>();
+  const roots: NodeSpecInput[] = [];
+  const copy = ({ key, parent: _parent, children, ...spec }: NodeSpecInput, at: string): NodeSpecInput => {
+    const node: NodeSpecInput = { ...spec, ...(children && { children: children.map((c, i) => copy(c, `${at}.children[${i}]`)) }) };
+    if (key !== undefined) {
+      if (byKey.has(key)) issues.push(`${at}.key: "${key}" is already the key of another node in this call`);
+      byKey.set(key, node);
+    }
+    return node;
+  };
+  input.forEach((spec, i) => {
+    const at = `nodes[${i}]`;
+    if (spec.parent === undefined) return roots.push(copy(spec, at));
+    // Looked up before this node's own keys are added: a parent has to come earlier in the list.
+    const parent = byKey.get(spec.parent);
+    const node = copy(spec, at);
+    if (!parent && isLayer(spec.parent)) {
+      issues.push(`${at}.parent: "${spec.parent}" is an existing layer; "parent" names a "key" in this call. To add to an existing layer, pass its id as the call's parentId`);
+    } else if (!parent) {
+      const known = [...byKey.keys()];
+      issues.push(
+        `${at}.parent: no node before it has the key "${spec.parent}"${known.length ? ` (keys so far: ${some(known.map((k) => `"${k}"`))})` : ''}. List a parent before its children, with "key"`,
+      );
+    } else (parent.children ??= []).push(node);
+  });
+  throwIssues(issues);
+  return roots;
+}
 
 /** Small models often leave `type` out: a node with text and no children is text, anything else a frame. */
 const withTypes = ({ children, ...spec }: NodeSpecInput): NodeSpec => ({
@@ -197,6 +236,16 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     })
       .optional()
       .describe("Makes this node an instance: it draws that component's layers and follows its changes. No tag, text or children; styles apply to its root (width, gridColumn, alignSelf)"),
+    key: z
+      .string()
+      .optional()
+      .describe('A name for this new node within this call only, for later nodes in the list to name as their "parent"'),
+    parent: z
+      .string()
+      .optional()
+      .describe(
+        'The "key" of a node earlier in this call\'s nodes list: this node goes inside it, after the ones before it. Lets a page be sent as a flat list instead of one deeply nested tree. Top-level list entries only',
+      ),
     adopt: z
       .array(z.string())
       .min(1)
@@ -746,8 +795,8 @@ export function createMcpServer(
     },
     async ({ doc, parentId, beforeId, nodes: input, model }) => {
       const { room, agent } = open(doc, model);
-      const nodes = input.map(withTypes);
       return mutate(room, agent, 'create_nodes', (touched, report) => {
+        const nodes = nestFlat(input, (id) => room.doc.has(id)).map(withTypes);
         const places = nodes.map((spec) => placeOf(room, spec, parentId, beforeId));
         throwIssues([...treeIssues(nodes), ...adoptIssues(room, nodes, places)]);
         const created = nodes.map((spec, i) => createTree(room, agent.identity.origin, spec, places[i]!.parentId, places[i]!.beforeId, touched));

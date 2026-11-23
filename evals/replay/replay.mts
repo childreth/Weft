@@ -8,12 +8,13 @@
 // llama.cpp's server, LM Studio…), to tell a model's own behaviour from a runtime's.
 // Each sample is one line in runs/<date>-<fixture>-<runtime>-<model>.jsonl:
 //   call     a tool call that could be read (check.mts says whether Weft accepts it)
-//   lost     the reply ended with no text and no readable call: the runtime dropped a malformed one
+//   lost     the reply ended with no text and no readable call: the runtime dropped (or refused) a malformed one
 //   loop     the reasoning was repeating itself, by the check Assist uses, and the sample was ended
 //   text     an answer in words, no call
 //   timeout  nothing final within the time allowed
 //   error    the runtime refused or failed
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { request, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { FIXTURES, RUNS, isRepeating } from './shared.mts';
 
@@ -44,7 +45,7 @@ interface Result {
 let reasoning = '';
 
 /** The reply's lines as they arrive; a line may be Ollama's JSON or an SSE `data:` line. */
-async function* lines(res: Response): AsyncGenerator<string> {
+async function* lines(res: { body: unknown }): AsyncGenerator<string> {
   let buffer = '';
   for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
     buffer += Buffer.from(chunk).toString('utf8');
@@ -67,14 +68,31 @@ function finish(calls: Array<{ name: string; arguments: unknown }>, content: str
   return content.trim() ? { outcome: 'text', detail: content.slice(0, 400) } : { outcome: 'lost' };
 }
 
+/**
+ * A POST over node:http, as Assist sends it: fetch gives up on a response that sends nothing for 5 minutes,
+ * and Ollama sends nothing while it holds a long tool call back to parse it whole.
+ */
+function post(url: string, body: string, signal: AbortSignal): Promise<{ ok: boolean; text(): Promise<string>; body: IncomingMessage }> {
+  return new Promise((resolve, reject) => {
+    const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, signal }, (res) => {
+      const ok = (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300;
+      resolve({ ok, body: res, text: async () => { let t = ''; for await (const c of res) t += c; return t; } });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 async function ollama(signal: AbortSignal): Promise<Result> {
-  const res = await fetch(`${base}/api/chat`, { method: 'POST', signal, body: JSON.stringify({ ...captured, model, stream: true }) });
-  if (!res.ok) return { outcome: 'error', detail: (await res.text()).slice(0, 400) };
+  const res = await post(`${base}/api/chat`, JSON.stringify({ ...captured, model, stream: true }), signal);
+  // Some of Ollama's parsers refuse a call they can't read ("invalid Inkling2 tool call: …") instead of dropping it: lost all the same.
+  const failed = (text: string): Result => ({ outcome: /tool call/i.test(text) ? 'lost' : 'error', detail: text.slice(0, 400) });
+  if (!res.ok) return failed(await res.text());
   let content = '';
   const calls: Array<{ name: string; arguments: unknown }> = [];
   for await (const line of lines(res)) {
     const part = JSON.parse(line) as { error?: string; message?: { thinking?: string; content?: string; tool_calls?: Array<{ function: { name: string; arguments: unknown } }> } };
-    if (part.error) return { outcome: 'error', detail: part.error.slice(0, 400) };
+    if (part.error) return failed(part.error);
     reasoning += part.message?.thinking ?? '';
     content += part.message?.content ?? '';
     calls.push(...(part.message?.tool_calls ?? []).map((c) => c.function));
