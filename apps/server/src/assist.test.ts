@@ -12,8 +12,9 @@ import type { TraceRecord, TraceTurn } from './traces';
  * A scripted stand-in for Ollama: replies are taken in order; requests are
  * recorded. A reply is sent whole, or, as `{ stream: [...] }`, the way Ollama
  * streams: one line per part, where a part is a piece of the message,
- * `{ wait: ms }` (the model writing something that never arrives) or
- * `{ hang: true }` (it never finishes).
+ * `{ wait: ms }` (the model writing something that never arrives),
+ * `{ hang: true }` (it never finishes) or `{ error }` (Ollama failing the
+ * stream partway). `{ status, error }` fails the request outright.
  */
 let fake: Server;
 let replies: Array<Record<string, unknown>> = [];
@@ -75,10 +76,15 @@ beforeAll(async () => {
     }
     requests.push(request);
     const reply = replies.shift() ?? { role: 'assistant', content: 'Done.' };
+    if (typeof reply.status === 'number') {
+      res.statusCode = reply.status;
+      return res.end(JSON.stringify({ error: reply.error }));
+    }
     if (!Array.isArray(reply.stream)) return res.end(JSON.stringify({ message: reply }));
     for (const part of reply.stream as Array<Record<string, unknown>>) {
       if (typeof part.wait === 'number') await new Promise((r) => setTimeout(r, part.wait as number));
       else if (part.hang) return void (await new Promise((r) => res.on('close', r)));
+      else if (part.error) return res.end(`${JSON.stringify({ error: part.error })}\n`);
       else res.write(`${JSON.stringify({ message: { role: 'assistant', content: '', ...part }, done: false })}\n`);
     }
     res.end(`${JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop' })}\n`);
@@ -238,6 +244,21 @@ describe('assist', () => {
       expect(nudge).toContain('one update_nodes call for f_plan.');
       expect(nudge.length).toBeLessThan(7000);
       expect(silent[1]).toEqual({ type: 'message', text: 'Here you go.' });
+
+      // Ollama refusing a call it can't parse (Inkling 2) is the same lost call, not the end of the turn:
+      // before the reply starts, and partway through it, with a call it had read already dropped too.
+      const parserError = "invalid Inkling2 tool call: invalid character ']' after object key:value pair";
+      for (const refused of [
+        { status: 500, error: parserError },
+        { stream: [{ thinking: 'Set the tokens, then build the home screen.' }, { tool_calls: [{ function: { name: 'list_tokens', arguments: {} } }] }, { error: parserError }] },
+      ]) {
+        replies = [refused, { role: 'assistant', content: 'Built it.' }];
+        const retried = await chat({ prompt: 'make a health app', think: 'on' });
+        expect(retried.filter((e) => e.type !== 'thinking').map((e) => e.type)).toEqual(['error', 'message', 'done']);
+        expect(retried.find((e) => e.type === 'error')).toMatchObject({ message: expect.stringMatching(/no tool call Weft could read/) });
+        expect(requests.at(-1)!.messages.at(-1)!.content).toContain('could not be read');
+      }
+      expect(requests.at(-1)!.messages.at(-1)!.content).toContain('Set the tokens, then build the home screen.');
 
       // An answer given only in the reasoning, with no pause after it, is still the reply.
       replies = [{ stream: [{ thinking: 'The button is #004ac6.' }] }];
