@@ -17,3 +17,4 @@ export * from './assets';
 export * from './behaviors';
 export * from './components';
 export * from './accessibility';
+export * from './scene3d';

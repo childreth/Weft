@@ -57,7 +57,7 @@ describe('MCP tools', () => {
       [
         'align_nodes', 'create_nodes', 'delete_nodes', 'distribute_nodes', 'duplicate_node', 'get_canvas', 'get_layout', 'get_screenshot',
         'get_selection', 'list_tokens', 'move_node', 'read_skill', 'select_nodes', 'undo_agent_change', 'update_nodes', 'export_html', 'import_file',
-        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens', 'test_flow', 'import_image',
+        'search_fonts', 'add_fonts', 'remove_fonts', 'search_icons', 'set_tokens', 'test_flow', 'import_image', 'import_model',
       ].sort(),
     );
     expect(client.getInstructions()).toContain('real HTML + CSS');
@@ -517,6 +517,15 @@ describe('MCP tools', () => {
     const unsafe = await call('update_nodes', { doc: 'tabs', updates: [{ id: week!.id, bind: { attributes: { onclick: 'handler' } } }] });
     expect(unsafe.isError).toBe(true);
     expect(unsafe.text).toContain('Event handler attributes are not allowed');
+
+    // Taking a prop away and clearing the instances' values for it, in one call: the values are no prop's any more, and null still clears them.
+    const unbind = await call('update_nodes', {
+      doc: 'tabs',
+      updates: [{ id: week!.id, bind: { attributes: null } }, ...[plan, log].map((t) => ({ id: t!.id, props: { current: null } }))],
+    });
+    expect(unbind.isError).toBe(false);
+    const after = await call('get_canvas', { doc: 'tabs', rootId: plan!.id });
+    expect((after.data.nodes as Array<{ instance: { props: Record<string, string> } }>)[0]!.instance.props).not.toHaveProperty('current');
   });
 
   it('wraps existing layers in new ones with adopt, several places in one call', async () => {

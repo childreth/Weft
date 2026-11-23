@@ -66,6 +66,8 @@ export interface ArtboardHTMLOptions {
    * `assets/<name>`, beside the page. Undefined leaves the image out.
    */
   assetUrl?: (name: string) => string | undefined;
+  /** Optional browser runtime module URL for `<weft-3d>` layers (injected only when the artboard contains one). */
+  runtimeUrl?: string;
 }
 
 export function exportArtboardHTML(doc: GridDocument, artboardId: string, options: ArtboardHTMLOptions = {}): string {
@@ -77,6 +79,8 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
   const fontCSS = options.fontCSSUrl === undefined ? googleFontsCSSUrl(doc.getFonts()) : options.fontCSSUrl;
   const fontLink = fontCSS ? `\n<link rel="stylesheet" href="${escapeAttr(fontCSS)}">` : '';
   const subtree = flattenTree(tree);
+  const has3D = subtree.some((n) => n.tag === 'weft-3d');
+  const runtimeScript = has3D && options.runtimeUrl ? `\n<script type="module" src="${escapeAttr(options.runtimeUrl)}"></script>` : '';
   // Only the themes this artboard uses; each one declares every token.
   const set = doc.tokenSet(options.tokens);
   const used = new Set(subtree.flatMap((n) => n.theme ?? []));
@@ -85,6 +89,7 @@ export function exportArtboardHTML(doc: GridDocument, artboardId: string, option
     compileTokensCSS({ ...set, modes }, ':root', (mode) => `[data-theme="${mode}"]`),
     'html, body { margin: 0; }',
     ARTBOARD_RESET_CSS.trim(),
+    has3D ? 'weft-3d { display: block; position: relative; }' : '',
     `.weft-artboard { width: ${width}px; height: ${height}; overflow: hidden; }`,
     compileBreakpointCSS(subtree),
     compileStateCSS(subtree),
@@ -102,7 +107,7 @@ ${css}
 </style>
 </head>
 <body>
-<div class="weft-artboard">${renderNode(tree, true, options.assetUrl ?? ((name) => `assets/${name}`))}</div>
+<div class="weft-artboard">${renderNode(tree, true, options.assetUrl ?? ((name) => `assets/${name}`))}</div>${runtimeScript}
 </body>
 </html>
 `;

@@ -1,5 +1,7 @@
 node_modules
 dist
+# Built from apps/web/src/canvas/standalone3d.ts whenever the server starts or tests run
+apps/server/dist-runtime
 test-results
 playwright-report
 .DS_Store

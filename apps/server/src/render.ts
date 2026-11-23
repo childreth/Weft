@@ -3,10 +3,13 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 /** Answers a request from the page (fonts, images), or null to block it. */
 export type Resource = (url: string) => Promise<{ body: Buffer | string; type: string } | null>;
 
-/** Shows `html` in `page` once its fonts are ready. */
-export async function setPage(page: Page, html: string): Promise<void> {
+/** Shows `html` in `page` once its fonts (and any `<weft-3d>` scenes) are ready. */
+export async function setPage(page: Page, html: string, waitFor3D = false): Promise<void> {
   await page.setContent(html, { waitUntil: 'load' });
   await page.evaluate('document.fonts.ready.then(() => 0)');
+  if (waitFor3D) {
+    await page.evaluate('Promise.resolve(window.__weft3dReady).then(() => 0)');
+  }
 }
 
 /**
@@ -76,23 +79,34 @@ export class Renderer {
   private browser: Promise<Browser> | null = null;
 
   private launch(): Promise<Browser> {
-    this.browser ??= chromium.launch({ headless: true }).catch((err: Error) => {
-      this.browser = null;
-      throw new Error(
-        `Rendering needs Chromium: run "pnpm --filter @weft/web exec playwright install chromium" (${err.message.split('\n')[0]})`,
-      );
-    });
+    this.browser ??= chromium
+      .launch({
+        headless: true,
+        args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'],
+      })
+      .catch((err: Error) => {
+        this.browser = null;
+        throw new Error(
+          `Rendering needs Chromium: run "pnpm --filter @weft/web exec playwright install chromium" (${err.message.split('\n')[0]})`,
+        );
+      });
     return this.browser;
   }
 
   /**
-   * A page showing `html` at `width` × `height` CSS px, with JavaScript off and
-   * every request blocked except what `resource` answers (e.g. the document's
-   * fonts from the local cache). Close its context when done.
+   * A page showing `html` at `width` × `height` CSS px, with JavaScript off
+   * (unless the page contains `<weft-3d>`, in which case only Weft's local
+   * bundled 3D runtime is served) and every request blocked except what
+   * `resource` answers. Close its context when done.
    */
   async open(html: string, opts: { width: number; height: number; scale?: number; resource?: Resource }): Promise<{ context: BrowserContext; page: Page }> {
     const browser = await this.launch();
-    const context = await browser.newContext({ viewport: { width: Math.round(opts.width), height: Math.round(opts.height) }, deviceScaleFactor: opts.scale ?? 1, javaScriptEnabled: false });
+    const has3D = html.includes('<weft-3d');
+    const context = await browser.newContext({
+      viewport: { width: Math.round(opts.width), height: Math.round(opts.height) },
+      deviceScaleFactor: opts.scale ?? 1,
+      javaScriptEnabled: has3D,
+    });
     try {
       await context.route('**/*', async (route) => {
         const found = await opts.resource?.(route.request().url()).catch(() => null);
@@ -101,7 +115,7 @@ export class Renderer {
         return route.abort();
       });
       const page = await context.newPage();
-      await setPage(page, html);
+      await setPage(page, html, has3D);
       return { context, page };
     } catch (err) {
       await context.close();
