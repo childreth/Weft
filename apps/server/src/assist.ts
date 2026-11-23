@@ -79,6 +79,13 @@ const UNREADABLE_NOTICE =
 const UNREADABLE_STOP =
   'Stopped: the model again wrote a tool call that could not be read, so nothing from those calls was applied. Try again, ask for one small step, or use another model.';
 
+/**
+ * Ollama's error when its parser for a model's tool-call format can't read a call (Inkling 2: "invalid Inkling2
+ * tool call: invalid character ']' after object key:value pair"). Some parsers drop such a call silently, others
+ * fail the request with this: either way it is the same lost call, and gets the same second chance.
+ */
+const REFUSED_CALL = /tool call/i;
+
 /** A model call Weft ended before it finished; `thinking` is what it had reasoned by then, the only clue to why. */
 class StepStopped extends Error {
   constructor(
@@ -511,7 +518,7 @@ ${selection}`;
         const turn = await ask(system, tools, unreadable > 0 ? [{ role: 'user', content: unreadableCall(lostReasoning) }] : undefined);
         // Nothing came back, or the model wrote on after its reasoning and none of it arrived: a tool call Ollama
         // couldn't parse and dropped. Showing the reasoning as the answer (or "Done.") would hide that nothing happened.
-        if (turn.empty && (!turn.thinking || turn.silentMs >= assistLimits.swallowedMs)) {
+        if (turn.refused || (turn.empty && (!turn.thinking || turn.silentMs >= assistLimits.swallowedMs))) {
           turn.showThinking(turn.thinking);
           lostReasoning = turn.thinking;
           if (++unreadable >= MAX_UNREADABLE) {
@@ -636,7 +643,7 @@ ${selection}`;
     tools?: OllamaTool[],
     choice?: ThinkChoice,
     extra: ChatMessage[] = [],
-  ): Promise<{ reply: ChatMessage; thinking: string; silentMs: number }> {
+  ): Promise<{ reply: ChatMessage; thinking: string; silentMs: number; refused?: boolean }> {
     const limit = new AbortController();
     const timer = setTimeout(() => limit.abort(), assistLimits.stepMs);
     const either = AbortSignal.any([signal, limit.signal]);
@@ -664,7 +671,13 @@ ${selection}`;
         res.resume();
         res = await send(true);
       }
-      if (!ok(res)) throw new Error(`Ollama: ${(await responseText(res)).slice(0, 300) || res.statusCode}`);
+      /** Ollama couldn't parse the call the model wrote: nothing of the step is kept but what it had reasoned. */
+      const refusedCall = () => ({ reply: { role: 'assistant' as const, content: '' }, thinking: thinking.trim(), silentMs: 0, refused: true });
+      if (!ok(res)) {
+        const text = await responseText(res);
+        if (REFUSED_CALL.test(text)) return refusedCall();
+        throw new Error(`Ollama: ${text.slice(0, 300) || res.statusCode}`);
+      }
       let content = '';
       const calls: NonNullable<ChatMessage['tool_calls']> = [];
       let lastOutput = Date.now();
@@ -678,6 +691,10 @@ ${selection}`;
           throw new Error(`Ollama sent a reply that isn't JSON: ${line.slice(0, 120)}`);
         }
         // Ollama reports a failure partway through a stream as a line of its own.
+        if (chunk.error && REFUSED_CALL.test(chunk.error)) {
+          res.destroy();
+          return refusedCall();
+        }
         if (chunk.error) throw new Error(`Ollama: ${chunk.error.slice(0, 300)}`);
         const part = chunk.message;
         if (part?.thinking || part?.content || part?.tool_calls?.length) {

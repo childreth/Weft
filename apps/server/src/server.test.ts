@@ -676,6 +676,27 @@ describe('MCP tools', () => {
     expect(JSON.stringify(page)).toContain('Design in the browser');
   });
 
+  it('outlines a large canvas less deep, and says how to read one part in full', async () => {
+    const room = server.rooms.get('big-outline');
+    for (let a = 0; a < 20; a++) {
+      const board = room.doc.createNode({ type: 'frame', parentId: null, name: `Screen ${a}`, frame: { x: a * 400, y: 0, width: 390, height: 800 } });
+      const list = room.doc.createNode({ type: 'frame', parentId: board, name: 'List' });
+      for (let i = 0; i < 20; i++) room.doc.createNode({ type: 'text', parentId: list, text: `Reading ${i} on screen ${a}: 120 mg/dL after lunch` });
+    }
+    const brief = await call('get_canvas', { doc: 'big-outline', detail: 'outline' });
+    expect(brief.text.length).toBeLessThan(24_000);
+    expect(brief.data.note).toContain('rootId');
+    const screen = brief.data.nodes.find((n: { name: string }) => n.name === 'Screen 3');
+    expect(screen.children[0]).toMatchObject({ name: 'List', childCount: 20 });
+    // Asked for a depth, it gets it; one part comes back whole.
+    const deep = await call('get_canvas', { doc: 'big-outline', detail: 'outline', maxDepth: 12 });
+    expect(deep.data.note).toBeUndefined();
+    expect(deep.text).toContain('Reading 19 on screen 19');
+    const part = await call('get_canvas', { doc: 'big-outline', detail: 'outline', rootId: screen.id });
+    expect(part.data.note).toBeUndefined();
+    expect(part.text).toContain('Reading 19 on screen 3');
+  });
+
   it('accepts definition lists and tables', async () => {
     const room = server.rooms.get('tags');
     const [page] = room.doc.getTree();
@@ -731,6 +752,45 @@ describe('MCP tools', () => {
     const room = server.rooms.get('create');
     expect(room.doc.getNode(pricing.id)!.frame).toEqual({ x: 1400, y: 0, width: 800, height: 600 });
     expect(room.doc.getNode(pricing.children[1].children[0].id)!.text).toBe('Free');
+  });
+
+  it('builds a page sent as a flat list, each node naming its parent by key', async () => {
+    const { data, isError } = await call('create_nodes', {
+      doc: 'flat',
+      nodes: [
+        { key: 'page', tag: 'main', name: 'Page', frame: { width: 390 } },
+        { key: 'hero', parent: 'page', tag: 'section', name: 'Hero' },
+        { parent: 'hero', tag: 'h1', text: 'Glucose' },
+        // Nested children still work inside a flat list, and a key on one of them can be a parent too.
+        { parent: 'page', tag: 'ul', name: 'Log', children: [{ key: 'first', tag: 'li', name: 'Row' }] },
+        { parent: 'hero', tag: 'p', text: 'In range' },
+        { parent: 'first', tag: 'span', text: '112' },
+      ],
+    });
+    expect(isError).toBe(false);
+    // One artboard, not six: everything with a parent went inside it, in list order.
+    expect(data.created).toHaveLength(1);
+    const room = server.rooms.get('flat');
+    const tree = room.doc.getTree(data.created[0].id)[0]!;
+    const shape = (n: { name: string; text?: string; children: unknown[] }): unknown => (n.children.length ? { [n.name]: n.children.map((c) => shape(c as never)) } : (n.text ?? n.name));
+    expect(shape(tree)).toEqual({ Page: [{ Hero: ['Glucose', 'In range'] }, { Log: [{ Row: ['112'] }] }] });
+
+    const before = room.doc.getChildren(null).length;
+    const refused = await call('create_nodes', {
+      doc: 'flat',
+      nodes: [
+        { key: 'a', tag: 'main', frame: { width: 390 } },
+        { parent: 'b', tag: 'p', text: 'too early' },
+        { key: 'b', parent: 'a', tag: 'section' },
+        { key: 'a', parent: 'a', tag: 'div' },
+        { parent: tree.id, tag: 'p', text: 'an existing layer' },
+      ],
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('nodes[1].parent: no node before it has the key "b" (keys so far: "a")');
+    expect(refused.text).toContain('nodes[3].key: "a" is already the key of another node in this call');
+    expect(refused.text).toContain(`nodes[4].parent: "${tree.id}" is an existing layer`);
+    expect(room.doc.getChildren(null)).toHaveLength(before);
   });
 
   it('accepts numbers sent as strings', async () => {
@@ -1129,6 +1189,21 @@ describe('sync relay', () => {
     expect(listed.themes.ember).toMatchObject({ 'color.primary': '#c2410c' });
     expect(listed.themes.dark['color.surface']).toMatch(/^#[0-9a-f]{6}$/);
 
+    // With many themes, each is listed in brief (its main colors and anything not a color); "theme" lists one in full.
+    await call('set_tokens', { doc: 'themes', seed: '#2f6f4f', theme: 'grove' });
+    await call('set_tokens', { doc: 'themes', theme: 'grove', tokens: { 'radius.md': '14px' } });
+    const many = (await call('list_tokens', { doc: 'themes' })).data;
+    expect(many.note).toContain('"theme"');
+    expect(Object.keys(many.themes)).toEqual(expect.arrayContaining(['ember', 'grove', 'grove-dark', 'dark']));
+    expect(many.themes.grove).toMatchObject({ 'color.primary': expect.any(String), 'radius.md': '14px' });
+    expect(many.themes.grove['color.error-container']).toBeUndefined();
+    const one = (await call('list_tokens', { doc: 'themes', theme: 'grove' })).data;
+    expect(Object.keys(one.themes)).toEqual(['grove']);
+    expect(one.themes.grove['color.error-container']).toMatch(/^#/);
+    expect((await call('list_tokens', { doc: 'themes', theme: 'nope' })).text).toContain('Unknown theme "nope"');
+    await call('undo_agent_change', { doc: 'themes' });
+    await call('undo_agent_change', { doc: 'themes' });
+
     expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'nope' }] })).text).toContain('Unknown theme "nope"');
     // The seed page colors with the tokens, so the theme shows: no warning.
     expect((await call('update_nodes', { doc: 'themes', updates: [{ id: page!.id, theme: 'ember' }] })).data.warnings).toBeUndefined();
@@ -1366,6 +1441,22 @@ describe('sync relay', () => {
     expect(preflight.headers.get('access-control-allow-origin')).toBeNull();
     expect((await post({ origin: 'http://localhost:5173' })).status).toBe(200);
     expect((await post({})).status).toBe(200);
+  });
+
+  it('hides an idle agent\'s cursor but keeps its undo for when it comes back', async () => {
+    const room = server.rooms.get('idle-agent');
+    const root = room.doc.getChildren(null)[0]!;
+    const cursors = () => [...room.awareness.getStates().values()].filter((s) => s.kind === 'agent').length;
+    const made = await call('create_nodes', { doc: 'idle-agent', parentId: root.id, nodes: [{ type: 'text', text: 'Before a long think' }] });
+    const id = made.data.created[0].id as string;
+    expect(cursors()).toBe(1);
+    // A local model thinks for minutes between calls.
+    room.sweepAgents(Date.now() + 10 * 60 * 1000);
+    expect(cursors()).toBe(0);
+    expect(room.agentCount).toBe(1);
+    expect((await call('undo_agent_change', { doc: 'idle-agent' })).data.undone).toBe(true);
+    expect(room.doc.has(id)).toBe(false);
+    expect(cursors()).toBe(1);
   });
 
   it('gives each agent session its own cursor, model label and undo stack', async () => {
