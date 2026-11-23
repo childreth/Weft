@@ -9,7 +9,12 @@ export const CONTAINER_TAGS = [
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'blockquote', 'figcaption',
   'dl', 'dt', 'dd',
   'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+  // Interactive 3D viewport (Three.js: `.glb` assets and declarative `data-scene` schematics).
+  'weft-3d',
 ] as const;
+
+export const MODEL_TAG = 'weft-3d' as const;
+export const isModelTag = (tag: string): tag is typeof MODEL_TAG => tag === MODEL_TAG;
 
 export const TEXT_TAGS = [
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'a', 'button', 'label',

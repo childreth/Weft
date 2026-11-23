@@ -69,7 +69,7 @@ function hasName(node: SceneTree): boolean {
   if (hasValue(a['aria-label']) || hasValue(a['aria-labelledby']) || hasValue(a.title)) return true;
   const inside = (n: SceneTree): boolean => {
     if (silent(n) || n.hidden) return false;
-    if (n.tag === 'img') return hasValue(n.attributes.alt);
+    if (n.tag === 'img' || n.tag === 'weft-3d') return hasValue(n.attributes.alt);
     // An icon's text is its ligature name ("calendar_view_week"), not words.
     if (n.type === 'text') return hasValue(n.text) && !ICON_FONT.test(n.styles.fontFamily ?? '');
     if (hasValue(n.attributes['aria-label'])) return true;

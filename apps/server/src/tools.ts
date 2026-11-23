@@ -52,6 +52,7 @@ import type { AgentIdentity, AgentPresence, FocusKind } from './agents';
 import { AssetError, type AssetStore } from './assets';
 import type { FontCache } from './fonts';
 import { ImportError, type ImageImporter } from './import-image';
+import { get3DRuntime } from './runtime3d';
 import { strictObject } from './strict';
 import { describeTarget, FLOW_ACTIONS, FLOW_STATES, flowStepIssues, runFlow, type FlowPage } from './flow';
 import type { MeasuredLayer, Renderer, Resource } from './render';
@@ -602,6 +603,7 @@ function renderHTML(room: Room, artboardId: string, width?: number): string {
     width,
     fontCSSUrl: room.doc.getFonts().length ? `${RENDER_FONTS}/fonts.css` : null,
     assetUrl: (name) => `${RENDER_ASSETS}/${name}`,
+    runtimeUrl: `${RENDER_ASSETS}/__weft3d.js`,
   });
 }
 
@@ -609,6 +611,7 @@ function renderResource(room: Room, services: ToolServices): Resource {
   return async (url) => {
     if (url === `${RENDER_FONTS}/fonts.css`) return { body: await services.fonts.css(room.doc.getFonts(), `${RENDER_FONTS}/files`), type: 'text/css' };
     if (url.startsWith(`${RENDER_FONTS}/files/`)) return services.fonts.file(url.slice(`${RENDER_FONTS}/files/`.length));
+    if (url === `${RENDER_ASSETS}/__weft3d.js`) return get3DRuntime();
     if (url.startsWith(`${RENDER_ASSETS}/`)) return services.assets.get(url.slice(`${RENDER_ASSETS}/`.length));
     return null;
   };
@@ -1273,6 +1276,45 @@ export function createMcpServer(
             attributes: { src: image.src, alt: '<what the image shows, or "" if decorative>', ...size },
           },
           howTo: 'Keep width and height in attributes so the layout holds the image\'s shape. To crop into a fixed box, set width, height or aspectRatio in styles with objectFit "cover".',
+        });
+      } catch (err) {
+        if (err instanceof ImportError) return fail(err.message);
+        throw err;
+      }
+    },
+  );
+
+  server.registerTool(
+    'import_model',
+    {
+      title: 'Import a 3D .glb model from a URL',
+      description:
+        "Fetches a binary glTF 2.0 (.glb) 3D model from a public http(s) URL into Weft's local asset store. Returns its src (asset:….glb) and a ready-to-use <weft-3d> node to copy into create_nodes. Up to 50 MB. For procedural 3D schematics without an external file, create a <weft-3d> node with a declarative JSON data-scene attribute instead.",
+      inputSchema: {
+        doc: docParam,
+        url: z.string().max(2000).describe('Address of the .glb file (https://…)'),
+        model: modelParam,
+      },
+    },
+    async ({ doc, url, model }) => {
+      const { agent } = open(doc, model);
+      agent.look([], 'Importing a 3D model');
+      try {
+        const imported = await services.images.importModel(url);
+        return ok({
+          ...imported,
+          node: {
+            type: 'frame',
+            tag: 'weft-3d',
+            name: '3D Model',
+            styles: { display: 'block', width: '100%', height: '420px' },
+            attributes: {
+              src: imported.src,
+              alt: '<what the 3D model shows>',
+              'camera-orbit': '34deg 72deg 6.4',
+            },
+          },
+          howTo: 'Set width and height (or aspectRatio) in styles. Turn on Interact mode on the artboard to orbit and zoom live.',
         });
       } catch (err) {
         if (err instanceof ImportError) return fail(err.message);

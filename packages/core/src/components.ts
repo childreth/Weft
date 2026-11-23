@@ -112,12 +112,18 @@ export interface PropSpec {
   attributes: string[];
 }
 
-/** Problems with prop values for an instance of a component whose props are `known`. */
+/**
+ * Problems with prop values for an instance of a component whose props are `known`.
+ * `null` clears a value, so it's accepted for a prop the component no longer
+ * has: unbinding a layer leaves the instances' values behind, and clearing them
+ * (in the same call or later) shouldn't be refused for the prop being gone.
+ */
 export function propIssues(props: Readonly<Record<string, unknown>>, known: Readonly<Record<string, PropSpec>>, componentName: string): string[] {
   const names = Object.keys(known);
   const issues: string[] = [];
   for (const [name, value] of Object.entries(props)) {
     const spec = known[name];
+    if (!spec && value === null) continue;
     if (!spec) {
       issues.push(
         names.length

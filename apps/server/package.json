@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
-    "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "dev": "pnpm build:3d-runtime && tsx watch src/main.ts",
+    "start": "pnpm build:3d-runtime && tsx src/main.ts",
+    "test": "pnpm build:3d-runtime && vitest run",
+    "typecheck": "tsc -p .",
+    "build:3d-runtime": "pnpm --filter @weft/web build:3d-runtime"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

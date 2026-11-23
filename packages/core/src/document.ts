@@ -7,7 +7,8 @@ import { LEGACY_COLOR_ROLES, SCHEME_VARIANT_NAMES, materialScheme, schemeTokens,
 import { legacyColorIssues, planLegacyColors, renameLegacyColors, retiredColorsIn, usesLegacyColor, type LegacyColorPlan } from './legacy-colors';
 import { defaultWeights, findFont, fontSlug, withFontTokens, type DocumentFont } from './fonts';
 import { flattenTokens, mergeTokenGroups, resolvedTokenValues, type TokenGroup, type TokenSet } from './tokens';
-import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc } from './assets';
+import { ASSET_NAME, MAX_IMAGE_BYTES, altIssue, imageSrcIssue, loadableSrc, modelSrcIssue } from './assets';
+import { scene3DIssue } from './scene3d';
 import {
   MAX_PROP_VALUE_LENGTH,
   PROP_NAME,
@@ -535,7 +536,7 @@ export function stateIssues(states: Record<string, Partial<Record<string, string
   );
 }
 
-export function attributeIssues(attributes: Record<string, string | null>): string[] {
+export function attributeIssues(attributes: Record<string, string | null>, tag?: string): string[] {
   const issues: string[] = [];
   for (const [name, value] of Object.entries(attributes)) {
     const badName = attributeNameIssue(name);
@@ -545,7 +546,10 @@ export function attributeIssues(attributes: Record<string, string | null>): stri
     else if (badValue) issues.push(badValue);
     else if (name === 'srcset') issues.push('Use "src" (one image) instead of "srcset"');
     else if (name === 'src' && typeof value === 'string') {
-      const issue = imageSrcIssue(value);
+      const issue = tag === 'weft-3d' ? modelSrcIssue(value) : imageSrcIssue(value);
+      if (issue) issues.push(issue);
+    } else if (name === 'data-scene' && typeof value === 'string') {
+      const issue = scene3DIssue(value);
       if (issue) issues.push(issue);
     }
   }
@@ -590,7 +594,7 @@ export function treeIssues(nodes: readonly TreeInput[], path = 'nodes'): string[
     if (node.styles) add(styleIssues(node.styles));
     if (node.breakpoints) add(breakpointIssues(node.breakpoints));
     if (node.states) add(stateIssues(node.states));
-    if (node.attributes) add(attributeIssues(node.attributes));
+    if (node.attributes) add(attributeIssues(node.attributes, tag));
     add([altIssue(tag, node.attributes ?? {}) ?? []].flat());
     if (node.bind) add(bindIssues(node.type, node.bind));
     const children = node.children ?? [];
@@ -1214,7 +1218,7 @@ export class GridDocument {
       ...(input.styles ? styleIssues(input.styles) : []),
       ...(input.breakpoints ? breakpointIssues(input.breakpoints) : []),
       ...(input.states ? stateIssues(input.states) : []),
-      ...(input.attributes ? attributeIssues(input.attributes) : []),
+      ...(input.attributes ? attributeIssues(input.attributes, tag) : []),
       ...[altIssue(tag, input.attributes ?? {}) ?? []].flat(),
       ...(input.theme !== undefined ? [this.themeIssue(input.type, input.theme) ?? []].flat() : []),
       ...(input.bind ? bindIssues(input.type, input.bind) : []),
@@ -1292,7 +1296,7 @@ export class GridDocument {
       ...(patch.styles ? styleIssues(patch.styles) : []),
       ...(patch.breakpoints ? breakpointIssues(patch.breakpoints) : []),
       ...(patch.states ? stateIssues(patch.states) : []),
-      ...(patch.attributes ? attributeIssues(patch.attributes) : []),
+      ...(patch.attributes ? attributeIssues(patch.attributes, patch.tag ?? (y.get('tag') as string)) : []),
       ...(patch.tag !== undefined || patch.attributes
         ? [altIssue(patch.tag ?? (y.get('tag') as string), { ...(y.get('attributes') as Y.Map<string>).toJSON(), ...patch.attributes }) ?? []].flat()
         : []),
