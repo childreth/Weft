@@ -104,6 +104,15 @@ export class AgentPresence {
     return this.awareness.clientID;
   }
 
+  /**
+   * Takes the cursor off every editor, keeping the agent: its undo stack must outlive a long think. Local models
+   * spend minutes on one step, and when going idle removed the agent, Inkling's turn lost its undo history between
+   * two calls (Undo for the turn did nothing). The next call shows the cursor again.
+   */
+  hide(): void {
+    if (this.awareness.getLocalState() !== null) this.awareness.setLocalState(null);
+  }
+
   publish(): void {
     this.awareness.setLocalState({
       kind: 'agent',

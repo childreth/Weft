@@ -1443,6 +1443,22 @@ describe('sync relay', () => {
     expect((await post({})).status).toBe(200);
   });
 
+  it('hides an idle agent\'s cursor but keeps its undo for when it comes back', async () => {
+    const room = server.rooms.get('idle-agent');
+    const root = room.doc.getChildren(null)[0]!;
+    const cursors = () => [...room.awareness.getStates().values()].filter((s) => s.kind === 'agent').length;
+    const made = await call('create_nodes', { doc: 'idle-agent', parentId: root.id, nodes: [{ type: 'text', text: 'Before a long think' }] });
+    const id = made.data.created[0].id as string;
+    expect(cursors()).toBe(1);
+    // A local model thinks for minutes between calls.
+    room.sweepAgents(Date.now() + 10 * 60 * 1000);
+    expect(cursors()).toBe(0);
+    expect(room.agentCount).toBe(1);
+    expect((await call('undo_agent_change', { doc: 'idle-agent' })).data.undone).toBe(true);
+    expect(room.doc.has(id)).toBe(false);
+    expect(cursors()).toBe(1);
+  });
+
   it('gives each agent session its own cursor, model label and undo stack', async () => {
     const ydoc = new Y.Doc();
     const provider = new WebsocketProvider(server.wsUrl, 'multi', ydoc);
