@@ -9,6 +9,16 @@
 
 export const MAX_SCENE3D_CHARS = 200_000;
 export const MAX_SCENE3D_PARTS = 256;
+/**
+ * Meshes a scene may draw once `repeat` is applied: parts × their copies, nested
+ * repeats multiplied. Every editor that opens the document builds them, so one
+ * scene past this could freeze all of them (and the screenshot renderer).
+ */
+export const MAX_SCENE3D_MESHES = 4096;
+/** Most segments a curved part may have around (`radialSegments`) or along (`tubularSegments`). */
+export const MAX_SCENE3D_SEGMENTS = 256;
+/** Most profile points a `lathe` may have. */
+export const MAX_SCENE3D_POINTS = 256;
 
 export type Vec3 = [number, number, number];
 export type Vec2 = [number, number];
@@ -194,10 +204,21 @@ function checkMaterial(mat: unknown, path: string): string | null {
   return null;
 }
 
-function checkPart(part: unknown, path: string, counter: { n: number }): string | null {
+function checkPart(part: unknown, path: string, counter: { n: number; meshes: number }, copies = 1): string | null {
   if (!isObj(part)) return `${path} must be an object`;
   counter.n += 1;
   if (counter.n > MAX_SCENE3D_PARTS) return `Scene has more than ${MAX_SCENE3D_PARTS} parts`;
+  // Copies multiply down the tree: a part repeated 12 times inside a group repeated 10 times draws 120.
+  const drawn = copies * (isObj(part.repeat) && isNum(part.repeat.count) ? Math.max(1, Math.floor(part.repeat.count)) : 1);
+  counter.meshes += drawn;
+  if (counter.meshes > MAX_SCENE3D_MESHES) return `Scene draws more than ${MAX_SCENE3D_MESHES} parts once repeats are counted; use fewer copies`;
+  for (const key of ['radialSegments', 'tubularSegments'] as const) {
+    const v = part[key];
+    if (v !== undefined && (!isNum(v) || v < 3 || v > MAX_SCENE3D_SEGMENTS)) return `${path}.${key} must be between 3 and ${MAX_SCENE3D_SEGMENTS}`;
+  }
+  for (const key of ['width', 'height', 'depth', 'radius', 'radiusTop', 'radiusBottom', 'innerRadius', 'outerRadius', 'tube', 'thetaStart', 'thetaLength'] as const) {
+    if (part[key] !== undefined && !isNum(part[key])) return `${path}.${key} must be a number`;
+  }
   if (typeof part.type !== 'string' || !PART3D_TYPES.has(part.type)) {
     return `${path}.type must be one of: ${[...PART3D_TYPES].join(', ')}`;
   }
@@ -218,6 +239,7 @@ function checkPart(part: unknown, path: string, counter: { n: number }): string 
     if (!Array.isArray(part.points) || part.points.length < 2 || !part.points.every(isVec2)) {
       return `${path}.points must be an array of at least two [radius, y] pairs`;
     }
+    if (part.points.length > MAX_SCENE3D_POINTS) return `${path}.points can have at most ${MAX_SCENE3D_POINTS} pairs`;
   }
   if (part.repeat !== undefined) {
     if (!isObj(part.repeat)) return `${path}.repeat must be an object`;
@@ -233,7 +255,7 @@ function checkPart(part: unknown, path: string, counter: { n: number }): string 
   if (part.children !== undefined) {
     if (!Array.isArray(part.children)) return `${path}.children must be an array`;
     for (let i = 0; i < part.children.length; i++) {
-      const childErr = checkPart(part.children[i], `${path}.children[${i}]`, counter);
+      const childErr = checkPart(part.children[i], `${path}.children[${i}]`, counter, drawn);
       if (childErr) return childErr;
     }
   }
@@ -301,7 +323,7 @@ export function scene3DIssue(raw: string): string | null {
   if (!Array.isArray(parsed.parts) || parsed.parts.length === 0) {
     return 'data-scene.parts must be a non-empty array of 3D parts';
   }
-  const counter = { n: 0 };
+  const counter = { n: 0, meshes: 0 };
   for (let i = 0; i < parsed.parts.length; i++) {
     const err = checkPart(parsed.parts[i], `data-scene.parts[${i}]`, counter);
     if (err) return err;

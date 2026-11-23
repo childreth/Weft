@@ -1,5 +1,5 @@
 import { ASSET_TYPES, GridError, IMAGE_TYPES, exportArtboardHTML, flattenTree, readWeftFile, type AssetExt } from '@weft/core';
-import { collectAssets, imageFiles, insertImages, storeAssets } from './assets';
+import { HTTP_URL, collectAssets, imageFiles, insertImages, storeAssets } from './assets';
 import { imageTarget } from './clipboard';
 import { doc, docName, run } from './editor';
 import { useEditor } from './store';
@@ -72,6 +72,20 @@ export function pickImages() {
   input.click();
 }
 
+/** The `<weft-3d>` runtime as a data URL a module script can load, or undefined when the server can't give it. */
+async function runtimeDataUrl(): Promise<string | undefined> {
+  try {
+    const res = await fetch(`${HTTP_URL}/runtime/weft-3d.js`);
+    if (!res.ok) return undefined;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return `data:text/javascript;base64,${btoa(binary)}`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Downloads an artboard as a standalone HTML page (breakpoints as `@media`, Google Fonts linked, images inline). */
 export async function exportArtboard(id: string) {
   // As drawn: an instance's images are in its component, which may be on another artboard.
@@ -80,6 +94,13 @@ export async function exportArtboard(id: string) {
     const data = assets[name];
     return data && `data:${ASSET_TYPES[name.split('.')[1] as AssetExt]};base64,${data}`;
   };
-  const html = run(() => exportArtboardHTML(doc, id, { assetUrl }));
+  const tree = flattenTree(doc.getExpandedTree(id));
+  let runtimeUrl: string | undefined;
+  if (tree.some((n) => n.tag === 'weft-3d')) {
+    // Embedded, not linked: the page has to draw its models offline, away from this server.
+    runtimeUrl = await runtimeDataUrl();
+    if (!runtimeUrl) return void run(() => { throw new GridError("Couldn't load the 3D runtime from the Weft server, so this page's 3D models wouldn't draw. Is the server running?"); });
+  }
+  const html = run(() => exportArtboardHTML(doc, id, { assetUrl, runtimeUrl }));
   if (html) download(`${fileName(doc.getNode(id)?.name ?? 'artboard')}.html`, html, 'text/html');
 }

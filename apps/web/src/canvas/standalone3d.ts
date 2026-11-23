@@ -31,7 +31,7 @@ async function hydrateElement(el: HTMLElement): Promise<void> {
   const baseOrbit = initialOrbit(cameraOrbit, spec);
   let orbit: OrbitState = { ...baseOrbit, target: [...baseOrbit.target] };
   let animating = animateAttr === 'true' || animateAttr === '';
-  let exploded = explodedAttr !== 'false';
+  let exploded = explodedAttr === 'true';
   let explodeFactor = exploded ? 1 : 0;
   let elapsed = 0;
   let activeViewKey: string | null = null;

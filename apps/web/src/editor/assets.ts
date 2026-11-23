@@ -1,4 +1,4 @@
-import { GridError, IMAGE_TYPES, MAX_IMAGE_BYTES, assetName, assetNamesIn, assetRef, loadableSrc, type SceneTree } from '@weft/core';
+import { GridError, IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_MODEL_BYTES, assetName, assetNamesIn, assetRef, loadableSrc, type SceneTree } from '@weft/core';
 import { SERVER_URL } from './connection';
 import { doc, history, run } from './editor';
 import { useEditor } from './store';
@@ -9,7 +9,7 @@ import { useEditor } from './store';
  * the server. Saved files and exports carry the bytes, so they work anywhere.
  */
 
-const HTTP_URL = SERVER_URL.replace(/^ws/, 'http');
+export const HTTP_URL = SERVER_URL.replace(/^ws/, 'http');
 
 /** What the canvas should load for an `img` src: the server's copy of an asset, a data URI, or nothing (an old remote URL). */
 export function displaySrc(src: string | undefined): string | undefined {
@@ -23,7 +23,10 @@ export const imageFiles = (files: Iterable<File>): File[] =>
 
 /** Stores an image on the server; returns its asset name. `name` (from a saved file) is checked against the content. */
 async function upload(body: Blob, name?: string): Promise<string> {
-  if (body.size > MAX_IMAGE_BYTES) throw new GridError(`Images can be up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+  // A model comes back from a saved file by name; anything without one is a pasted or dropped image.
+  const isModel = name?.endsWith('.glb') ?? false;
+  const limit = isModel ? MAX_MODEL_BYTES : MAX_IMAGE_BYTES;
+  if (body.size > limit) throw new GridError(`${isModel ? '3D models' : 'Images'} can be up to ${limit / 1024 / 1024} MB`);
   let res: Response;
   try {
     res = await fetch(`${HTTP_URL}/assets${name ? `?name=${name}` : ''}`, { method: 'POST', body });

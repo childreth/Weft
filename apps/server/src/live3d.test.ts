@@ -169,6 +169,27 @@ describe('live3d Three.js rendering', () => {
     expect(getRes.headers.get('content-type')).toBe('model/gltf-binary');
   });
 
+  it('takes models larger than an image may be, as a saved file brings them back', async () => {
+    // 12 MB: over the 10 MB image limit, under the 50 MB model limit.
+    const glb = Buffer.alloc(12 * 1024 * 1024);
+    glb.set([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
+    const res = await fetch(`${server.httpUrl}/assets`, { method: 'POST', body: glb });
+    expect(res.status).toBe(200);
+    // The same size as an image is still refused, by the image limit.
+    const png = Buffer.alloc(12 * 1024 * 1024);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const refused = await fetch(`${server.httpUrl}/assets`, { method: 'POST', body: png });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/Images can be up to 10 MB/);
+  });
+
+  it('serves the 3D runtime for exports to embed', async () => {
+    const res = await fetch(`${server.httpUrl}/runtime/weft-3d.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/javascript');
+    expect((await res.text()).length).toBeGreaterThan(100_000);
+  });
+
   it('renders a live Three.js 3D jet engine cutaway in get_screenshot', async () => {
     const created = (await client.callTool({
       name: 'create_nodes',

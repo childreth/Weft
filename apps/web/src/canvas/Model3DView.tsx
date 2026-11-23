@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatCameraOrbit, hasAnimatedParts, hasExplodableParts, parseCameraOrbit, parseScene3D, type ViewPreset3D } from '@weft/core';
 import { doc, run } from '../editor/editor';
 import { useEditor } from '../editor/store';
@@ -24,6 +24,12 @@ const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2
  * renderer. Supports live 60fps spool/particle animation with an on/off toggle,
  * smooth exploded/assembled toggling, pointer orbit + wheel zoom in Interact
  * mode, and declarative view presets.
+ *
+ * Playing with a model in Interact mode (orbit, animate, explode, view presets)
+ * never writes the document: it's a preview, like clicking through a popover,
+ * and a write would sync to every open editor and add undo steps. Only "Save
+ * camera" writes, because it's a deliberate edit. `data-animate` and
+ * `data-exploded` are where a viewport starts.
  */
 export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animateAttr, explodedAttr, alt }: Model3DViewProps) {
   const hostRef = useRef<HTMLElement | null>(null);
@@ -48,7 +54,8 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
   const highlightRef = useRef<string[] | undefined>(undefined);
   highlightRef.current = activeView?.highlight;
 
-  const initialExploded = explodedAttr !== 'false';
+  // Assembled unless the layer asks to start exploded.
+  const initialExploded = explodedAttr === 'true';
   const [exploded, setExploded] = useState(initialExploded);
   const [explodeFactor, setExplodeFactor] = useState(initialExploded ? 1 : 0);
   const explodeFactorRef = useRef(initialExploded ? 1 : 0);
@@ -71,7 +78,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
   }, [animateAttr]);
 
   useEffect(() => {
-    const next = explodedAttr !== 'false';
+    const next = explodedAttr === 'true';
     setExploded(next);
     setExplodeFactor(next ? 1 : 0);
   }, [explodedAttr]);
@@ -132,10 +139,7 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
       setActiveViewKey(null);
       animateCameraTo(baseOrbit);
     }
-    if (nodeId) {
-      run(() => doc.updateNode(nodeId, { attributes: { 'data-exploded': next ? 'true' : 'false' } }));
-    }
-  }, [exploded, animateExplodeTo, activeViewKey, animateCameraTo, baseOrbit, nodeId]);
+  }, [exploded, animateExplodeTo, activeViewKey, animateCameraTo, baseOrbit]);
 
   const selectView = useCallback(
     (key: string | null) => {
@@ -248,53 +252,64 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     return () => cancelAnimationFrame(raf);
   }, [animating, animatable]);
 
-  const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!isInteracting) return;
-    cancelAnimationFrame(transitionRef.current);
-    e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { x: e.clientX, y: e.clientY, theta: orbit.theta, phi: orbit.phi };
-  };
+  // Native listeners, as everywhere on the canvas: React dispatches events from
+  // portals into shadow roots twice, which zoomed twice per wheel tick.
+  const selectViewRef = useRef(selectView);
+  selectViewRef.current = selectView;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !isInteracting) return;
+    const down = (e: PointerEvent) => {
+      cancelAnimationFrame(transitionRef.current);
+      e.stopPropagation();
+      canvas.setPointerCapture(e.pointerId);
+      dragRef.current = { x: e.clientX, y: e.clientY, theta: orbitRef.current.theta, phi: orbitRef.current.phi };
+    };
+    const move = (e: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      e.stopPropagation();
+      const theta = drag.theta - (e.clientX - drag.x) * 0.008;
+      const phi = Math.max(0.12, Math.min(Math.PI - 0.12, drag.phi - (e.clientY - drag.y) * 0.008));
+      setOrbit((prev) => ({ ...prev, theta, phi }));
+      setDirty(true);
+    };
+    const up = (e: PointerEvent) => {
+      if (!dragRef.current) return;
+      e.stopPropagation();
+      dragRef.current = null;
+    };
+    const wheel = (e: WheelEvent) => {
+      cancelAnimationFrame(transitionRef.current);
+      e.preventDefault();
+      e.stopPropagation();
+      const factor = e.deltaY > 0 ? 1.08 : 0.92;
+      setOrbit((prev) => ({ ...prev, radius: Math.max(1.2, Math.min(40, prev.radius * factor)) }));
+      setDirty(true);
+    };
+    const dblclick = () => {
+      selectViewRef.current(null);
+      setDirty(false);
+    };
+    canvas.addEventListener('pointerdown', down);
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener('wheel', wheel, { passive: false });
+    canvas.addEventListener('dblclick', dblclick);
+    return () => {
+      dragRef.current = null;
+      canvas.removeEventListener('pointerdown', down);
+      canvas.removeEventListener('pointermove', move);
+      canvas.removeEventListener('pointerup', up);
+      canvas.removeEventListener('pointercancel', up);
+      canvas.removeEventListener('wheel', wheel);
+      canvas.removeEventListener('dblclick', dblclick);
+    };
+  }, [isInteracting]);
 
-  const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!isInteracting || !dragRef.current) return;
-    e.stopPropagation();
-    const dx = e.clientX - dragRef.current.x;
-    const dy = e.clientY - dragRef.current.y;
-    const theta = dragRef.current.theta - dx * 0.008;
-    const phi = Math.max(0.12, Math.min(Math.PI - 0.12, dragRef.current.phi - dy * 0.008));
-    setOrbit((prev) => ({ ...prev, theta, phi }));
-    setDirty(true);
-  };
-
-  const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!dragRef.current) return;
-    e.stopPropagation();
-    dragRef.current = null;
-  };
-
-  const onWheel = (e: ReactWheelEvent<HTMLCanvasElement>) => {
-    if (!isInteracting) return;
-    cancelAnimationFrame(transitionRef.current);
-    e.stopPropagation();
-    const factor = e.deltaY > 0 ? 1.08 : 0.92;
-    setOrbit((prev) => ({ ...prev, radius: Math.max(1.2, Math.min(40, prev.radius * factor)) }));
-    setDirty(true);
-  };
-
-  const onDoubleClick = () => {
-    if (!isInteracting) return;
-    selectView(null);
-    setDirty(false);
-  };
-
-  const toggleAnimate = () => {
-    const next = !animating;
-    setAnimating(next);
-    if (nodeId) {
-      run(() => doc.updateNode(nodeId, { attributes: { 'data-animate': next ? 'true' : 'false' } }));
-    }
-  };
+  // From the rendered value, not an updater: a click React delivers twice must still toggle once.
+  const toggleAnimate = () => setAnimating(!animating);
 
   const saveCamera = () => {
     if (!nodeId) return;
@@ -335,11 +350,6 @@ export function Model3DView({ nodeId, props, src, sceneJson, cameraOrbit, animat
     },
     createElement('canvas', {
       ref: canvasRef,
-      onPointerDown,
-      onPointerMove,
-      onPointerUp,
-      onWheel,
-      onDoubleClick,
       style: {
         display: 'block',
         width: '100%',

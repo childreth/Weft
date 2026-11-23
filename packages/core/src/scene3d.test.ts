@@ -93,3 +93,22 @@ describe('scene3d and .glb assets', () => {
     expect(plainHtml).not.toContain('__weft3d.js');
   });
 });
+
+describe('scene limits', () => {
+  const scene = (part: Record<string, unknown>) => JSON.stringify({ parts: [{ type: 'cylinder', ...part }] });
+
+  it('refuses geometry detailed enough to freeze every editor that opens it', () => {
+    expect(scene3DIssue(scene({ radialSegments: 64 }))).toBeNull();
+    expect(scene3DIssue(scene({ radialSegments: 10_000_000 }))).toMatch(/radialSegments must be between 3 and 256/);
+    expect(scene3DIssue(JSON.stringify({ parts: [{ type: 'torus', tubularSegments: 5000 }] }))).toMatch(/tubularSegments/);
+    const points = Array.from({ length: 300 }, (_, i) => [1, i / 100]);
+    expect(scene3DIssue(JSON.stringify({ parts: [{ type: 'lathe', points }] }))).toMatch(/at most 256 pairs/);
+    expect(scene3DIssue(scene({ height: 'tall' }))).toMatch(/height must be a number/);
+  });
+
+  it('counts repeats, nested ones multiplied, toward the parts a scene draws', () => {
+    const blades = { type: 'box', repeat: { count: 100, axis: 'x', radius: 1 } };
+    expect(scene3DIssue(JSON.stringify({ parts: [{ type: 'group', repeat: { count: 40, axis: 'x', step: 0.1 }, children: [blades] }] }))).toBeNull();
+    expect(scene3DIssue(JSON.stringify({ parts: [{ type: 'group', repeat: { count: 41, axis: 'x', step: 0.1 }, children: [blades] }] }))).toMatch(/more than 4096 parts/);
+  });
+});
