@@ -566,6 +566,54 @@ describe('assist traces', () => {
   });
 });
 
+describe('assist with the small profile', () => {
+  let traced: GridServer;
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'weft-profile-'));
+    traced = await startGridServer({ port: 0, dataDir: null, traceDir: dir, ollamaUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` });
+  });
+  afterAll(async () => {
+    await traced.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('sends a model built for Weft the short prompt, the quick-fix tools and layout styles, and records the full selection', async () => {
+    const doc = traced.rooms.get('profile').doc;
+    const page = doc.createNode({ type: 'frame', name: 'Page', frame: { x: 0, y: 0, width: 390, height: 600 } });
+    const row = doc.createNode({ type: 'frame', tag: 'li', parentId: page, name: 'Row', styles: { display: 'grid', gap: '8px', color: 'var(--color-primary)' } });
+    const ask = (model: string, profile?: string) =>
+      fetch(`${traced.httpUrl}/assist/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ doc: 'profile', session: 'profile-session-1', model, prompt: 'make it flex', selection: [row], ...(profile && { profile }) }),
+      }).then((r) => r.text());
+
+    await ask('weft-fix:270m');
+    const sent = requests.at(-1)!;
+    expect(sent.tools.map((t) => t.function.name).sort()).toEqual(['create_nodes', 'delete_nodes', 'get_canvas', 'get_layout', 'update_nodes']);
+    expect(sent.messages[0]!.content).toMatch(/^You make small fixes/);
+    expect(sent.messages[0]!.content).toContain('"gap":"8px"');
+    expect(sent.messages[0]!.content).not.toContain('color-primary');
+    expect(JSON.stringify(sent.tools)).not.toContain('$schema');
+    // The tools a tuned model was trained on: create_nodes' flat list came later.
+    const create = JSON.stringify(sent.tools.find((t) => t.function.name === 'create_nodes'));
+    expect(create).toContain('"children"');
+    expect(create).not.toMatch(/"(key|parent)":/);
+
+    await traced.traces!.flushed();
+    const [turn] = readdirSync(dir).flatMap((f) => readFileSync(join(dir, f), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as TraceTurn));
+    expect(turn).toMatchObject({ profile: 'small', selected: [{ id: row, styles: { color: 'var(--color-primary)' } }] });
+
+    // Any model can be sent the small prompt, and a tuned one the full prompt.
+    await ask('big:27b', 'small');
+    expect(requests.at(-1)!.messages[0]!.content).toMatch(/^You make small fixes/);
+    await ask('weft-fix:270m', 'full');
+    expect(requests.at(-1)!.messages[0]!.content).toContain('You are the assistant built into the Weft editor');
+  });
+});
+
 describe('without traces', () => {
   it('writes nothing', () => {
     expect(server.traces).toBeUndefined();

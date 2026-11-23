@@ -11,6 +11,7 @@ import { Assistant, SESSION_ID, THINK_CHOICES, ollamaUrlFrom, type AssistEvent, 
 import { MAX_SPOKEN_CHARS, Speech } from './speech';
 import { RemoteAccess } from './remote';
 import { TraceLog } from './traces';
+import { PROFILE_NAMES, type ProfileName } from './profiles';
 import { AssetError, AssetStore } from './assets';
 import { FontCache, type FontOrigins } from './fonts';
 import { ImageImporter } from './import-image';
@@ -251,6 +252,7 @@ export async function startGridServer(options: GridServerOptions = {}): Promise<
           prompt: body.prompt.slice(0, 4000),
           selection: Array.isArray(body.selection) ? body.selection.filter((id): id is string => typeof id === 'string') : [],
           think: THINK_CHOICES.includes(body.think as ThinkChoice) ? body.think : undefined,
+          profile: PROFILE_NAMES.includes(body.profile as ProfileName) ? body.profile : undefined,
         },
         emit,
         controller.signal,

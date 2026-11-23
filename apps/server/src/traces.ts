@@ -35,7 +35,15 @@ export interface TraceTurn {
   /** Ran on ollama.com: a teacher, not something to train on without checking its terms. */
   cloud: boolean;
   think?: string;
+  /** The prompt profile it was sent (`profiles.ts`). Missing in traces written before profiles. */
+  profile?: 'full' | 'small';
   selection: string[];
+  /**
+   * The selected layers as `compact` gave them, every style included, so an
+   * export can rebuild the prompt for another profile. Missing in traces
+   * written before profiles (the export reads them back out of the full prompt).
+   */
+  selected?: Record<string, unknown>[];
   /** answered: ended with a reply. error: stopped by a limit or a failure (`error` says which). stopped: the user pressed Stop. */
   outcome: 'answered' | 'error' | 'stopped';
   error?: string;
