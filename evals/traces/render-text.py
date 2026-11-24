@@ -4,8 +4,9 @@ dropped the tools; a `text` column is used as is.
 
   python render-text.py <tokenizer dir> <export dir> <out dir>
 
-<tokenizer dir> holds the student's tokenizer and the chat_template.jinja to render with: the patched one, with no
-empty <think> block (see evals/README.md). Needs `transformers` (mlx-lm's Python has it). Writes
+<tokenizer dir> holds the student's tokenizer and the chat_template.jinja to render with: the one its Ollama renderer
+matches. For Qwen3-4B-Instruct that's a patched copy with no empty <think> block (see evals/README.md); Qwen 3.5 is
+served with thinking off, which writes an empty <think> block before each reply, so its own template is right as is. Needs `transformers` (mlx-lm's Python has it). Writes
 <out dir>/{train,valid}.text.jsonl and prints each split's longest example in tokens, to pick the context length.
 """
 import json
@@ -30,4 +31,4 @@ for split in ("train", "valid"):
             f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
     lengths = [len(tokenizer(t)["input_ids"]) for t in texts]
     empty_think = sum("<think>\n\n</think>" in t for t in texts)
-    print(f"{split}: {len(texts)} examples, longest {max(lengths)} tokens" + (f", {empty_think} with an empty <think> block: patch the template" if empty_think else ""))
+    print(f"{split}: {len(texts)} examples, longest {max(lengths)} tokens" + (f", {empty_think} with an empty <think> block (right only if the student is served with thinking off)" if empty_think else ""))
