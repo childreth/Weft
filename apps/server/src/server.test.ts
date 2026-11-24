@@ -130,6 +130,30 @@ describe('MCP tools', () => {
     // Nested objects too: a node spec and an update.
     expect((await call('create_nodes', { doc: 'strict', nodes: [{ type: 'text', text: 'Hi', stlyes: {} }] })).text).toContain('did you mean "styles"');
     expect((await call('update_nodes', { doc: 'strict', updates: [{ id: 'f_x', children: null }] })).text).toContain('Unknown key "children"');
+    // Breakpoints written inside styles: the refusal says where they go.
+    const nested = await call('update_nodes', { doc: 'strict', updates: [{ id: 'f_x', styles: { breakpoints: { mobile: { gridTemplateColumns: '1fr 1fr' } } } }] });
+    expect(nested.isError).toBe(true);
+    expect(nested.text).toContain('Breakpoint and state overrides go beside styles');
+    expect((await call('create_nodes', { doc: 'strict', nodes: [{ type: 'frame', styles: { states: { hover: { color: 'red' } } } }] })).text).toContain('go beside styles');
+  });
+
+  it('warns when a text style set on a container reaches no text', async () => {
+    const d = server.rooms.get('inherit').doc;
+    const board = d.createNode({ type: 'frame', name: 'Board', frame: { x: 0, y: 0, width: 400, height: 300 } });
+    const list = d.createNode({ type: 'frame', tag: 'ul', name: 'Spell slots', parentId: board });
+    const labels = ['1st', '2nd'].map((t) => {
+      const li = d.createNode({ type: 'frame', tag: 'li', parentId: list });
+      return d.createNode({ type: 'text', tag: 'span', parentId: li, text: t, styles: { fontSize: 'var(--font-size-body-sm)' } });
+    });
+    const res = await call('update_nodes', { doc: 'inherit', updates: [{ id: list, styles: { fontSize: '18px', color: 'var(--color-primary)' } }] });
+    expect(res.data.warnings).toHaveLength(1);
+    expect(res.data.warnings[0]).toContain('its fontSize reaches no text');
+    expect(res.data.warnings[0]).toContain(labels.join(', '));
+    // Text that follows the parent (a relative size, or none of its own) gets the change: no warning.
+    d.updateNode(labels[0]!, { styles: { fontSize: '0.9em' } });
+    expect((await call('update_nodes', { doc: 'inherit', updates: [{ id: list, styles: { fontSize: '20px' } }] })).data.warnings).toBeUndefined();
+    // Setting it on the text itself is the fix.
+    expect((await call('update_nodes', { doc: 'inherit', updates: labels.map((id) => ({ id, styles: { fontSize: 'var(--font-size-h4)' } })) })).data.warnings).toBeUndefined();
   });
 
   it('tests a flow through an artboard: dialogs, details, fields, links to other artboards', async () => {

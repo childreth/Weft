@@ -53,7 +53,7 @@ import { AssetError, type AssetStore } from './assets';
 import type { FontCache } from './fonts';
 import { ImportError, type ImageImporter } from './import-image';
 import { get3DRuntime } from './runtime3d';
-import { strictObject } from './strict';
+import { strictObject, styleValue } from './strict';
 import { describeTarget, FLOW_ACTIONS, FLOW_STATES, flowStepIssues, runFlow, type FlowPage } from './flow';
 import type { MeasuredLayer, Renderer, Resource } from './render';
 import { ROOM_NAME, type Room, type RoomRegistry } from './room';
@@ -214,7 +214,7 @@ const nodeSpec: z.ZodType<NodeSpecInput> = z.lazy(() =>
     tag: z.string().optional().describe('Semantic HTML tag; defaults to div (frame) or p (text)'),
     name: z.string().optional().describe('Layer name shown in the layers panel'),
     text: z.string().optional().describe('Text content (text nodes only)'),
-    styles: z.record(z.string(), z.string()).optional().describe(AUTHORED_STYLES),
+    styles: z.record(z.string(), styleValue()).optional().describe(AUTHORED_STYLES),
     breakpoints: z.partialRecord(breakpointKey, z.record(z.string(), z.string())).optional().describe(BREAKPOINT_STYLES),
     states: z.partialRecord(stateKey, z.record(z.string(), z.string())).optional().describe(STATE_STYLES),
     attributes: z.record(z.string(), z.string()).optional().describe('HTML attributes such as aria-label, href, type, alt'),
@@ -407,6 +407,41 @@ function backgroundWarnings(room: Room, updates: Array<{ id: string; styles?: Re
     return [
       `${node.name} (${id}): its backgroundImage (${image.length > 60 ? `${image.slice(0, 60)}…` : image}) paints over backgroundColor, so the new color won't show. Set backgroundImage to null, or to a gradient in the new colors`,
     ];
+  });
+}
+
+/** Text styles a layer passes down to the text inside it. */
+const INHERITED_TEXT_STYLES: Array<keyof StyleMap & string> = ['color', 'fontSize', 'fontWeight', 'fontFamily', 'fontStyle', 'lineHeight', 'letterSpacing', 'textAlign', 'textTransform'];
+
+/**
+ * A text style set on a container whose text all sets its own: nothing changes, and models report it as
+ * applied (a font size raised on a list three times while each label kept var(--font-size-body-sm)).
+ */
+function inheritedWarnings(room: Room, updates: Array<{ id: string; styles?: Record<string, string | null> }>): string[] {
+  return updates.flatMap(({ id, styles }) => {
+    const node = room.doc.getNode(id);
+    if (!node || node.type === 'text' || node.instance || !styles) return [];
+    return INHERITED_TEXT_STYLES.filter((prop) => styles[prop]).flatMap((prop) => {
+      const own: string[] = [];
+      let follows = false;
+      // A value relative to the parent's (1.2em, inherit, currentColor) still follows it.
+      const sets = (value: string | undefined) => value !== undefined && !/\d(em|%)|inherit|currentcolor/i.test(value);
+      const walk = (parent: string) => {
+        for (const child of room.doc.getChildren(parent)) {
+          if (follows) return;
+          if (child.instance) follows = true; // what it draws isn't stored here: assume it follows
+          else if (sets(child.styles[prop])) {
+            if (child.type === 'text' || room.doc.getDescendantIds(child.id).some((d) => room.doc.getNode(d)?.type === 'text')) own.push(child.id);
+          } else if (child.type === 'text') follows = true;
+          else walk(child.id);
+        }
+      };
+      walk(id);
+      if (follows || own.length === 0) return [];
+      return [
+        `${node.name} (${id}): its ${prop} reaches no text, because ${own.length === 1 ? 'the layer' : `all ${own.length} layers`} holding the text inside set their own ${prop}, so nothing changes. Set it on ${own.length === 1 ? 'that layer' : 'those layers'} instead (${some(own)}), and remove it here`,
+      ];
+    });
   });
 }
 
@@ -924,7 +959,7 @@ export function createMcpServer(
               locked: z.boolean().optional(),
               frame: frameSchema.optional(),
               theme: z.string().nullable().optional().describe(`${THEME_PARAM}; null removes it`),
-              styles: z.record(z.string(), z.string().nullable()).optional().describe(AUTHORED_STYLES),
+              styles: z.record(z.string(), styleValue().nullable()).optional().describe(AUTHORED_STYLES),
               breakpoints: z
                 .partialRecord(breakpointKey, z.record(z.string(), z.string().nullable()).nullable())
                 .optional()
@@ -1022,6 +1057,7 @@ export function createMcpServer(
         const lossy = converted.some((c) => c.droppedText || c.changedLayers || c.addedAttributes);
         const warnings = [
           ...backgroundWarnings(room, updates),
+          ...inheritedWarnings(room, updates),
           ...themeWarnings(room, updates.filter((u) => u.theme).map((u) => u.id)),
           ...iconWarnings(room, touched),
           ...invokerWarnings(room, touched),

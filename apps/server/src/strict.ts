@@ -47,3 +47,16 @@ function distance(a: string, b: string): number {
   }
   return row[b.length]!;
 }
+
+/**
+ * A style value: a CSS string. An object here is almost always breakpoints or states written inside
+ * styles; the bare "expected string, received object" didn't say so, and a model sent the same call
+ * again until it was stopped.
+ */
+export const styleValue = () =>
+  z.string({
+    error: (issue) =>
+      issue.input !== null && typeof issue.input === 'object'
+        ? 'A style value is a CSS string, not an object. Breakpoint and state overrides go beside styles, not inside it: {"id": "…", "breakpoints": {"mobile": {"gridTemplateColumns": "1fr"}}}'
+        : undefined,
+  });
