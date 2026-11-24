@@ -2,7 +2,7 @@
 
 Weft is a design canvas where the canvas is the browser's own DOM and CSS. Its Assist panel lets a local model, run through Ollama on the user's machine, make quick fixes like "space these out" or "this row is stacked, fix it". Large local models do this well and slowly. Small ones are fast enough to feel instant and mostly fail. This is the story of fine-tuning a 4-billion-parameter model to close part of that gap, on one laptop (an M-series Mac with 48 GB), with no human-labelled data.
 
-**Result so far:** on a frozen set of 60 layout breakages, the base Qwen3-4B fixes 28 and the best fine-tuned one fixes 45, a 61% relative gain. The teacher it learns from, a 27B model, fixes about 85%. The biggest single gain came from training on *fewer*, cleaner examples; the same examples trained in a second runtime added five more.
+**Result so far:** on a frozen set of 60 layout breakages, the base Qwen3-4B fixes 28. Fine-tuned on the same data, Qwen3-4B fixes 45, and the newer Qwen 3.5 4B goes from 25 untrained to 50 (49 on a second run), against about 85% for the 27B teacher they learn from. The biggest single gain came from training on *fewer*, cleaner examples; a second runtime and then a newer student each added about five more.
 
 ## The approach
 
@@ -41,7 +41,9 @@ All on the same frozen 60 breakages (seed 777, small prompt):
 | Qwen3-4B, tuned | 439 examples | 35 / 60 |
 | Qwen3-4B, tuned | 801 examples | 35 / 60 |
 | Qwen3-4B, tuned (mlx-lm) | 629 efficient examples | 40 / 60 |
-| **Qwen3-4B, tuned (Unsloth Studio)** | **the same 629** | **45 / 60** |
+| Qwen3-4B, tuned (Unsloth Studio) | the same 629 | 45 / 60 |
+| Qwen 3.5 4B, base | none | 25 / 60 |
+| **Qwen 3.5 4B, tuned (Unsloth Studio)** | **the same 629** | **50 / 60** (49 on a rerun) |
 | Gemma 4 E4B, base | none | 4 / 60 |
 | Teacher, 27B | none | about 85% |
 
@@ -71,12 +73,13 @@ Each of these produced a model that trained without errors and was quietly wrong
 4. **The wrong tool-call parser.** Ollama's importer guessed a coder variant whose XML tool calls it then couldn't read. Every call silently vanished. Fix: set the renderer and parser explicitly.
 5. **Too long, silently cut.** A 4-characters-per-token estimate let 6,400-token examples past a 6,144-token limit. mlx-lm cuts from the end, which is where the reply being learned is, and validation loss came back `nan`. Fix: measure the real ratio (3.45 for this JSON-heavy data) and leave long examples out rather than cutting them.
 6. **The test set moved.** The generator draws breakages from the live documents, and one was edited between runs: 21 of 60 breakages changed and two models looked comparable when they weren't. Fix: freeze a copy of the documents for scoring.
-7. **Memory.** Qwen 3.5 4B's hybrid linear-attention layers needed 31 GB at 1k tokens in training, so the work moved to Qwen3-4B (7 GB at 6k tokens). The 28 GB teacher and training can't share the GPU either; they take turns.
+7. **Memory.** In mlx-lm, Qwen 3.5 4B's hybrid linear-attention layers needed 31 GB at 1k tokens in training, so the work moved to Qwen3-4B (7 GB at 6k tokens). Unsloth Studio later trained Qwen 3.5 in under 8 GB (see below). The 28 GB teacher and training can't share the GPU either; they take turns.
+8. **An export the runtime couldn't open.** Studio's GGUF of the tuned Qwen 3.5 stored two pairs of weights stacked into one tensor each, a newer llama.cpp layout. Ollama 0.40.17 refused it ("tensor 'blk.0.ssm_beta.weight' not found"). Splitting the stacked tensors back (`evals/traces/unfuse-qwen35.py`) changed no weights and worked; Ollama 0.40.18, out the same day, reads the stacked file directly. Scores from both files agree within run-to-run noise.
 
 ## Honest caveats
 
 - **The test isn't fully held out.** Test breakages come from the same documents as training ones, with different random draws. The score measures fixing known layouts broken in new ways, not unseen designs. A stricter split keeps whole documents out of training.
-- **60 cases is small.** One fix is about 1.7 points; differences of 2 or 3 fixes are noise.
+- **60 cases is small.** One fix is about 1.7 points; differences of 2 or 3 fixes are noise. Scoring the same model twice gave 50 and 49, with 5 cases flipping in each direction.
 - **One teacher.** The student can't learn what the teacher never does well, such as "too wide" fixes at 52 of 68.
 
 ## A second runtime: Unsloth Studio
@@ -110,9 +113,32 @@ Three differences remain because Studio has no setting for them: it trains every
 
 The two models disagree on 9 of the 60 cases: Unsloth's fixes 7 that mlx-lm's missed, and misses 2 that it fixed. Five fixes is beyond the 2 or 3 this set can't tell apart, but it is one run, and it can't say which of the three differences made it: training every layer gives the adapter more room, and training on the prompt as well as the reply is a different signal. Retraining with one difference at a time would tell. The cost shows too: `get_canvas` reads doubled, and one turn read the page five times and had two calls refused, the habit the efficient data removed. "Too wide" is still the weakest breakage: in four of its five misses the model measured the layer and stopped without editing it.
 
+## A newer student: Qwen 3.5 4B
+
+Studio trained Qwen 3.5 4B where mlx-lm couldn't fit it, so the same 629 examples went to the newer model with the same settings. It needed its own training files: Qwen 3.5 writes tool calls as XML (`<function=update_nodes><parameter=updates>…`) where Qwen3 writes JSON, and a student trained on the other model's format would make calls its runtime can't read. `render-text.py` renders them with Qwen 3.5's own template, unpatched this time: Assist turns thinking off, and Qwen 3.5 is served with an empty `<think>` block before its reply, so the training text should have one too.
+
+It trained in 7.75 GB in 1 hour 40 minutes (Studio added about 5 warmup steps on its own). Eval loss fell from 0.170 to 0.135 and flattened in the second pass without turning up. It started much further away (loss 4.4 against Qwen3's 1.9: the format was new to it) and came down within 40 steps. Losses can't be compared across the two models, which split text into different tokens.
+
+| On the same 60 | Qwen3 (mlx-lm) | Qwen3 (Studio) | Qwen 3.5 (Studio) |
+|---|---|---|---|
+| Fixed | 40 | 45 | 50 |
+| Stacked row | 8 / 8 | 8 / 8 | 8 / 8 |
+| No gap | 13 / 16 | 15 / 16 | 14 / 16 |
+| One column | 4 / 6 | 5 / 6 | 5 / 6 |
+| No padding | 7 / 8 | 6 / 8 | 8 / 8 |
+| Flex lost | 4 / 12 | 6 / 12 | 12 / 12 |
+| Too wide | 3 / 9 | 4 / 9 | 2 / 9 |
+| `get_canvas` calls | 5 | 11 | 7 |
+| Median time per fix | | 4.2 s | 10.3 s |
+
+"Flex lost", where the Qwen3 students fixed 4 and 6 of 12, went to 12 of 12. "Too wide" is now the one weak breakage, and the teacher's weakest too (52 of 68), so the data has the least to teach there. Untrained, Qwen 3.5 4B fixed 25, three fewer than untrained Qwen3 (1 of 12 "flex lost", none of the "too wide"), so nearly all of the 50 is training: the newer model didn't start ahead, it learned more from the same examples. (The untrained score is Ollama's own 4-bit build with its default sampling settings; the tuned one is 16-bit.)
+
+It's slower: 10.3 seconds per fix against 4.2. Not the runtime: both models write about 30 tokens a second, and the cache is reused between steps. The XML call format takes about twice the tokens of JSON for the same call (85 against 41 in one case), and every step is mostly a call. For a fix that should feel instant, that's the trade: five more fixed in 60, at more than twice the wait.
+
 ## What's next
 
 - Find which Studio difference gained the five (every layer, or the prompt in the loss), one at a time.
+- Teach "too wide" better: the teacher's weakest breakage is now the students' too.
 - Try other students on the same data. The dataset is plain chat messages plus tool schemas, so any model mlx-lm can train and Ollama can serve is a candidate. Gemma 4 E4B is first.
 - Teach recovery: examples where a call is refused and the model does the right thing next.
 - Hold out whole documents for a stricter test.
@@ -122,5 +148,6 @@ The two models disagree on 9 of the 60 cases: Unsloth's fixes 7 that mlx-lm's mi
 - `evals/generate/`: the breakages, checks and generator
 - `evals/traces/export.mts`: traces to mlx-lm examples (`--profile small`, `--max-reads`, `--max-tokens`)
 - `evals/traces/render-text.py`: an export as one `text` column per example, for Unsloth Studio
+- `evals/traces/unfuse-qwen35.py`: splits a Qwen 3.5 GGUF's stacked tensors for runtimes that predate them
 - `apps/server/src/profiles.ts`: the small prompt, its tools, and the selection with parents
 - `evals/README.md`: how to run each step
