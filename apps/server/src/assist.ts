@@ -7,7 +7,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AgentIdentity, AgentRoster } from './agents';
 import { ROOM_NAME, type RoomRegistry } from './room';
 import { SERVER_INSTRUCTIONS, compact, createMcpServer, type ToolServices } from './tools';
-import type { TraceLog, TraceMessage, TraceTurn } from './traces';
+import type { TraceLog, TraceLost, TraceMessage, TraceTurn } from './traces';
 import { SMALL_TOOLS, parentsText, profileFor, selectionParts, smallSelection, smallSystemPrompt, smallTool, type ProfileName } from './profiles';
 
 /**
@@ -468,7 +468,7 @@ ${selection}`;
     session.history.push({ role: 'user', content: req.prompt });
     /** What a trace needs from the turn, gathered from what the editor is told. */
     const profile = profileFor(req.model, req.profile);
-    const outcome = { started: Date.now(), answered: false, errors: [] as string[], refused: 0, system: '', tools: [] as OllamaTool[], cloud: false, profile, selected: [] as Record<string, unknown>[] };
+    const outcome = { started: Date.now(), answered: false, errors: [] as string[], refused: 0, system: '', tools: [] as OllamaTool[], cloud: false, profile, selected: [] as Record<string, unknown>[], lost: [] as TraceLost[] };
     const emit = (e: AssistEvent) => {
       if (e.type === 'message') outcome.answered = true;
       if (e.type === 'error') outcome.errors.push(e.message);
@@ -490,7 +490,7 @@ ${selection}`;
         const showThinking = (text: string) => void (text && emit({ type: 'thinking', text, ms: Date.now() - started }));
         try {
           const result = await this.complete(session, req.model, info, prompt, signal, offered, req.think, extra);
-          return { ...result, empty: !result.reply.content.trim() && !result.reply.tool_calls, showThinking };
+          return { ...result, empty: !result.reply.content.trim() && !result.reply.tool_calls, showThinking, ms: Date.now() - started };
         } catch (err) {
           // Cut off mid-thought: what it had reasoned is the only clue to why.
           if (err instanceof StepStopped) showThinking(err.thinking);
@@ -527,6 +527,16 @@ ${selection}`;
         if (turn.refused || (turn.empty && (!turn.thinking || turn.silentMs >= assistLimits.swallowedMs))) {
           turn.showThinking(turn.thinking);
           lostReasoning = turn.thinking;
+          const after = session.history.findLast((m) => m.role === 'tool')?.tool_name;
+          outcome.lost.push({
+            step,
+            ...(after && { after }),
+            how: turn.refused ? 'refused' : 'dropped',
+            ...(turn.refused && { error: turn.refused }),
+            ms: turn.ms,
+            ...(turn.tokens !== undefined && { tokens: turn.tokens }),
+            ...(turn.thinking && { thinking: turn.thinking }),
+          });
           if (++unreadable >= MAX_UNREADABLE) {
             emit({ type: 'error', message: UNREADABLE_STOP });
             return;
@@ -596,6 +606,7 @@ ${selection}`;
       cloud: boolean;
       profile: ProfileName;
       selected: Record<string, unknown>[];
+      lost: TraceLost[];
     },
     aborted: boolean,
     edits: number,
@@ -626,6 +637,7 @@ ${selection}`;
       outcome: aborted ? 'stopped' : outcome.answered ? 'answered' : 'error',
       ...(!outcome.answered && outcome.errors.length > 0 && { error: outcome.errors.at(-1) }),
       notices: outcome.answered ? outcome.errors : outcome.errors.slice(0, -1),
+      ...(outcome.lost.length > 0 && { lost: outcome.lost }),
       edits,
       refused: outcome.refused,
       tools: outcome.tools,
@@ -649,7 +661,7 @@ ${selection}`;
     tools?: OllamaTool[],
     choice?: ThinkChoice,
     extra: ChatMessage[] = [],
-  ): Promise<{ reply: ChatMessage; thinking: string; silentMs: number; refused?: boolean }> {
+  ): Promise<{ reply: ChatMessage; thinking: string; silentMs: number; refused?: string; tokens?: number }> {
     const limit = new AbortController();
     const timer = setTimeout(() => limit.abort(), assistLimits.stepMs);
     const either = AbortSignal.any([signal, limit.signal]);
@@ -678,19 +690,20 @@ ${selection}`;
         res = await send(true);
       }
       /** Ollama couldn't parse the call the model wrote: nothing of the step is kept but what it had reasoned. */
-      const refusedCall = () => ({ reply: { role: 'assistant' as const, content: '' }, thinking: thinking.trim(), silentMs: 0, refused: true });
+      const refusedCall = (error: string) => ({ reply: { role: 'assistant' as const, content: '' }, thinking: thinking.trim(), silentMs: 0, refused: error.slice(0, 300) });
       if (!ok(res)) {
         const text = await responseText(res);
-        if (REFUSED_CALL.test(text)) return refusedCall();
+        if (REFUSED_CALL.test(text)) return refusedCall(text);
         throw new Error(`Ollama: ${text.slice(0, 300) || res.statusCode}`);
       }
       let content = '';
       const calls: NonNullable<ChatMessage['tool_calls']> = [];
       let lastOutput = Date.now();
       let silentMs = 0;
+      let tokens: number | undefined;
       let checked = 0;
       for await (const line of responseLines(res)) {
-        let chunk: { message?: Partial<ChatMessage> & { thinking?: string }; done?: boolean; error?: string };
+        let chunk: { message?: Partial<ChatMessage> & { thinking?: string }; done?: boolean; error?: string; eval_count?: number };
         try {
           chunk = JSON.parse(line);
         } catch {
@@ -699,7 +712,7 @@ ${selection}`;
         // Ollama reports a failure partway through a stream as a line of its own.
         if (chunk.error && REFUSED_CALL.test(chunk.error)) {
           res.destroy();
-          return refusedCall();
+          return refusedCall(chunk.error);
         }
         if (chunk.error) throw new Error(`Ollama: ${chunk.error.slice(0, 300)}`);
         const part = chunk.message;
@@ -719,12 +732,16 @@ ${selection}`;
             }
           }
         }
-        if (chunk.done) silentMs = Date.now() - lastOutput;
+        if (chunk.done) {
+          silentMs = Date.now() - lastOutput;
+          tokens = chunk.eval_count;
+        }
       }
       return {
         reply: { role: 'assistant', content, ...(calls.length > 0 && { tool_calls: calls }) },
         thinking: thinking.trim(),
         silentMs,
+        ...(tokens !== undefined && { tokens }),
       };
     } catch (err) {
       if (limit.signal.aborted && !signal.aborted) throw new StepLimitError(model, thinking.trim());

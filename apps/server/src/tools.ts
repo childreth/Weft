@@ -291,6 +291,21 @@ const componentFields = (tree: SceneTree): Record<string, unknown> => ({
   ...(tree.instance && { instance: tree.instance }),
 });
 
+/** The components a subtree contains or places as instances, and those they place in turn. */
+function usedComponents(trees: SceneTree[], treeOf: (id: string) => SceneTree[]): Set<string> {
+  const ids = new Set<string>();
+  const walk = (t: SceneTree) => {
+    if (t.component) ids.add(t.id);
+    if (t.instance && !ids.has(t.instance.component)) {
+      ids.add(t.instance.component);
+      treeOf(t.instance.component).forEach(walk);
+    }
+    t.children.forEach(walk);
+  };
+  trees.forEach(walk);
+  return ids;
+}
+
 /** Structure only: what each node is and says, for finding ids cheaply. */
 export function outline(tree: SceneTree, depth: number, nodes: NodeLookup): Record<string, unknown> {
   const out: Record<string, unknown> = { id: tree.id, tag: shownTag(tree, nodes) };
@@ -784,7 +799,7 @@ export function createMcpServer(
     {
       title: 'Get canvas tree',
       description:
-        'Returns the scene graph as nested JSON: every artboard, or the subtree under rootId. Deep subtrees are truncated to childCount past maxDepth. detail "outline" returns only id, name, tag and short text per node (far smaller): use it to orient and find ids, then read the parts you will restyle in full.',
+        'Returns the scene graph as nested JSON: every artboard, or the subtree under rootId (with only the components it uses). Deep subtrees are truncated to childCount past maxDepth. detail "outline" returns only id, name, tag and short text per node (far smaller): use it to orient and find ids, then read the parts you will restyle in full.',
       inputSchema: {
         doc: docParam,
         rootId: z.string().optional().describe('Return only this node and its descendants'),
@@ -799,8 +814,11 @@ export function createMcpServer(
       try {
         const { room, agent } = open(doc, model);
         agent.look(rootId ? [rootId] : [], rootId ? `Looking at ${nameOf(room, rootId)}` : 'Reading the canvas');
-        // What can be placed as an instance, with each one's props and what it shows by default.
-        const all = room.doc.getComponents();
+        // What can be placed as an instance, with each one's props and what it shows by default. A read of one part
+        // lists only the components in it or used by its instances: the whole list came with every such read, about a
+        // third of Inkling's 18,600-character read of one section, and the canvas read already had it.
+        const used = rootId ? usedComponents(room.doc.getTree(rootId), (id) => (room.doc.has(id) ? room.doc.getTree(id) : [])) : undefined;
+        const all = room.doc.getComponents().filter((c) => !used || used.has(c.id));
         const components = all.length ? { components: all } : {};
         if (detail === 'outline') {
           // Unindented: the outline exists to be small.
