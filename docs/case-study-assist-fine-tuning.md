@@ -78,8 +78,27 @@ Each of these produced a model that trained without errors and was quietly wrong
 - **60 cases is small.** One fix is about 1.7 points; differences of 2 or 3 fixes are noise.
 - **One teacher.** The student can't learn what the teacher never does well, such as "too wide" fixes at 52 of 68.
 
+## A second runtime: Unsloth Studio (in progress)
+
+The same student and the same 629 examples, trained in Unsloth Studio's Mac app instead of mlx-lm, scored on the same 60 breakages. If the score moves, the runtime moved it. Set up on 2026-11-23; the run itself is next.
+
+Getting the data in was the lesson so far. Studio guessed the columns of the prompt / completion file and showed the guess as a detected mapping: each conversation pasted into one user message as JSON, the reply as JSON text, and the tool schemas dropped. It would have trained without complaint, and the model would have learned to type out tool calls as text instead of making them. Rendering each example with the student's own (patched) template into a single `text` column fixed it: Studio reads that as raw text and uses it as is, so its template can't add an empty `<think>` block either.
+
+Studio's defaults are set for a different job, and each one would have changed the run:
+
+| | mlx-lm run (40 / 60) | Studio default | Set to |
+|---|---|---|---|
+| Learning rate | 1e-5 | 2e-4 | 1e-5 |
+| Batch | 1 | 2 × 4 = 8 (850 steps would be 12 epochs) | 1 × 1 |
+| LoRA rank / strength | 8, scale 20 | rank 32, alpha 32 | rank 8, alpha 160 |
+| Context | 6,144 | 2,048 (cuts most examples) | 8,192 |
+| Weight decay | none | 0.001 | 0 |
+
+Three differences remain because Studio has no setting for them: it trains every layer, not the last 8; the learning rate decays (linear) instead of staying constant; and raw text trains on the prompt as well as the reply. A score near 40 says they don't matter; a score far from it says one of them does. On an M5 Pro with 48 GB it ran at 0.15 steps a second (about 1.5 hours for 850 steps) in 7 GB.
+
 ## What's next
 
+- Finish the Unsloth run and score it (above).
 - Try other students on the same data. The dataset is plain chat messages plus tool schemas, so any model mlx-lm can train and Ollama can serve is a candidate. Gemma 4 E4B is first.
 - Teach recovery: examples where a call is refused and the model does the right thing next.
 - Hold out whole documents for a stricter test.
@@ -88,5 +107,6 @@ Each of these produced a model that trained without errors and was quietly wrong
 
 - `evals/generate/`: the breakages, checks and generator
 - `evals/traces/export.mts`: traces to mlx-lm examples (`--profile small`, `--max-reads`, `--max-tokens`)
+- `evals/traces/render-text.py`: an export as one `text` column per example, for Unsloth Studio
 - `apps/server/src/profiles.ts`: the small prompt, its tools, and the selection with parents
 - `evals/README.md`: how to run each step
