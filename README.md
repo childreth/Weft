@@ -179,6 +179,7 @@ CI (`.github/workflows/ci.yml`) runs the typecheck and unit tests on Linux and t
 
 ## Changelog
 
+- **2026-11-24:** The Assist student trained in Unsloth Studio on the same 629 examples fixes 45 of the 60 test breakages (mlx-lm: 40); results and the three training differences are in the case study.
 - **2026-11-23:** `evals/traces/render-text.py` renders an export into one `text` column per example, for trainers that take raw text: Unsloth Studio misread the message-list columns as single messages and dropped the tools. The case study has a section on training the same student in Unsloth Studio, and `evals/README.md` lists Studio's defaults that differ from the mlx-lm run.
 - **2026-11-23:** Traces record each lost step (`lost`): its step number, the tool called before it, whether Ollama dropped or refused the call (with the parser's error), how long it ran, the tokens it wrote when Ollama says, and its reasoning. A lost reply never reaches `messages`, so traces had only a notice that one happened. `get_canvas` with `rootId` lists only the components that part contains or uses.
 - **2026-11-23:** An agent that goes two minutes without a call now only loses its cursor, not its undo history. Inkling 2 mini spends longer than that on one step, so mid-turn the agent was removed and a new one made its edits: Assist's Undo for the turn and `undo_agent_change` did nothing, and the trace recorded 0 edits for a turn that built a whole screen. The agent goes when its session ends.

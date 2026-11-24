@@ -2,7 +2,7 @@
 
 Weft is a design canvas where the canvas is the browser's own DOM and CSS. Its Assist panel lets a local model, run through Ollama on the user's machine, make quick fixes like "space these out" or "this row is stacked, fix it". Large local models do this well and slowly. Small ones are fast enough to feel instant and mostly fail. This is the story of fine-tuning a 4-billion-parameter model to close part of that gap, on one laptop (an M-series Mac with 48 GB), with no human-labelled data.
 
-**Result so far:** on a frozen set of 60 layout breakages, the base Qwen3-4B fixes 28 and the best fine-tuned one fixes 40, a 43% relative gain. The teacher it learns from, a 27B model, fixes about 85%. The biggest single gain came from training on *fewer*, cleaner examples.
+**Result so far:** on a frozen set of 60 layout breakages, the base Qwen3-4B fixes 28 and the best fine-tuned one fixes 45, a 61% relative gain. The teacher it learns from, a 27B model, fixes about 85%. The biggest single gain came from training on *fewer*, cleaner examples; the same examples trained in a second runtime added five more.
 
 ## The approach
 
@@ -40,7 +40,8 @@ All on the same frozen 60 breakages (seed 777, small prompt):
 | Qwen3-4B, base | none | 28 / 60 |
 | Qwen3-4B, tuned | 439 examples | 35 / 60 |
 | Qwen3-4B, tuned | 801 examples | 35 / 60 |
-| **Qwen3-4B, tuned** | **629 efficient examples** | **40 / 60** |
+| Qwen3-4B, tuned (mlx-lm) | 629 efficient examples | 40 / 60 |
+| **Qwen3-4B, tuned (Unsloth Studio)** | **the same 629** | **45 / 60** |
 | Gemma 4 E4B, base | none | 4 / 60 |
 | Teacher, 27B | none | about 85% |
 
@@ -78,9 +79,9 @@ Each of these produced a model that trained without errors and was quietly wrong
 - **60 cases is small.** One fix is about 1.7 points; differences of 2 or 3 fixes are noise.
 - **One teacher.** The student can't learn what the teacher never does well, such as "too wide" fixes at 52 of 68.
 
-## A second runtime: Unsloth Studio (in progress)
+## A second runtime: Unsloth Studio
 
-The same student and the same 629 examples, trained in Unsloth Studio's Mac app instead of mlx-lm, scored on the same 60 breakages. If the score moves, the runtime moved it. Set up on 2026-11-23; the run itself is next.
+The same student and the same 629 examples, trained in Unsloth Studio's Mac app instead of mlx-lm, scored on the same 60 breakages. If the score moves, the runtime moved it. It fixed **45 of 60**, five more than the mlx-lm run.
 
 Getting the data in was the lesson so far. Studio guessed the columns of the prompt / completion file and showed the guess as a detected mapping: each conversation pasted into one user message as JSON, the reply as JSON text, and the tool schemas dropped. It would have trained without complaint, and the model would have learned to type out tool calls as text instead of making them. Rendering each example with the student's own (patched) template into a single `text` column fixed it: Studio reads that as raw text and uses it as is, so its template can't add an empty `<think>` block either.
 
@@ -94,11 +95,24 @@ Studio's defaults are set for a different job, and each one would have changed t
 | Context | 6,144 | 2,048 (cuts most examples) | 8,192 |
 | Weight decay | none | 0.001 | 0 |
 
-Three differences remain because Studio has no setting for them: it trains every layer, not the last 8; the learning rate decays (linear) instead of staying constant; and raw text trains on the prompt as well as the reply. A score near 40 says they don't matter; a score far from it says one of them does. On an M5 Pro with 48 GB it ran at 0.15 steps a second (about 1.5 hours for 850 steps) in 7 GB.
+Three differences remain because Studio has no setting for them: it trains every layer, not the last 8; the learning rate decays (linear) instead of staying constant; and raw text trains on the prompt as well as the reply. On an M5 Pro with 48 GB it took 1 hour 55 minutes for 850 steps (0.12 to 0.17 steps a second as the GPU heated up), in 7 GB. Eval loss fell from 0.65 at step 50 to 0.156 at step 850 and never turned up, including in the second pass over the data. The adapter was merged and exported as a 16-bit GGUF, the same precision as the mlx-lm model, so the export isn't a fourth difference.
+
+| On the same 60 | mlx-lm | Unsloth Studio |
+|---|---|---|
+| Fixed | 40 | 45 |
+| No gap | 13 / 16 | 15 / 16 |
+| One column | 4 / 6 | 5 / 6 |
+| No padding | 7 / 8 | 6 / 8 |
+| Flex lost | 4 / 12 | 6 / 12 |
+| Too wide | 3 / 9 | 4 / 9 |
+| `get_canvas` calls | 5 | 11 |
+| Turns with a refused call | 0 | 1 |
+
+The two models disagree on 9 of the 60 cases: Unsloth's fixes 7 that mlx-lm's missed, and misses 2 that it fixed. Five fixes is beyond the 2 or 3 this set can't tell apart, but it is one run, and it can't say which of the three differences made it: training every layer gives the adapter more room, and training on the prompt as well as the reply is a different signal. Retraining with one difference at a time would tell. The cost shows too: `get_canvas` reads doubled, and one turn read the page five times and had two calls refused, the habit the efficient data removed. "Too wide" is still the weakest breakage: in four of its five misses the model measured the layer and stopped without editing it.
 
 ## What's next
 
-- Finish the Unsloth run and score it (above).
+- Find which Studio difference gained the five (every layer, or the prompt in the loss), one at a time.
 - Try other students on the same data. The dataset is plain chat messages plus tool schemas, so any model mlx-lm can train and Ollama can serve is a candidate. Gemma 4 E4B is first.
 - Teach recovery: examples where a call is refused and the model does the right thing next.
 - Hold out whole documents for a stricter test.
