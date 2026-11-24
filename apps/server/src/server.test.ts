@@ -627,6 +627,9 @@ describe('MCP tools', () => {
     expect(outlined[0]).toMatchObject({ component: true });
     // Its element is the component's (an article), not the div it stores.
     expect(outlined[1]).toEqual({ id: pro!.id, tag: 'article', name: 'Pro', instance: { component: main!.id, props: { name: 'Pro', price: '$12' } } });
+    // A read of one part lists only the components it uses: an instance's, and none for a part with no instance.
+    expect((await call('get_canvas', { doc: 'components', rootId: pro!.id })).data.components.map((c: { id: string }) => c.id)).toEqual([main!.id]);
+    expect((await call('get_canvas', { doc: 'components', rootId: (main!.children![0] as { id: string }).id })).data.components).toBeUndefined();
 
     // Rendered: each instance is laid out like the component, with its own root styles on top.
     const boxes = async () => ((await call('get_screenshot', { doc: 'components', id: page!.id, image: false })).data.boxes as Array<{ id: string; height: number; width: number }>);

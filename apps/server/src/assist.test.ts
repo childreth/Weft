@@ -87,7 +87,7 @@ beforeAll(async () => {
       else if (part.error) return res.end(`${JSON.stringify({ error: part.error })}\n`);
       else res.write(`${JSON.stringify({ message: { role: 'assistant', content: '', ...part }, done: false })}\n`);
     }
-    res.end(`${JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop' })}\n`);
+    res.end(`${JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', ...(typeof reply.evalCount === 'number' && { eval_count: reply.evalCount }) })}\n`);
   });
   await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
   server = await startGridServer({ port: 0, dataDir: null, ollamaUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}` });
@@ -550,11 +550,16 @@ describe('assist traces', () => {
     expect((await read()).at(-1)).toMatchObject({ type: 'turn', outcome: 'answered', refused: 1, edits: 0 });
 
     // A call that never arrives, twice: the turn stops with a reason.
-    const lost = { stream: [{ thinking: 'Build it all in one call.' }, { wait: 120 }] };
+    // After a read, one dropped and one refused: the turn stops, and the trace says where each was lost and how big.
+    const lost = { stream: [{ thinking: 'Build it all in one call.' }, { wait: 120 }], evalCount: 4200 };
     const swallowed = assistLimits.swallowedMs;
     assistLimits.swallowedMs = 50;
     try {
-      replies = [lost, lost, lost];
+      replies = [
+        { role: 'assistant', content: '', tool_calls: [{ function: { name: 'get_canvas', arguments: { detail: 'outline' } } }] },
+        lost,
+        { status: 500, error: "invalid Inkling2 tool call: invalid character ']' after object key:value pair" },
+      ];
       await say({ prompt: 'build four components' });
     } finally {
       assistLimits.swallowedMs = swallowed;
@@ -563,6 +568,11 @@ describe('assist traces', () => {
     expect(last.outcome).toBe('error');
     expect(last.error).toBeTruthy();
     expect(last.notices.length).toBeGreaterThan(0);
+    expect(last.lost).toEqual([
+      { step: 1, after: 'get_canvas', how: 'dropped', ms: expect.any(Number), tokens: 4200, thinking: 'Build it all in one call.' },
+      { step: 2, after: 'get_canvas', how: 'refused', error: expect.stringContaining("invalid character ']'"), ms: expect.any(Number) },
+    ]);
+    expect(last.lost![0]!.ms).toBeGreaterThanOrEqual(100);
   });
 });
 

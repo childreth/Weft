@@ -49,12 +49,30 @@ export interface TraceTurn {
   error?: string;
   /** Problems the turn got past (a lost tool call that was retried). */
   notices: string[];
+  /** Steps whose reply was lost (a tool call Ollama couldn't read): not in `messages`, which hold what the model was sent. */
+  lost?: TraceLost[];
   /** Undo steps the turn left in the document. */
   edits: number;
   /** Tool calls that came back as errors (refused arguments, unknown ids). */
   refused: number;
   tools: unknown[];
   messages: TraceMessage[];
+}
+
+/** A step whose reply never arrived. Enough to tell a big build from a small edit, and where in the turn it was. */
+export interface TraceLost {
+  /** The step's number in the turn, from 0. */
+  step: number;
+  /** The last tool called before it, if any. */
+  after?: string;
+  /** dropped: Ollama returned nothing. refused: its parser failed the request (`error` says why). */
+  how: 'dropped' | 'refused';
+  error?: string;
+  ms: number;
+  /** Tokens the model wrote, when Ollama said (a dropped call's size; a refused one's stream ends before the count). */
+  tokens?: number;
+  /** What it had reasoned: with thinking off, often nothing. */
+  thinking?: string;
 }
 
 export interface TraceUndo {
