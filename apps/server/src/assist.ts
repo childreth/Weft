@@ -76,6 +76,9 @@ function unreadableCall(reasoning: string): string {
 }
 const UNREADABLE_NOTICE =
   "The model's last step ended with no reply and no tool call Weft could read: most likely a tool call whose brackets or quotes didn't match. Asking it to write the call again.";
+/** Tools that only read: one of them failing changes nothing on the canvas. */
+const READ_TOOL = /^(get|list|search|read)_/;
+const NOTHING_CHANGED = 'Nothing was changed: every edit the model tried was refused (the steps marked above), whatever its reply says. Try again, or ask for one small step.';
 const UNREADABLE_STOP =
   'Stopped: the model again wrote a tool call that could not be read, so nothing from those calls was applied. Try again, ask for one small step, or use another model.';
 
@@ -468,11 +471,12 @@ ${selection}`;
     session.history.push({ role: 'user', content: req.prompt });
     /** What a trace needs from the turn, gathered from what the editor is told. */
     const profile = profileFor(req.model, req.profile);
-    const outcome = { started: Date.now(), answered: false, errors: [] as string[], refused: 0, system: '', tools: [] as OllamaTool[], cloud: false, profile, selected: [] as Record<string, unknown>[], lost: [] as TraceLost[] };
+    const outcome = { started: Date.now(), answered: false, errors: [] as string[], refused: 0, refusedEdits: 0, system: '', tools: [] as OllamaTool[], cloud: false, profile, selected: [] as Record<string, unknown>[], lost: [] as TraceLost[] };
     const emit = (e: AssistEvent) => {
       if (e.type === 'message') outcome.answered = true;
       if (e.type === 'error') outcome.errors.push(e.message);
       if (e.type === 'tool_result' && !e.ok) outcome.refused++;
+      if (e.type === 'tool_result' && !e.ok && !READ_TOOL.test(e.name)) outcome.refusedEdits++;
       send(e);
     };
     try {
@@ -582,6 +586,8 @@ ${selection}`;
       session.busy = false;
       session.lastSeen = Date.now();
       const edits = presence.undo.undoStack.length - depth;
+      // Small models answer "I changed…" after every edit was refused: say what happened, before the trace keeps it.
+      if (!signal.aborted && outcome.answered && edits <= 0 && outcome.refusedEdits > 0) emit({ type: 'error', message: NOTHING_CHANGED });
       const trace = this.trace(req, session, outcome, signal.aborted, Math.max(edits, 0));
       if (edits > 0) session.turns.push({ doc: req.doc, depth, trace });
       emit({ type: 'done', edits: Math.max(edits, 0) });

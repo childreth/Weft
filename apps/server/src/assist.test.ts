@@ -384,12 +384,26 @@ describe('assist', () => {
   it('feeds tool errors back to the model instead of failing', async () => {
     replies = [
       { role: 'assistant', content: '', tool_calls: [{ function: { name: 'update_nodes', arguments: { updates: [{ id: 'nope', text: 'x' }] } } }] },
-      { role: 'assistant', content: 'That node does not exist.' },
+      { role: 'assistant', content: 'I renamed it.' },
     ];
     const events = await chat({ prompt: 'rename nope' });
     expect(events.find((e) => e.type === 'tool_result')).toMatchObject({ ok: false });
     expect(requests.at(-1)!.messages.at(-1)).toMatchObject({ role: 'tool' });
+    // Every edit was refused: the reply's claim is followed by what really happened.
+    expect(events.at(-2)).toMatchObject({ type: 'error', message: expect.stringContaining('Nothing was changed') });
     expect(events.at(-1)).toEqual({ type: 'done', edits: 0 });
+  });
+
+  it('says nothing extra when a refused edit was followed by one that worked', async () => {
+    const id = server.rooms.get('assist').doc.createNode({ type: 'frame', name: 'Box', frame: { x: 0, y: 0, width: 100, height: 100 } });
+    replies = [
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'update_nodes', arguments: { updates: [{ id: 'nope', name: 'x' }] } } }] },
+      { role: 'assistant', content: '', tool_calls: [{ function: { name: 'update_nodes', arguments: { updates: [{ id, name: 'Card' }] } } }] },
+      { role: 'assistant', content: 'Renamed it to Card.' },
+    ];
+    const events = await chat({ prompt: 'rename the box' });
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(events.at(-1)).toEqual({ type: 'done', edits: 1 });
   });
 
   it('answers a repeated identical call from history and says when a result was cut off', async () => {

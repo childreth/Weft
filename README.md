@@ -179,6 +179,7 @@ CI (`.github/workflows/ci.yml`) runs the typecheck and unit tests on Linux and t
 
 ## Changelog
 
+- **2026-11-24:** Tools say when an edit did nothing: `update_nodes` warns when a text style (fontSize, color…) set on a container reaches no text because the text inside sets its own, and a style given an object (breakpoints or states written inside `styles`) is refused with where they go. Assist adds "Nothing was changed" after a reply when every edit the model tried was refused.
 - **2026-11-24:** Qwen 3.5 4B trained in Unsloth Studio on the same examples fixes 50 of the 60 test breakages, at about twice the time per fix; `evals/traces/unfuse-qwen35.py` splits its export's stacked tensors for Ollama versions before 0.40.18.
 - **2026-11-24:** The Assist student trained in Unsloth Studio on the same 629 examples fixes 45 of the 60 test breakages (mlx-lm: 40); results and the three training differences are in the case study.
 - **2026-11-23:** `evals/traces/render-text.py` renders an export into one `text` column per example, for trainers that take raw text: Unsloth Studio misread the message-list columns as single messages and dropped the tools. The case study has a section on training the same student in Unsloth Studio, and `evals/README.md` lists Studio's defaults that differ from the mlx-lm run.
