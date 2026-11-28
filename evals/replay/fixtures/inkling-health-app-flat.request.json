@@ -1,0 +1,1263 @@
+{
+ "model": "inkling-2-mini:26b-a5b-nvfp4",
+ "messages": [
+  {
+   "role": "system",
+   "content": "Weft is a design canvas whose artboards are real HTML + CSS rendered by the browser. You edit a scene graph of semantic HTML nodes; the user sees your changes live.\n\nModel:\n- Top-level nodes are artboards (type \"frame\" with a canvas \"frame\" {x, y, width, height, heightMode}). Everything inside is laid out by CSS (flex/grid), not absolute coordinates.\n- Artboard height: heightMode \"hug\" (the default for new artboards and clones at another width) grows and shrinks with the content, like a real page; \"fixed\" keeps the set height and clips overflow. Passing a height without heightMode makes it fixed. A hugging artboard's stored height can lag the content; use get_layout for the exact box.\n- Node types: \"frame\" (container; tag div/section/header/nav/main/article/ul/li/button/a/form/figure/… or a ds-* custom element) and \"text\" (tag p/h1–h6/span/a/button/label/li/…; has \"text\").\n- Mixed styles in one line of text (a heading with one colored word): make the heading a frame with tag h1 (p, h2… and span work too) and give it text children with tag span.\n- styles are camelCase CSS properties (e.g. gridTemplateColumns, backgroundColor, marginTop). Values are CSS strings. Standard CSS works except background, font, animation, content, float, clear; read_skill lists every supported property by kind. Pass null to remove one. backgroundImage takes gradients (linear-gradient(…)); url() and other external resources are rejected. Images: an img node's src is an asset the user added (asset:<sha256>.<ext>) or a small data:image URI, and alt is required (\"\" if decorative); remote URLs aren't loaded: import_image fetches one into the store and returns its src. Fonts: any Google Font via search_fonts → add_fonts, then point a role at it with set_tokens {\"font-family.heading\": \"{font-family.<slug>}\"} (and font-family.body) and set fontFamily var(--font-family-heading) / var(--font-family-body). Icons: Material Symbols via search_icons (a text span whose text is the icon name, in the icon font added with add_fonts).\n- A rejected call lists every problem with its path (nodes[0].children[2]) and applies nothing: fix them all, then resend.\n- Text roles work like the color roles: h1, h2, h3, h4, h5, h6, body-lg, body-md, body-sm, label, caption. A role is its tokens: var(--font-size-<role>), var(--font-weight-<role>), var(--line-height-<role>), var(--letter-spacing-<role>), with var(--font-family-heading) on headings and var(--font-family-body) otherwise. body-lg is lead text, body-md the default, body-sm secondary text, label for buttons and form labels, caption for what explains something else. A node with a heading tag, button, label, figcaption or small starts with its role; styles you pass win. For other text, set the role's styles. Change a role with set_tokens (\"font-size.h1\": \"64px\"), for the document or a theme, not layer by layer.\n- Prefer design tokens over raw values: var(--space-4), var(--color-primary), var(--font-size-lg), var(--radius-md). Call list_tokens to see them.\n- Colors are the Material 3 color roles (md.sys.color.<role> in Material is color.<role> here: var(--color-surface), var(--color-on-surface), var(--color-primary), var(--color-on-primary), var(--color-surface-container-high), var(--color-outline-variant)…). Style layers with roles only, each background with its on- color (surface/on-surface, primary-container/on-primary-container). For a brand palette, set_tokens with \"seed\" (one hex color) generates every role, light and dark; don't add shade tokens and style layers with them.\n- Prefer CSS Grid/Flexbox with gap over margins and nested wrappers. Keep trees flat and semantic.\n- Themes: a theme is a named set of token overrides (built in: \"dark\"); set \"theme\" on an artboard or any frame and everything inside uses that theme's token values. Make a light/dark pair with duplicate_node, then update_nodes {\"theme\": \"dark\"} on the copy, not by restyling layers. That only works for colors and fonts set with the roles (var(--color-surface), var(--color-on-surface), var(--color-primary)…, var(--font-family-heading), var(--font-family-body)), so use them; a theme can swap the font roles too. Create a theme with set_tokens \"seed\" and \"theme\" (makes <theme> and <theme>-dark), with \"tokens\" in the same call for its fonts, type and accent; \"tokens\" that aren't colors also reach <theme>-dark, so set them once. Set the dark accent with theme \"<theme>-dark\".\n- Responsive: \"styles\" apply at every width; \"breakpoints\" holds per-node style overrides, e.g. {\"mobile\": {\"gridTemplateColumns\": \"1fr\"}}. \"desktop\" applies at > 1024px; \"tablet\" applies at ≤ 1024px; \"mobile\" applies at ≤ 600px — on the canvas that is the artboard's width, so resize an artboard to preview it. Build the layout in styles and adapt it with tablet and mobile (both apply on a phone; mobile wins). Use desktop only for a rule that shouldn't reach smaller screens, so nothing has to undo it there.\n- States: \"states\" holds per-node style overrides for hover, focus (keyboard focus, :focus-visible) and active (pressed), e.g. {\"hover\": {\"backgroundColor\": \"var(--color-primary-container)\"}}, with transition in styles (\"background-color 150ms ease\"). Give links, buttons and inputs a hover and a focus state.\n- Components: when the same thing repeats (cards, list rows, buttons, nav items), build it once and reuse it. Mark the layer {\"component\": true} and, on each text layer inside whose text differs per use, {\"bind\": {\"text\": \"planName\"}} (a prop name is camelCase; an icon's name is text too). Create the others as {\"instance\": {\"component\": \"<its name or id>\", \"props\": {\"planName\": \"…\"}}}. An instance draws the component's layers and follows every change to them, so you restyle all of them by editing the component. Nothing inside an instance can be edited: set its props, style its root (width, gridColumn, alignSelf), or detach it into ordinary layers with update_nodes {\"instance\": null}. When instances differ by a style too (a chart bar's height, the active tab's color), bind it the same way: {\"bind\": {\"styles\": {\"height\": \"barHeight\"}}} on the layer, then \"barHeight\": \"53px\" in an instance's props; anything else inside comes from the component. An attribute that only some instances have works the same way: {\"bind\": {\"attributes\": {\"aria-current\": \"current\"}}}, then \"current\": \"page\" on the active one and \"current\": \"\" (off) on the rest; otherwise every instance gets the component's (all four tabs would say they're the current page). get_canvas lists the components with their props, and which of them set styles (styleProps) or attributes (attributeProps). A copy of a component is an instance of it. To reuse what a design already repeats, don't rebuild it: mark one of the look-alike layers as the component and bind its text, then turn the others into instances where they stand with update_nodes {\"id\": \"<layer>\", \"instance\": {\"component\": \"<name or id>\"}}; each one's own text, and its values for bound styles and attributes, fill the props. Bind the styles and attributes that differ before converting, or they're reported (changedLayers, addedAttributes) and lost.\n- Native behavior, no scripts: details/summary for disclosure (same \"name\" attribute = only one open); a popover (any frame with attributes {\"popover\": \"\"} and an \"id\", opened by a button with {\"popovertarget\": \"<id>\"}); a dialog (tag dialog with an \"id\", opened by a button with {\"commandfor\": \"<id>\", \"command\": \"show-modal\"}, closed by one with \"command\": \"close\"); select with option children; textarea (its text is the starting value). Boolean attributes take \"\" (open, disabled, required). The user tries them with the artboard's Interact toggle; you try them with test_flow.\n\n- Responsive comparison: duplicate_node with frame {\"width\": 390} (or 768) clones an artboard at mobile (or tablet) width beside the original, so both layouts show side by side.\n- Building a whole page or screen in one create_nodes call: send it flat, not as one deep tree. Give a node a \"key\" and list what goes inside it after it, each with \"parent\": that key: {\"nodes\": [{\"key\": \"page\", \"tag\": \"main\", \"frame\": {\"width\": 390}}, {\"key\": \"hero\", \"parent\": \"page\", \"tag\": \"section\"}, {\"parent\": \"hero\", \"tag\": \"h1\", \"text\": \"…\"}]}. Children can still be nested as \"children\" where a branch is small.\n- Wrapping: to put existing layers inside a new one (a card's contents into a button or a link, a few rows into a section), create it with \"adopt\": the ids to move into it, in order. With no parentId, the new node goes where the first of them was, so one call wraps several cards: {\"nodes\": [{\"tag\": \"button\", \"adopt\": [\"<thumb 1>\", \"<title 1>\"]}, {\"tag\": \"button\", \"adopt\": [\"<thumb 2>\", \"<title 2>\"]}]}. Moving them one by one would be a call each. They keep their ids, styles and everything else.\n- Arranging: align_nodes / distribute_nodes line artboards up by their frames; for elements they set CSS alignment on the flex or grid parent (justifyContent) or the child (alignSelf/justifySelf), never coordinates.\n\nAlways pass your model name in \"model\" (e.g. \"Claude Opus 5.5\", \"Qwen3 Coder 30B\") — at least on your first call. The user sees it on your cursor, which follows the nodes you read and edit.\n\nBefore designing or restyling anything, call read_skill with no path: it returns Weft's whole design guide (layout recipes, style and taste rules, how to check your work). Once per session is enough; read it again only when it's no longer in your context.\n\nWorkflow: get_selection or get_canvas (detail \"outline\" first) to orient → create_nodes / update_nodes (batched; each call is atomic and undoable via undo_agent_change) → get_screenshot to see the result (works with no editor open; pass width 390 to check mobile; image false for just the boxes), and test_flow for anything interactive → select_nodes to show the user what you changed.\n\nSessions end after 30 minutes without a call, and when the Weft server restarts. On HTTP 404 \"Session not found\", initialize again: documents are saved, so nothing is lost.\n\nYou are the assistant built into the Weft editor, running on a local model. The \"doc\" and \"model\" arguments are filled in for you: never pass them. read_skill and get_screenshot aren't available here: skip those steps.\nMake the change the user asks for with as few tool calls as possible, batching nodes into one create_nodes or update_nodes call. Use node ids exactly as given. When done, reply in one or two short sentences saying what you changed. Do not paste JSON back to the user.\n\nNothing is selected. Call get_canvas to see the document."
+  },
+  {
+   "role": "user",
+   "content": "can you create me a health app for someone who is more diabetic use the bubblegum theme"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "get_canvas",
+      "arguments": {
+       "detail": "outline"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "get_canvas",
+   "content": "{\"document\":\"default\",\"components\":[{\"id\":\"f_40l29RXIyN\",\"name\":\"Bar rest\",\"props\":{},\"instances\":0},{\"id\":\"f_IyAAUwO01i\",\"name\":\"Principle card\",\"props\":{\"step\":\"STAGE 1 — INVERSION\",\"stepColor\":\"var(--color-primary)\",\"title\":\"DC to 3-phase AC\",\"body\":\"SiC switches pulse 800 V DC up to 20 kHz to form three smooth AC waveforms offset by 120°.\"},\"styleProps\":{\"stepColor\":[\"color\"]},\"instances\":7},{\"id\":\"f_NsEpYS7fcv\",\"name\":\"Mileage stat\",\"props\":{\"value\":\"14\",\"caption\":\"of 46 miles done\"},\"instances\":0},{\"id\":\"f_Y1rO1gtvZ6\",\"name\":\"Tab\",\"props\":{\"tabColor\":\"var(--color-primary)\",\"current\":\"page\",\"icon\":\"calendar_view_week\",\"iconFill\":\"'FILL' 1\",\"label\":\"Week\",\"labelWeight\":\"600\"},\"styleProps\":{\"tabColor\":[\"color\"],\"iconFill\":[\"fontVariationSettings\"],\"labelWeight\":[\"fontWeight\"]},\"attributeProps\":{\"current\":[\"aria-current\"]},\"instances\":3},{\"id\":\"f_tNm84cBYFs\",\"name\":\"Day row\",\"props\":{\"day\":\"Mon\",\"date\":\"9\",\"title\":\"Rest\",\"subtitle\":\"15 min mobility\",\"icon\":\"check_circle\"},\"instances\":26},{\"id\":\"f_viNacO3O5E\",\"name\":\"Telemetry tile\",\"props\":{\"label\":\"Net thrust\",\"value\":\"142.8\",\"unit\":\"kN\",\"unitColor\":\"var(--color-primary)\",\"note\":\"Takeoff rated, 100% N1\"},\"styleProps\":{\"unitColor\":[\"color\"]},\"instances\":3},{\"id\":\"f_iCxDTPEu7Z\",\"name\":\"Vex\",\"props\":{\"initiative\":\"21\",\"name\":\"Vex\",\"meta1\":\"Rogue 5, played by Sam\",\"meta2\":\"AC 15\",\"hpCurrent\":\"27\",\"hpMax\":\"/ 31\",\"hpExtra\":\"\",\"optionsLabel\":\"Options for Vex\"},\"attributeProps\":{\"optionsLabel\":[\"aria-label\"]},\"instances\":5},{\"id\":\"f_bDSzPZ5KPB\",\"name\":\"Week header\",\"props\":{\"title\":\"Week 9 of 16\",\"subtitle\":\"Nov 9–15, build phase\"},\"instances\":0},{\"id\":\"f_6m7C1FxXts\",\"name\":\"Volume chart\",\"props\":{},\"instances\":0},{\"id\":\"f_3POlbj7EFB\",\"name\":\"date-robust\",\"props\":{\"dateLabel\":\"Today\",\"dateValue\":\"12\",\"title\":\"Easy run\",\"subtitle\":\"1 mi warm-up, 3 mi steady, 1 mi cool-down\",\"distance\":\"5.0 mi\",\"pace\":\"9:45\",\"time\":\"49 min\",\"icon\":\"play_arrow\",\"buttonText\":\"Start run\"},\"instances\":4},{\"id\":\"f_ddRnj3lFHy\",\"name\":\"Tab bar\",\"props\":{},\"instances\":0}],\"nodes\":[{\"id\":\"f_C61kDdnJJX\",\"tag\":\"main\",\"name\":\"Color roles — dark\",\"frame\":{\"x\":0,\"y\":0,\"width\":1400,\"heightMode\":\"hug\"},\"theme\":\"violet-dark\",\"children\":[{\"id\":\"f_JphPEShPq9\",\"tag\":\"section\",\"name\":\"Accent roles\",\"children\":[{\"id\":\"f_NjmbO8tLKC\",\"tag\":\"div\",\"name\":\"Primary\",\"children\":[{\"id\":\"f_fJjpACd3WN\",\"tag\":\"div\",\"name\":\"Primary pair\",\"children\":[{\"id\":\"t_9fVn3BjN0N\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary\"},{\"id\":\"t_LTVltPblXv\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary\"}]},{\"id\":\"f_akwl6MnBYC\",\"tag\":\"div\",\"name\":\"Primary container pair\",\"children\":[{\"id\":\"t_CbTB66Zrnw\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary Container\"},{\"id\":\"t_eU2FZWY7dB\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary Container\"}]}]},{\"id\":\"f_12o92zUktA\",\"tag\":\"div\",\"name\":\"Secondary\",\"children\":[{\"id\":\"f_AT6sb6aRXN\",\"tag\":\"div\",\"name\":\"Secondary pair\",\"children\":[{\"id\":\"t_0Gal703UiM\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary\"},{\"id\":\"t_5ctBQfnmvf\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary\"}]},{\"id\":\"f_CzWNbdhU5v\",\"tag\":\"div\",\"name\":\"Secondary container pair\",\"children\":[{\"id\":\"t_p67darhSr6\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary Container\"},{\"id\":\"t_RbIMX3Qd9o\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary Container\"}]}]},{\"id\":\"f_3IfhrLskHg\",\"tag\":\"div\",\"name\":\"Tertiary\",\"children\":[{\"id\":\"f_UkP6VfeSke\",\"tag\":\"div\",\"name\":\"Tertiary pair\",\"children\":[{\"id\":\"t_IS44ZUnrdX\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary\"},{\"id\":\"t_5LqJOTz93r\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary\"}]},{\"id\":\"f_vct9H6qsnv\",\"tag\":\"div\",\"name\":\"Tertiary container pair\",\"children\":[{\"id\":\"t_3hxSDQjwG8\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary Container\"},{\"id\":\"t_ZBZYVY6Pcy\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary Container\"}]}]},{\"id\":\"f_mhpznv77T7\",\"tag\":\"div\",\"name\":\"Error\",\"children\":[{\"id\":\"f_Mzkv9OGkbf\",\"tag\":\"div\",\"name\":\"Error pair\",\"children\":[{\"id\":\"t_FUkZW8NV4S\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Error\"},{\"id\":\"t_1LRs0PO0Ko\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Error\"}]},{\"id\":\"f_nF12maSzDz\",\"tag\":\"div\",\"name\":\"Error container pair\",\"children\":[{\"id\":\"t_cuQ75uZv8G\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Error Container\"},{\"id\":\"t_o2JQDdHC6F\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Error Container\"}]}]}]},{\"id\":\"f_6b6G7dLxTC\",\"tag\":\"section\",\"name\":\"Fixed roles\",\"children\":[{\"id\":\"f_xAmV3AZX1R\",\"tag\":\"div\",\"name\":\"Primary fixed\",\"children\":[{\"id\":\"f_0a9KKkezSI\",\"tag\":\"div\",\"name\":\"Row\",\"children\":[{\"id\":\"t_nZ31i0l4af\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary Fixed\"},{\"id\":\"t_9DBiERRQeH\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary Fixed Dim\"}]},{\"id\":\"t_l0h355xE4h\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary Fixed\"},{\"id\":\"t_3fhmOqPHAq\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary Fixed Variant\"}]},{\"id\":\"f_0VK4bTWTLy\",\"tag\":\"div\",\"name\":\"Secondary fixed\",\"children\":[{\"id\":\"f_JcNFmqdrzD\",\"tag\":\"div\",\"name\":\"Row\",\"children\":[{\"id\":\"t_DdhbB6vLuQ\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary Fixed\"},{\"id\":\"t_9khHMskIp0\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary Fixed Dim\"}]},{\"id\":\"t_aS28vk1rFn\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary Fixed Variant\"},{\"id\":\"t_rTL9bbNlex\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary Fixed\"}]},{\"id\":\"f_ej8RULRsIj\",\"tag\":\"div\",\"name\":\"Tertiary fixed\",\"children\":[{\"id\":\"f_63kA9kP5o0\",\"tag\":\"div\",\"name\":\"Row\",\"children\":[{\"id\":\"t_HJee31lo20\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary Fixed\"},{\"id\":\"t_sSjZN6XlKO\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary Fixed Dim\"}]},{\"id\":\"t_3RRE1iov01\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary Fixed\"},{\"id\":\"t_GQCjKT7LET\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary Fixed Variant\"}]}]},{\"id\":\"f_PW238Csvl8\",\"tag\":\"section\",\"name\":\"Surface roles\",\"children\":[{\"id\":\"f_FNYGoF8rYe\",\"tag\":\"div\",\"name\":\"Surfaces\",\"children\":[{\"id\":\"f_XeC4Z051gz\",\"tag\":\"div\",\"name\":\"Surface row\",\"children\":[{\"id\":\"t_2nuvBHawXL\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Dim\"},{\"id\":\"t_FtvqqEEU2O\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface\"},{\"id\":\"t_9P2HWj2p3U\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Bright\"}]},{\"id\":\"f_USUY6MF1YS\",\"tag\":\"div\",\"name\":\"Container row\",\"children\":[{\"id\":\"t_u74t1JdT2u\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container Lowest\"},{\"id\":\"t_WKEFSDwz00\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container Low\"},{\"id\":\"t_HA7pQNeml5\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container\"},{\"id\":\"t_jCu3yeBail\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container High\"},{\"id\":\"t_THpUG1KLOL\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container Highest\"}]},{\"id\":\"f_esAm5A6H3a\",\"tag\":\"div\",\"name\":\"On surface row\",\"children\":[{\"id\":\"t_RQ6rtvmftV\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Surface\"},{\"id\":\"t_GNVBO9eNR1\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Surface Variant\"},{\"id\":\"t_3lHnV05sCp\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Outline\"},{\"id\":\"t_K9pz5ukOU8\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Outline Variant\"}]}]},{\"id\":\"f_UKFnBeP0bq\",\"tag\":\"div\",\"name\":\"Inverse\",\"children\":[{\"id\":\"t_xfq9dqNXuo\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Inverse Surface\"},{\"id\":\"t_dl05KN7gyl\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Inverse On Surface\"},{\"id\":\"t_ppLpp9P3GW\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Inverse Primary\"},{\"id\":\"f_CevuOiSLl8\",\"tag\":\"div\",\"name\":\"Scrim and shadow\",\"children\":[{\"id\":\"t_tZaEXxJiI1\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Scrim\"},{\"id\":\"t_xaMsyHsRZx\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Shadow\"}]}]}]},{\"id\":\"f_4s3aTCPkD7\",\"tag\":\"section\",\"name\":\"Typography scale\",\"children\":[{\"id\":\"f_79re1O9hfd\",\"tag\":\"div\",\"name\":\"Row H1\",\"children\":[{\"id\":\"t_mUifPwRWWF\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H1 · 56px\"},{\"id\":\"t_9G3RudfNZc\",\"tag\":\"h1\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps\"}]},{\"id\":\"f_xJr0rWVQey\",\"tag\":\"div\",\"name\":\"Row H2\",\"children\":[{\"id\":\"t_CFH7nlC7dJ\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H2 · 40px\"},{\"id\":\"t_vtFsBlJnWm\",\"tag\":\"h2\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over\"}]},{\"id\":\"f_ppuk78Glkc\",\"tag\":\"div\",\"name\":\"Row H3\",\"children\":[{\"id\":\"t_2cuuPjxkYZ\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H3 · 30px\"},{\"id\":\"t_UngpsCJXfG\",\"tag\":\"h3\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_RxLG7fXB3J\",\"tag\":\"div\",\"name\":\"Row H4\",\"children\":[{\"id\":\"t_rnqO0JDaRl\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H4 · 24px\"},{\"id\":\"t_rcvVaVUJl1\",\"tag\":\"h4\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_GSOj0Vl3aG\",\"tag\":\"div\",\"name\":\"Row H5\",\"children\":[{\"id\":\"t_EStKOmyPPo\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H5 · 20px\"},{\"id\":\"t_vrgADBSy5b\",\"tag\":\"h5\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_HhMi6ONJuo\",\"tag\":\"div\",\"name\":\"Row H6\",\"children\":[{\"id\":\"t_MJvTVSMpSu\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H6 · 18px\"},{\"id\":\"t_ANhSX9UdWJ\",\"tag\":\"h6\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_uEF3Qnsw2c\",\"tag\":\"div\",\"name\":\"Row Body large\",\"children\":[{\"id\":\"t_RhydqK4HRL\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Body large · 18px\"},{\"id\":\"t_M1Fa8szqw1\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog. Pack my box wit…\"}]},{\"id\":\"f_CjUP3Z1rC3\",\"tag\":\"div\",\"name\":\"Row Body medium\",\"children\":[{\"id\":\"t_02IUYyGdPC\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Body medium · 16px\"},{\"id\":\"t_qIODB9b443\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog. Pack my box wit…\"}]},{\"id\":\"f_3hMSH1RajP\",\"tag\":\"div\",\"name\":\"Row Body small\",\"children\":[{\"id\":\"t_jP6LaRavX6\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Body small · 14px\"},{\"id\":\"t_6NAb1Vc5b6\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog. Pack my box wit…\"}]},{\"id\":\"f_Zb9nZmo12x\",\"tag\":\"div\",\"name\":\"Row Label\",\"children\":[{\"id\":\"t_G1a8YGt6jb\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Label · 14px\"},{\"id\":\"t_FFxb2R77EU\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Button label\"}]},{\"id\":\"f_QgB46QITkP\",\"tag\":\"div\",\"name\":\"Row Caption\",\"children\":[{\"id\":\"t_SJM4PwnULB\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Caption · 12px\"},{\"id\":\"t_glF7ISTaEI\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Figure caption and supporting metadata\"}]}]}]},{\"id\":\"f_nQugszhAEC\",\"tag\":\"main\",\"name\":\"Color roles — dark\",\"frame\":{\"x\":1500,\"y\":0,\"width\":1400,\"heightMode\":\"hug\"},\"theme\":\"bubblegum-dark\",\"children\":[{\"id\":\"f_QQEHMqsMNh\",\"tag\":\"section\",\"name\":\"Accent roles\",\"children\":[{\"id\":\"f_pyfPp0gchB\",\"tag\":\"div\",\"name\":\"Primary\",\"children\":[{\"id\":\"f_rQCPtUNN5c\",\"tag\":\"div\",\"name\":\"Primary pair\",\"children\":[{\"id\":\"t_WlxJubUFZH\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary\"},{\"id\":\"t_z7YxF7VQGN\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary\"}]},{\"id\":\"f_fx2Sxh3hmO\",\"tag\":\"div\",\"name\":\"Primary container pair\",\"children\":[{\"id\":\"t_uHKfWP4IR1\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary Container\"},{\"id\":\"t_nQkbF2M16z\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary Container\"}]}]},{\"id\":\"f_n8N0v5srRp\",\"tag\":\"div\",\"name\":\"Secondary\",\"children\":[{\"id\":\"f_RC3ncbBbZS\",\"tag\":\"div\",\"name\":\"Secondary pair\",\"children\":[{\"id\":\"t_x738h1wvEb\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary\"},{\"id\":\"t_wbzw6FVZCk\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary\"}]},{\"id\":\"f_zEz60InSQg\",\"tag\":\"div\",\"name\":\"Secondary container pair\",\"children\":[{\"id\":\"t_NtOo9UlACM\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary Container\"},{\"id\":\"t_hYqW6wGKqB\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary Container\"}]}]},{\"id\":\"f_DWO68oRWI3\",\"tag\":\"div\",\"name\":\"Tertiary\",\"children\":[{\"id\":\"f_XQAXac84AS\",\"tag\":\"div\",\"name\":\"Tertiary pair\",\"children\":[{\"id\":\"t_LmHk5cuqs7\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary\"},{\"id\":\"t_3SgPeU5V1P\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary\"}]},{\"id\":\"f_MIsa7dPcL2\",\"tag\":\"div\",\"name\":\"Tertiary container pair\",\"children\":[{\"id\":\"t_wIJbDoATrE\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary Container\"},{\"id\":\"t_IQwKEUnQIm\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary Container\"}]}]},{\"id\":\"f_3ntKzbNDQh\",\"tag\":\"div\",\"name\":\"Error\",\"children\":[{\"id\":\"f_h7ioDQCwEh\",\"tag\":\"div\",\"name\":\"Error pair\",\"children\":[{\"id\":\"t_5MlcawVnWs\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Error\"},{\"id\":\"t_TC7UQu2Wx6\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Error\"}]},{\"id\":\"f_4snh51xe7q\",\"tag\":\"div\",\"name\":\"Error container pair\",\"children\":[{\"id\":\"t_wQrWecc4En\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Error Container\"},{\"id\":\"t_8GZxHgJpd0\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Error Container\"}]}]}]},{\"id\":\"f_GEu2zhc1HR\",\"tag\":\"section\",\"name\":\"Fixed roles\",\"children\":[{\"id\":\"f_lDZgQTOBYr\",\"tag\":\"div\",\"name\":\"Primary fixed\",\"children\":[{\"id\":\"f_LzDqBCdyQu\",\"tag\":\"div\",\"name\":\"Row\",\"children\":[{\"id\":\"t_keT3GXrgGb\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary Fixed\"},{\"id\":\"t_GRC3BNepzo\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Primary Fixed Dim\"}]},{\"id\":\"t_FKSDgGQUrv\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary Fixed\"},{\"id\":\"t_ZABZ2cJxyg\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Primary Fixed Variant\"}]},{\"id\":\"f_hIfcfR9Egm\",\"tag\":\"div\",\"name\":\"Secondary fixed\",\"children\":[{\"id\":\"f_dRGcxpCWq4\",\"tag\":\"div\",\"name\":\"Row\",\"children\":[{\"id\":\"t_EmXUJEYyg8\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary Fixed\"},{\"id\":\"t_NdxjI0WhNb\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Secondary Fixed Dim\"}]},{\"id\":\"t_eFjPkj4cqP\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary Fixed\"},{\"id\":\"t_cVXxQq7iG2\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Secondary Fixed Variant\"}]},{\"id\":\"f_3p5KBska6l\",\"tag\":\"div\",\"name\":\"Tertiary fixed\",\"children\":[{\"id\":\"f_nu6PctlX08\",\"tag\":\"div\",\"name\":\"Row\",\"children\":[{\"id\":\"t_rjqxnXuDid\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary Fixed\"},{\"id\":\"t_0GqN4tZpNB\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Tertiary Fixed Dim\"}]},{\"id\":\"t_ymY0cg9j1Z\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary Fixed\"},{\"id\":\"t_WT66fHDVDh\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Tertiary Fixed Variant\"}]}]},{\"id\":\"f_0XI4nF5NDJ\",\"tag\":\"section\",\"name\":\"Surface roles\",\"children\":[{\"id\":\"f_UCJY8jJxXl\",\"tag\":\"div\",\"name\":\"Surfaces\",\"children\":[{\"id\":\"f_6pap95CEYe\",\"tag\":\"div\",\"name\":\"Surface row\",\"children\":[{\"id\":\"t_087Oad0jcH\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Dim\"},{\"id\":\"t_GbSJR6XhBq\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface\"},{\"id\":\"t_5I2S1d1M3m\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Bright\"}]},{\"id\":\"f_tGcc6365jW\",\"tag\":\"div\",\"name\":\"Container row\",\"children\":[{\"id\":\"t_zEahzShqLQ\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container Lowest\"},{\"id\":\"t_hFnui1TvBw\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container Low\"},{\"id\":\"t_GaVXcFgDSc\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container\"},{\"id\":\"t_3jia4zoH8T\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container High\"},{\"id\":\"t_S54l5bPpT3\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Surface Container Highest\"}]},{\"id\":\"f_qDbhC5GeoS\",\"tag\":\"div\",\"name\":\"On surface row\",\"children\":[{\"id\":\"t_X38G9HNUDa\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Surface\"},{\"id\":\"t_pJA4vak5bc\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"On Surface Variant\"},{\"id\":\"t_j403ZWnWv7\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Outline\"},{\"id\":\"t_yZ9F3Ig3eT\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Outline Variant\"}]}]},{\"id\":\"f_vRxzlKKC8k\",\"tag\":\"div\",\"name\":\"Inverse\",\"children\":[{\"id\":\"t_Y9xAOuMxrI\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Inverse Surface\"},{\"id\":\"t_iWscf3Dxkw\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Inverse On Surface\"},{\"id\":\"t_uKBMNXOsVy\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Inverse Primary\"},{\"id\":\"f_IWQk1M8jXK\",\"tag\":\"div\",\"name\":\"Scrim and shadow\",\"children\":[{\"id\":\"t_i6oG3OWRKE\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Scrim\"},{\"id\":\"t_4ycy9j4OHi\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"Shadow\"}]}]}]},{\"id\":\"f_lh8yYrWKEJ\",\"tag\":\"section\",\"name\":\"Typography scale\",\"children\":[{\"id\":\"f_UhBMhyQMoQ\",\"tag\":\"div\",\"name\":\"Row H1\",\"children\":[{\"id\":\"t_h4oRyOgwQx\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H1 · 56px\"},{\"id\":\"t_NnHyi3gKfD\",\"tag\":\"h1\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps\"}]},{\"id\":\"f_fDicmQjzlZ\",\"tag\":\"div\",\"name\":\"Row H2\",\"children\":[{\"id\":\"t_BCpa6Y8ByH\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H2 · 40px\"},{\"id\":\"t_1eApMa3ewD\",\"tag\":\"h2\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over\"}]},{\"id\":\"f_F8b26PEE4l\",\"tag\":\"div\",\"name\":\"Row H3\",\"children\":[{\"id\":\"t_zY5YpZaRRi\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H3 · 30px\"},{\"id\":\"t_Bpro9cH4ct\",\"tag\":\"h3\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_viYLCQe7ag\",\"tag\":\"div\",\"name\":\"Row H4\",\"children\":[{\"id\":\"t_3Gxmk4EuYU\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H4 · 24px\"},{\"id\":\"t_nZjcxITHIH\",\"tag\":\"h4\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_XhW1so1l31\",\"tag\":\"div\",\"name\":\"Row H5\",\"children\":[{\"id\":\"t_XCuLqDJ95k\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H5 · 20px\"},{\"id\":\"t_Rgbp7TJP98\",\"tag\":\"h5\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_CPPawodDvU\",\"tag\":\"div\",\"name\":\"Row H6\",\"children\":[{\"id\":\"t_8szVive4W4\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"H6 · 18px\"},{\"id\":\"t_IaeXyUOQzT\",\"tag\":\"h6\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog\"}]},{\"id\":\"f_nMsAg599NK\",\"tag\":\"div\",\"name\":\"Row Body large\",\"children\":[{\"id\":\"t_dDCqkdSuTX\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Body large · 18px\"},{\"id\":\"t_7WriTlmU2T\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog. Pack my box wit…\"}]},{\"id\":\"f_lc8QzjTVDd\",\"tag\":\"div\",\"name\":\"Row Body medium\",\"children\":[{\"id\":\"t_2ZYoTiF1Ke\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Body medium · 16px\"},{\"id\":\"t_KLbImlygSc\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog. Pack my box wit…\"}]},{\"id\":\"f_CEAeJ6csc2\",\"tag\":\"div\",\"name\":\"Row Body small\",\"children\":[{\"id\":\"t_jokFKAOvVS\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Body small · 14px\"},{\"id\":\"t_kd1rxjMXPO\",\"tag\":\"p\",\"name\":\"Text\",\"text\":\"The quick brown fox jumps over the lazy dog. Pack my box wit…\"}]},{\"id\":\"f_nK8cNzpi7g\",\"tag\":\"div\",\"name\":\"Row Label\",\"children\":[{\"id\":\"t_3R2Em57DEY\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Label · 14px\"},{\"id\":\"t_0wBIrbVpUB\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Button label\"}]},{\"id\":\"f_UXMK9LlNC3\",\"tag\":\"div\",\"name\":\"Row Caption\",\"children\":[{\"id\":\"t_OVUpREhsZh\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Caption · 12px\"},{\"id\":\"t_l4Weiq4QAb\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Figure caption and supporting metadata\"}]}]}]},{\"id\":\"f_4v0jjx117J\",\"tag\":\"main\",\"name\":\"Druid — Character sheet\",\"frame\":{\"x\":3625,\"y\":0,\"width\":409,\"heightMode\":\"fixed\"},\"theme\":\"grove-dark\",\"children\":[{\"id\":\"f_ygA29NLr03\",\"tag\":\"header\",\"name\":\"Header\",\"children\":[{\"id\":\"f_uGsXQ5Mr8v\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_FespdPj8Mg\",\"tag\":\"h1\",\"name\":\"Character name\",\"text\":\"Bramble Thornheart bark bark bark\"},{\"id\":\"t_ldOZznhSXl\",\"tag\":\"p\",\"name\":\"Class line\",\"text\":\"Level 5 druid, Circle of the Moon\"},{\"id\":\"t_VUoavo3nKY\",\"tag\":\"p\",\"name\":\"Race line\",\"text\":\"Wood elf, hermit background\"}]},{\"id\":\"f_Q5ezmeEi2C\",\"tag\":\"button\",\"name\":\"Rest button\",\"children\":[{\"id\":\"t_efqr3v8TLz\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"bedtime\"}]}]},{\"id\":\"f_mc4DlIFA47\",\"tag\":\"section\",\"name\":\"Vitals\",\"children\":[{\"id\":\"f_t5apfS4jgr\",\"tag\":\"div\",\"name\":\"Hero Image Placeholder\",\"children\":[{\"id\":\"f_wwqRLHJm3x\",\"tag\":\"img\",\"name\":\"48apvyunywig1\"}]},{\"id\":\"f_xkvSwCkfej\",\"tag\":\"div\",\"name\":\"Vitals body\",\"children\":[{\"id\":\"f_0vVjW5If0s\",\"tag\":\"div\",\"name\":\"Hit points\",\"children\":[{\"id\":\"f_dZ877kslad\",\"tag\":\"div\",\"name\":\"HP value\",\"children\":[{\"id\":\"t_7YRHE8UIBQ\",\"tag\":\"span\",\"name\":\"HP label\",\"text\":\"Hit points\"},{\"id\":\"f_uGRWyKRgUf\",\"tag\":\"p\",\"name\":\"HP number\",\"children\":[{\"id\":\"t_2WpJKob5LF\",\"tag\":\"span\",\"name\":\"Current\",\"text\":\"31\"},{\"id\":\"t_vKAFMrezY7\",\"tag\":\"span\",\"name\":\"Max\",\"text\":\"/ 38\"}]}]},{\"id\":\"f_m29Uf1oH7s\",\"tag\":\"div\",\"name\":\"HP actions\",\"children\":[{\"id\":\"f_OrKroVqr0L\",\"tag\":\"button\",\"name\":\"Damage\",\"children\":[{\"id\":\"t_xTA0y7iD2M\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"remove\"}]},{\"id\":\"f_6w7I3jZR2T\",\"tag\":\"button\",\"name\":\"Heal\",\"children\":[{\"id\":\"t_5vMGkrknjM\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"add\"}]}]}]},{\"id\":\"f_9u5GvU9Qxy\",\"tag\":\"div\",\"name\":\"HP bar\",\"children\":[{\"id\":\"f_tM5eSNX3Av\",\"tag\":\"div\",\"name\":\"HP fill\"}]},{\"id\":\"f_NfU0NztF70\",\"tag\":\"dl\",\"name\":\"Combat stats\",\"children\":[{\"id\":\"f_Bgr5XqR1Ya\",\"tag\":\"div\",\"name\":\"AC\",\"children\":[{\"id\":\"t_nH84uuVG3Q\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Armor\"},{\"id\":\"t_5MB2zGeoSo\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"15\"}]},{\"id\":\"f_0qjnqZe7Jd\",\"tag\":\"div\",\"name\":\"Initiative\",\"children\":[{\"id\":\"t_jkn7ZRtx5f\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Initiative\"},{\"id\":\"t_xnshYARDEg\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"+3\"}]},{\"id\":\"f_9Sp2kPmmDL\",\"tag\":\"div\",\"name\":\"Speed\",\"children\":[{\"id\":\"t_hBHGJBsJp2\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Speed\"},{\"id\":\"t_qfQR1467tV\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"35 ft\"}]},{\"id\":\"f_HEjle3GNDm\",\"tag\":\"div\",\"name\":\"Proficiency\",\"children\":[{\"id\":\"t_5q8cr8Jd8x\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Proficiency\"},{\"id\":\"t_FHpQrBMg7D\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"+3\"}]}]}]}]},{\"id\":\"f_NBpEJiUEx4\",\"tag\":\"section\",\"name\":\"Wild Shape\",\"children\":[{\"id\":\"f_hdLcwF3Te9\",\"tag\":\"div\",\"name\":\"Wild Shape head\",\"children\":[{\"id\":\"t_0YFmG42BRY\",\"tag\":\"h2\",\"name\":\"Heading\",\"text\":\"Wild Shape\"},{\"id\":\"f_uaWWxChitX\",\"tag\":\"div\",\"name\":\"Uses\",\"children\":[{\"id\":\"t_CneRq7Lgad\",\"tag\":\"span\",\"name\":\"Uses label\",\"text\":\"1 of 2 left\"},{\"id\":\"f_4e02UQ4y6p\",\"tag\":\"div\",\"name\":\"Pip used\"},{\"id\":\"f_GSjzb0X3Pa\",\"tag\":\"div\",\"name\":\"Pip left\"}]}]},{\"id\":\"f_6A4lQRiD3y\",\"tag\":\"ul\",\"name\":\"Beast forms\",\"children\":[{\"id\":\"f_npA2sNZse5\",\"tag\":\"li\",\"name\":\"Form — Brown bear\",\"children\":[{\"id\":\"f_u3j24FlbuJ\",\"tag\":\"button\",\"name\":\"Brown bear\",\"children\":[{\"id\":\"f_PH7pFj2Nle\",\"tag\":\"div\",\"name\":\"Thumbnail\",\"children\":[{\"id\":\"t_652vcC3HZ8\",\"tag\":\"span\",\"name\":\"Thumbnail label\",\"text\":\"Bear\"}]},{\"id\":\"t_E7l0EH1qUl\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Brown bear\"},{\"id\":\"t_437eWva632\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"34 HP, AC 11, CR 1\"}]}]},{\"id\":\"f_VZcEHfHBOZ\",\"tag\":\"li\",\"name\":\"Form — Dire wolf\",\"children\":[{\"id\":\"f_PbXAKB3AKm\",\"tag\":\"button\",\"name\":\"Dire wolf\",\"children\":[{\"id\":\"f_KKaYR91PNm\",\"tag\":\"div\",\"name\":\"Thumbnail\",\"children\":[{\"id\":\"t_z6Gi5gEh4H\",\"tag\":\"span\",\"name\":\"Thumbnail label\",\"text\":\"Wolf\"}]},{\"id\":\"t_XXksejUThH\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Dire wolf\"},{\"id\":\"t_0hHL8t4iBf\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"37 HP, AC 14, CR 1\"}]}]},{\"id\":\"f_3gldZ3doFQ\",\"tag\":\"li\",\"name\":\"Form — Giant spider\",\"children\":[{\"id\":\"f_8Bn6HvWkcI\",\"tag\":\"button\",\"name\":\"Giant spider\",\"children\":[{\"id\":\"f_1ywqCsw72J\",\"tag\":\"div\",\"name\":\"Thumbnail\",\"children\":[{\"id\":\"t_qU5xDVt9oH\",\"tag\":\"span\",\"name\":\"Thumbnail label\",\"text\":\"Spider\"}]},{\"id\":\"t_iGzZ5x5v9L\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Giant spider\"},{\"id\":\"t_bL8n8oPuwv\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"26 HP, AC 14, CR 1\"}]}]},{\"id\":\"f_zW2Ob3t95O\",\"tag\":\"li\",\"name\":\"Form — Giant eagle\",\"children\":[{\"id\":\"f_Gbd1yNbBQ1\",\"tag\":\"button\",\"name\":\"Giant eagle\",\"children\":[{\"id\":\"f_8dB9vEkZqv\",\"tag\":\"div\",\"name\":\"Thumbnail\",\"children\":[{\"id\":\"t_DQlr3f3UMh\",\"tag\":\"span\",\"name\":\"Thumbnail label\",\"text\":\"Eagle\"}]},{\"id\":\"t_uExVGOJiHK\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Giant eagle\"},{\"id\":\"t_C1ZxFchps2\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"26 HP, AC 13, CR 1\"}]}]}]}]},{\"id\":\"f_1Ns5kaaFe2\",\"tag\":\"section\",\"name\":\"Abilities\",\"children\":[{\"id\":\"t_AIYRk0eVOE\",\"tag\":\"h2\",\"name\":\"Heading\",\"text\":\"Abilities\"},{\"id\":\"f_IO3w25leWT\",\"tag\":\"ul\",\"name\":\"Ability grid\",\"children\":[{\"id\":\"f_OGhbFUbIjb\",\"tag\":\"li\",\"name\":\"STR\",\"children\":[{\"id\":\"t_xIWHbGoecd\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Strength\"},{\"id\":\"f_RhoOge3Wla\",\"tag\":\"span\",\"name\":\"Values\",\"children\":[{\"id\":\"t_qH9sETB4E9\",\"tag\":\"span\",\"name\":\"Mod\",\"text\":\"+0\"},{\"id\":\"t_P1um9m4xjB\",\"tag\":\"span\",\"name\":\"Score\",\"text\":\"10\"}]}]},{\"id\":\"f_REJk6q7gJR\",\"tag\":\"li\",\"name\":\"DEX\",\"children\":[{\"id\":\"t_2Ccw4H2SK7\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Dexterity\"},{\"id\":\"f_k08bxW5vsl\",\"tag\":\"span\",\"name\":\"Values\",\"children\":[{\"id\":\"t_E0YCMZvgjo\",\"tag\":\"span\",\"name\":\"Mod\",\"text\":\"+3\"},{\"id\":\"t_V5E0aT6Qr7\",\"tag\":\"span\",\"name\":\"Score\",\"text\":\"16\"}]}]},{\"id\":\"f_f6ZH1K3Ji2\",\"tag\":\"li\",\"name\":\"CON\",\"children\":[{\"id\":\"t_BKN4TwXfgF\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Constitution\"},{\"id\":\"f_qORiCPojhS\",\"tag\":\"span\",\"name\":\"Values\",\"children\":[{\"id\":\"t_yl4DNmod60\",\"tag\":\"span\",\"name\":\"Mod\",\"text\":\"+2\"},{\"id\":\"t_AgFWWcpOtl\",\"tag\":\"span\",\"name\":\"Score\",\"text\":\"14\"}]}]},{\"id\":\"f_zRMmZ9I8LM\",\"tag\":\"li\",\"name\":\"INT\",\"children\":[{\"id\":\"t_044EqayK6m\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Intelligence\"},{\"id\":\"f_GcunZRuLOD\",\"tag\":\"span\",\"name\":\"Values\",\"children\":[{\"id\":\"t_P41hlc9NnS\",\"tag\":\"span\",\"name\":\"Mod\",\"text\":\"+1\"},{\"id\":\"t_jxIEqlBDQ9\",\"tag\":\"span\",\"name\":\"Score\",\"text\":\"12\"}]},{\"id\":\"t_7F2QNrjYCr\",\"tag\":\"span\",\"text\":\"Save +4\"}]},{\"id\":\"f_omad0bmhSG\",\"tag\":\"li\",\"name\":\"WIS\",\"children\":[{\"id\":\"t_RQKwRn2BgG\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Wisdom\"},{\"id\":\"f_m8j07m0sN6\",\"tag\":\"span\",\"name\":\"Values\",\"children\":[{\"id\":\"t_ZI5wuQ7JML\",\"tag\":\"span\",\"name\":\"Mod\",\"text\":\"+4\"},{\"id\":\"t_NpSVSif7H7\",\"tag\":\"span\",\"name\":\"Score\",\"text\":\"18\"}]},{\"id\":\"t_MVFirK5O8n\",\"tag\":\"span\",\"text\":\"Save +7\"}]},{\"id\":\"f_PfC8Daw9NC\",\"tag\":\"li\",\"name\":\"CHA\",\"children\":[{\"id\":\"t_JlnmiK6Nzq\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Charisma\"},{\"id\":\"f_XamZQX3up7\",\"tag\":\"span\",\"name\":\"Values\",\"children\":[{\"id\":\"t_7JHITx3Hdy\",\"tag\":\"span\",\"name\":\"Mod\",\"text\":\"−1\"},{\"id\":\"t_phbBaJZf4n\",\"tag\":\"span\",\"name\":\"Score\",\"text\":\"8\"}]}]}]}]},{\"id\":\"f_sM227lN2nU\",\"tag\":\"section\",\"name\":\"Spellcasting\",\"children\":[{\"id\":\"f_segZV21wco\",\"tag\":\"div\",\"name\":\"Spell head\",\"children\":[{\"id\":\"t_akE7Hwhnfb\",\"tag\":\"h2\",\"name\":\"Heading\",\"text\":\"Spells\"},{\"id\":\"t_jWvspaqq1R\",\"tag\":\"button\",\"name\":\"Save DC button\",\"text\":\"Save DC 15, attack +7\"}]},{\"id\":\"f_4KeHJohYDn\",\"tag\":\"ul\",\"name\":\"Spell slots\",\"children\":[{\"id\":\"f_F1ovxFuzPG\",\"tag\":\"li\",\"name\":\"1st level\",\"children\":[{\"id\":\"t_eQmS05MYSS\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"1st level\"},{\"id\":\"f_p7pP6565bd\",\"tag\":\"div\",\"name\":\"Pips\",\"children\":[{\"id\":\"f_nox1K21UA8\",\"tag\":\"div\",\"name\":\"Pip\"},{\"id\":\"f_7z6pgfadqz\",\"tag\":\"div\",\"name\":\"Pip\"},{\"id\":\"f_OVctpU0j9K\",\"tag\":\"div\",\"name\":\"Pip used\"},{\"id\":\"f_qWofCzDAvf\",\"tag\":\"div\",\"name\":\"Pip used\"}]}]},{\"id\":\"f_Mq0V9z26xs\",\"tag\":\"li\",\"name\":\"2nd level\",\"children\":[{\"id\":\"t_YOYksi4ubQ\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"2nd level\"},{\"id\":\"f_y4Clx34nhR\",\"tag\":\"div\",\"name\":\"Pips\",\"children\":[{\"id\":\"f_lo3fi4jCe2\",\"tag\":\"div\",\"name\":\"Pip\"},{\"id\":\"f_nEuS6yne2B\",\"tag\":\"div\",\"name\":\"Pip\"},{\"id\":\"f_VlSDmuk6Mm\",\"tag\":\"div\",\"name\":\"Pip\"}]}]},{\"id\":\"f_VqSnui6wFx\",\"tag\":\"li\",\"name\":\"3rd level\",\"children\":[{\"id\":\"t_PcAhOv2eva\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"3rd level\"},{\"id\":\"f_655d5pXbY7\",\"tag\":\"div\",\"name\":\"Pips\",\"children\":[{\"id\":\"f_xemgKIFlX5\",\"tag\":\"div\",\"name\":\"Pip\"},{\"id\":\"f_dcOwAZ2NoU\",\"tag\":\"div\",\"name\":\"Pip used\"}]}]}]},{\"id\":\"f_1nh9xeqMs0\",\"tag\":\"ul\",\"name\":\"Prepared spells\",\"children\":[{\"id\":\"f_QbUCNGx2Ds\",\"tag\":\"li\",\"name\":\"Spell — Moonbeam\",\"children\":[{\"id\":\"f_mV97r8S17l\",\"tag\":\"details\",\"name\":\"Moonbeam details\",\"children\":[{\"id\":\"f_P6PRZBxlgk\",\"tag\":\"summary\",\"name\":\"Summary\",\"children\":[{\"id\":\"f_WyuEYmSBF6\",\"tag\":\"div\",\"name\":\"Spell text\",\"children\":[{\"id\":\"t_uoz7GSMgHu\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Moonbeam\"},{\"id\":\"t_HPSmE9b1oR\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"2nd level, concentration, 2d10 radiant\"}]},{\"id\":\"t_j4LsMXh7Nm\",\"tag\":\"span\",\"name\":\"Concentrating\",\"text\":\"Active\"},{\"id\":\"t_CCbqti2dHq\",\"tag\":\"span\",\"name\":\"Chevron\",\"text\":\"expand_more\"}]},{\"id\":\"t_qVsLBvhCGT\",\"tag\":\"p\",\"name\":\"Description\",\"text\":\"A silvery beam of pale light shines down in a 5-foot-radius,…\"}]}]},{\"id\":\"f_ReQdKHZk7t\",\"tag\":\"li\",\"name\":\"Spell — Healing Word\",\"children\":[{\"id\":\"f_JObZ2e56KU\",\"tag\":\"details\",\"name\":\"Healing Word details\",\"children\":[{\"id\":\"f_hG2LCITGTW\",\"tag\":\"summary\",\"name\":\"Summary\",\"children\":[{\"id\":\"f_ioRUmEVpTB\",\"tag\":\"div\",\"name\":\"Spell text\",\"children\":[{\"id\":\"t_daz9htbFW8\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Healing Word\"},{\"id\":\"t_uyT5KfP0cG\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"1st level, bonus action, 1d4 + 4\"}]},{\"id\":\"t_hn1f6zTLZs\",\"tag\":\"span\",\"name\":\"Chevron\",\"text\":\"expand_more\"}]},{\"id\":\"t_bqCpHAbaPs\",\"tag\":\"p\",\"name\":\"Description\",\"text\":\"A creature you can see within 60 feet regains 1d4 + 4 hit po…\"}]}]},{\"id\":\"f_Mrsy35f9mO\",\"tag\":\"li\",\"name\":\"Spell — Call Lightning\",\"children\":[{\"id\":\"f_SlTeVqY4Bp\",\"tag\":\"details\",\"name\":\"Call Lightning details\",\"children\":[{\"id\":\"f_RSoa2agw6d\",\"tag\":\"summary\",\"name\":\"Summary\",\"children\":[{\"id\":\"f_wAZl0Si1ol\",\"tag\":\"div\",\"name\":\"Spell text\",\"children\":[{\"id\":\"t_Fe6AB7X4ot\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Call Lightning\"},{\"id\":\"t_JrwgGtLr9t\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"3rd level, concentration, 3d10 lightning\"}]},{\"id\":\"t_1SCOSoKFXj\",\"tag\":\"span\",\"name\":\"Chevron\",\"text\":\"expand_more\"}]},{\"id\":\"t_zSXyG7HaQc\",\"tag\":\"p\",\"name\":\"Description\",\"text\":\"A storm cloud gathers 100 feet above a point within 120 feet…\"}]}]},{\"id\":\"f_Zh1KNqpSVm\",\"tag\":\"li\",\"name\":\"Spell — Shillelagh\",\"children\":[{\"id\":\"f_DT2FOi1hRO\",\"tag\":\"details\",\"name\":\"Shillelagh details\",\"children\":[{\"id\":\"f_6aHRit2Xg1\",\"tag\":\"summary\",\"name\":\"Summary\",\"children\":[{\"id\":\"f_FqNOo04x13\",\"tag\":\"div\",\"name\":\"Spell text\",\"children\":[{\"id\":\"t_XQxzPB78jW\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Shillelagh\"},{\"id\":\"t_NH0iFq3I0o\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Cantrip, bonus action, 1d8 + 4\"}]},{\"id\":\"t_3OqMH6RGic\",\"tag\":\"span\",\"name\":\"Chevron\",\"text\":\"expand_more\"}]},{\"id\":\"t_mRJS4Xbaoa\",\"tag\":\"p\",\"name\":\"Description\",\"text\":\"For 1 minute your club or quarterstaff uses Wisdom for attac…\"}]}]}]},{\"id\":\"f_t06sdoxK40\",\"tag\":\"div\",\"name\":\"Save DC popover\",\"children\":[{\"id\":\"t_KFaOoLef6k\",\"tag\":\"p\",\"name\":\"Title\",\"text\":\"Where 15 and +7 come from\"},{\"id\":\"f_OyxAwoiZQF\",\"tag\":\"dl\",\"name\":\"Breakdown\",\"children\":[{\"id\":\"t_Nt50ddyBJA\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Base\"},{\"id\":\"t_b5bCf2bQWj\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"8\"},{\"id\":\"t_x7wfid4nCo\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Proficiency\"},{\"id\":\"t_NPhe1i53LV\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"+3\"},{\"id\":\"t_ZXE4sd6tnJ\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Wisdom\"},{\"id\":\"t_40KDBLNx1s\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"+4\"},{\"id\":\"t_zZ0AP6MKob\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Spell save DC\"},{\"id\":\"t_k8kbOxTmRt\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"15\"},{\"id\":\"t_NwEoLuWc0s\",\"tag\":\"dt\",\"name\":\"Text\",\"text\":\"Spell attack (proficiency + Wisdom)\"},{\"id\":\"t_nucyfEdN31\",\"tag\":\"dd\",\"name\":\"Text\",\"text\":\"+7\"}]}]}]},{\"id\":\"f_6iGvjwj2T2\",\"tag\":\"section\",\"name\":\"Session notes\",\"children\":[{\"id\":\"t_R9uzopnRhR\",\"tag\":\"h2\",\"name\":\"Heading\",\"text\":\"Session notes\"},{\"id\":\"t_AvvF4U4p70\",\"tag\":\"textarea\",\"name\":\"Notes\",\"text\":\"\"}]},{\"id\":\"f_7aQptrwG75\",\"tag\":\"nav\",\"name\":\"Tab bar\",\"children\":[{\"id\":\"f_NSQ222Av6a\",\"tag\":\"a\",\"name\":\"Tab — Sheet\",\"children\":[{\"id\":\"t_6FiOkBDIpL\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"person\"},{\"id\":\"t_rZ3IpF4iP3\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Sheet\"}]},{\"id\":\"f_9aNx6nqjnE\",\"tag\":\"a\",\"name\":\"Tab — Spells\",\"children\":[{\"id\":\"t_2Iwx1uQPn1\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"auto_stories\"},{\"id\":\"t_8vNYlXfdge\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Spells\"}]},{\"id\":\"f_3SEct69Mi5\",\"tag\":\"a\",\"name\":\"Tab — Gear\",\"children\":[{\"id\":\"t_GNfYvi9SC2\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"backpack\"},{\"id\":\"t_JdPv19Fulc\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Gear\"}]},{\"id\":\"f_H4IX10Mn1I\",\"tag\":\"a\",\"name\":\"Tab — Notes\",\"children\":[{\"id\":\"t_JTcLMNPxjX\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"edit_note\"},{\"id\":\"t_hYTDj6C4Sn\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Notes\"}]}]},{\"id\":\"f_pn7uAixEPo\",\"tag\":\"dialog\",\"name\":\"Rest dialog\",\"children\":[{\"id\":\"f_PE8zXGMh5Z\",\"tag\":\"div\",\"name\":\"Dialog head\",\"children\":[{\"id\":\"t_2FPV88KlCK\",\"tag\":\"h2\",\"name\":\"Heading\",\"text\":\"Take a rest\"},{\"id\":\"t_aUzjVobNBZ\",\"tag\":\"p\",\"name\":\"Body\",\"text\":\"A short rest spends hit dice to heal and recharges Wild Shap…\"}]},{\"id\":\"f_yWF23RRQPP\",\"tag\":\"label\",\"name\":\"Hit dice field\",\"children\":[{\"id\":\"t_UmG0G5kpwR\",\"tag\":\"span\",\"name\":\"Label\",\"text\":\"Hit dice to spend (5d8 left)\"},{\"id\":\"f_SciKA2X8pk\",\"tag\":\"select\",\"name\":\"Hit dice\",\"children\":[{\"id\":\"t_mQCdgpgICS\",\"tag\":\"option\",\"name\":\"Text\",\"text\":\"1 die (1d8 + 2)\"},{\"id\":\"t_UAxCUHfQqH\",\"tag\":\"option\",\"name\":\"Text\",\"text\":\"2 dice (2d8 + 4)\"},{\"id\":\"t_CV5JbYfb1u\",\"tag\":\"option\",\"name\":\"Text\",\"text\":\"3 dice (3d8 + 6)\"},{\"id\":\"t_1kkVgR2fhN\",\"tag\":\"option\",\"name\":\"Text\",\"text\":\"4 dice (4d8 + 8)\"},{\"id\":\"t_3a4mXedkpE\",\"tag\":\"option\",\"name\":\"Text\",\"text\":\"5 dice (5d8 + 10)\"}]}]},{\"id\":\"f_kGM7gBlWUr\",\"tag\":\"div\",\"name\":\"Actions\",\"children\":[{\"id\":\"t_iKrMgfi52Y\",\"tag\":\"button\",\"text\":\"Cancel\"},{\"id\":\"t_0GQz43xiIe\",\"tag\":\"button\",\"text\":\"Long rest\"},{\"id\":\"t_cBVjtBmlA4\",\"tag\":\"button\",\"text\":\"Short rest\"}]}]}]},{\"id\":\"f_0iCENCq0NV\",\"tag\":\"div\",\"name\":\"Artboard 5\",\"frame\":{\"x\":1500,\"y\":-771,\"width\":650,\"heightMode\":\"hug\"},\"children\":[{\"id\":\"f_3Gy2dojlEH\",\"tag\":\"ul\",\"name\":\"Prompt list\",\"children\":[{\"id\":\"f_kTTudXYd1H\",\"tag\":\"li\",\"name\":\"Banking\",\"children\":[{\"id\":\"t_q27A7S9llT\",\"tag\":\"h3\",\"text\":\"Banking\"},{\"id\":\"f_XFR8CRt3N5\",\"tag\":\"ol\",\"name\":\"Banking prompts\",\"children\":[{\"id\":\"t_Fsr9hz4mqp\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"design a banking app home screen for mobile\\\"\"},{\"id\":\"t_ChyiWPQKdf\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"a dark-mode card spending screen for a premium credit card …\"},{\"id\":\"t_UDeK0Rs70O\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"mobile money transfer flow: pick a contact, enter an amount…\"}]}]},{\"id\":\"f_1kaj7wdlUh\",\"tag\":\"li\",\"name\":\"Fitness\",\"children\":[{\"id\":\"t_cLXvWQbj0s\",\"tag\":\"h3\",\"text\":\"Fitness\"},{\"id\":\"f_0vZRNkQf6e\",\"tag\":\"ol\",\"name\":\"Fitness prompts\",\"children\":[{\"id\":\"t_FrGXbGS1Gp\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"design a fitness app daily summary screen for mobile\\\"\"},{\"id\":\"t_VyedvWVTtH\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"a marathon training week view for a running app, with a lig…\"},{\"id\":\"t_e0rxCL3C5d\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"mobile workout logger: today's sets with a rest timer popov…\"}]}]},{\"id\":\"f_cIR14EdPjB\",\"tag\":\"li\",\"name\":\"D&D\",\"children\":[{\"id\":\"t_fbpsM3v6Ep\",\"tag\":\"h3\",\"text\":\"D&D\"},{\"id\":\"f_a7XqU5IFyI\",\"tag\":\"ol\",\"name\":\"D&D prompts\",\"children\":[{\"id\":\"t_G3K5qPCAoU\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"create a D&D style character sheet for mobile\\\"\"},{\"id\":\"t_OLlmXAWysb\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"a spellbook screen for a D&D wizard, mobile, filterable by …\"},{\"id\":\"t_JnpLQZBeJd\",\"tag\":\"li\",\"name\":\"Text\",\"text\":\"\\\"a D&D combat tracker for the DM: initiative order, HP, cond…\"}]}]}]}]},{\"id\":\"f_JxNr7kFQzK\",\"tag\":\"main\",\"name\":\"DM — Combat tracker\",\"frame\":{\"x\":4200,\"y\":0,\"width\":440,\"heightMode\":\"hug\"},\"theme\":\"torchlight-dark\",\"children\":[{\"id\":\"f_3qTNlPjBYt\",\"tag\":\"header\",\"name\":\"Encounter bar\",\"children\":[{\"id\":\"f_0NdiQbhmod\",\"tag\":\"div\",\"name\":\"Encounter title\",\"children\":[{\"id\":\"t_C06EG1EF32\",\"tag\":\"h1\",\"name\":\"Text\",\"text\":\"Ambush on the Triboar Trail\"},{\"id\":\"t_gtNYRkw8p6\",\"tag\":\"p\",\"name\":\"Encounter meta\",\"text\":\"4 players and 5 monsters, 2 down\"}]},{\"id\":\"f_ImR74pIfXY\",\"tag\":\"div\",\"name\":\"Round counter\",\"children\":[{\"id\":\"t_wbD6Ym3wF1\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Round\"},{\"id\":\"t_lNz0xA1OeC\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"3\"},{\"id\":\"t_48TRZf10FZ\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"1 min 12 s in game\"}]},{\"id\":\"f_YgvvCWELqi\",\"tag\":\"div\",\"name\":\"Turn controls\",\"children\":[{\"id\":\"f_vOP84befRq\",\"tag\":\"button\",\"name\":\"Previous turn\",\"children\":[{\"id\":\"t_HRO5ItGXRi\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"undo\"}]},{\"id\":\"f_QW8vpfYtzL\",\"tag\":\"button\",\"name\":\"Add monster button\",\"children\":[{\"id\":\"t_FYGcfRfj6i\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"add\"},{\"id\":\"t_IzDBXv9mn5\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Add monster\"}]},{\"id\":\"f_OcXuewO8kL\",\"tag\":\"button\",\"name\":\"Next turn button\",\"children\":[{\"id\":\"t_CcU72gEk8U\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Next turn\"},{\"id\":\"t_fsj0Ag9DtL\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"arrow_forward\"}]}]}]},{\"id\":\"f_xmgopK7Uim\",\"tag\":\"div\",\"name\":\"Workspace\",\"children\":[{\"id\":\"f_qTwzAK1LEm\",\"tag\":\"section\",\"name\":\"Initiative\",\"children\":[{\"id\":\"f_uZyBzG7aGJ\",\"tag\":\"div\",\"name\":\"Column labels\",\"children\":[{\"id\":\"t_HZNLT35E4F\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Init\"},{\"id\":\"t_aVK3rt5Nvk\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Combatant\"},{\"id\":\"t_360VZ7R31Y\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Hit points\"},{\"id\":\"t_gZE1sCLkRj\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Conditions\"}]},{\"id\":\"f_Su8RaG9YtI\",\"tag\":\"ol\",\"name\":\"Initiative order\",\"children\":[{\"id\":\"f_iCxDTPEu7Z\",\"tag\":\"li\",\"name\":\"Vex\",\"component\":true,\"children\":[{\"id\":\"t_vDKwCR8sa5\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"21\",\"bind\":{\"text\":\"initiative\"}},{\"id\":\"f_k3vHld19IU\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_53LQJL4Cvw\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Vex\",\"bind\":{\"text\":\"name\"}},{\"id\":\"f_UuF2MpZ8uK\",\"tag\":\"span\",\"name\":\"Meta\",\"children\":[{\"id\":\"t_DQ3jsZ6d3f\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Rogue 5, played by Sam\",\"bind\":{\"text\":\"meta1\"}},{\"id\":\"t_y284W8JJ2b\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"AC 15\",\"bind\":{\"text\":\"meta2\"}}]}]},{\"id\":\"f_RLITe0tLJg\",\"tag\":\"div\",\"name\":\"HP\",\"children\":[{\"id\":\"f_Xg2hi6SqiO\",\"tag\":\"p\",\"name\":\"HP value\",\"children\":[{\"id\":\"t_14NhKBat1y\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"27\",\"bind\":{\"text\":\"hpCurrent\"}},{\"id\":\"t_cJamBoP1Yd\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"/ 31\",\"bind\":{\"text\":\"hpMax\"}},{\"id\":\"t_HyBG63dfdi\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"\",\"bind\":{\"text\":\"hpExtra\"}}]},{\"id\":\"f_e8xnYwfid0\",\"tag\":\"div\",\"name\":\"HP bar\",\"children\":[{\"id\":\"f_xtQkZc933e\",\"tag\":\"div\",\"name\":\"Fill\"}]}]},{\"id\":\"f_gK01HAtIQq\",\"tag\":\"div\",\"name\":\"Conditions\"},{\"id\":\"f_7Y3wmLmbVA\",\"tag\":\"button\",\"name\":\"Options\",\"bind\":{\"attributes\":{\"aria-label\":\"optionsLabel\"}},\"children\":[{\"id\":\"t_HCstuFtuRC\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"more_vert\"}]}]},{\"id\":\"f_Ej01J4bl3t\",\"tag\":\"li\",\"name\":\"Goblin Boss (current turn)\",\"instance\":{\"component\":\"f_iCxDTPEu7Z\",\"props\":{\"optionsLabel\":\"Options for Goblin Boss\",\"initiative\":\"18\",\"meta1\":\"Monster, CR 1\",\"meta2\":\"AC 17\",\"hpCurrent\":\"9\",\"hpMax\":\"/ 21\",\"hpExtra\":\"Bloodied\",\"name\":\"Goblin Boss\"}}},{\"id\":\"f_sW0i578MCh\",\"tag\":\"li\",\"name\":\"Brother Aldric\",\"instance\":{\"component\":\"f_iCxDTPEu7Z\",\"props\":{\"optionsLabel\":\"Options for Brother Aldric\",\"initiative\":\"16\",\"name\":\"Brother Aldric\",\"meta1\":\"Cleric 5, played by Priya\",\"meta2\":\"AC 18\",\"hpCurrent\":\"18\",\"hpMax\":\"/ 24\",\"hpExtra\":\"+5 temp\"}}},{\"id\":\"f_NEJN0gtUab\",\"tag\":\"li\",\"name\":\"Goblin A\",\"instance\":{\"component\":\"f_iCxDTPEu7Z\",\"props\":{\"optionsLabel\":\"Options for Goblin A\",\"initiative\":\"14\",\"name\":\"Goblin A\",\"meta1\":\"Monster, CR 1/4\",\"hpCurrent\":\"7\",\"hpMax\":\"/ 7\",\"hpExtra\":\"\",\"meta2\":\"AC 15\"}}},{\"id\":\"f_LAvCF6HNKv\",\"tag\":\"li\",\"name\":\"Goblin B (defeated)\",\"children\":[{\"id\":\"t_MwpClOKUoo\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"14\"},{\"id\":\"f_L6ve3QEvBe\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_hfj0XSGtjM\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Goblin B\"},{\"id\":\"t_eOe7b6PWmg\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Monster, CR 1/4\"}]},{\"id\":\"t_Ll0CmNKMwJ\",\"tag\":\"p\",\"name\":\"HP\",\"text\":\"0 / 7\"},{\"id\":\"f_6fh2E7rCMp\",\"tag\":\"div\",\"name\":\"Conditions\",\"children\":[{\"id\":\"t_gy9fpctCtb\",\"tag\":\"span\",\"name\":\"Condition\",\"text\":\"Defeated, round 2\"}]},{\"id\":\"f_VxNp1EgNl2\",\"tag\":\"button\",\"name\":\"Remove\",\"children\":[{\"id\":\"t_5rq5Q0zMD6\",\"tag\":\"span\",\"name\":\"Icon\",\"text\":\"close\"}]}]},{\"id\":\"f_dRKNVrukIe\",\"tag\":\"li\",\"name\":\"Thora (dying)\",\"children\":[{\"id\":\"t_tmf6dJJlPh\",\"tag\":\"span\",\"name\":\"Initiative\",\"text\":\"12\"},{\"id\":\"f_EyLGt6Tvgs\",\"tag\":\"div\",\"name\":\"Identity\",\"children\":[{\"id\":\"t_XM040z0XJu\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Thora\"},{\"id\":\"f_DSSwZthLlF\",\"tag\":\"span\",\"name\":\"Meta\",\"children\":[{\"id\":\"t_BUn7e5y4Gt\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Fighter 5, played by Dee\"},{\"id\":\"t_OmqPZ5Omqs\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"AC 18\"}]}]},{\"id\":\"f_qL0T3fq36W\",\"tag\":\"div\",\"name\":\"Death saves\",\"children\":[{\"id\":\"t_0TQcBSIEMY\",\"tag\":\"span\",\"name\":\"Text\",\"text\":\"Saves\"},{\"id\"\n[Cut off: 108565 characters, showing the first 39322. Don't repeat this call or raise maxDepth. Pass rootId to read one part, or detail \"outline\" to find ids.]"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "list_tokens",
+      "arguments": {
+       "group": "color"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "list_tokens",
+   "content": "{\n  \"tokens\": [\n    {\n      \"name\": \"color.primary\",\n      \"use\": \"var(--color-primary)\",\n      \"type\": \"color\",\n      \"value\": \"#4b5c92\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-primary\",\n      \"use\": \"var(--color-on-primary)\",\n      \"type\": \"color\",\n      \"value\": \"#ffffff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.primary-container\",\n      \"use\": \"var(--color-primary-container)\",\n      \"type\": \"color\",\n      \"value\": \"#dbe1ff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-primary-container\",\n      \"use\": \"var(--color-on-primary-container)\",\n      \"type\": \"color\",\n      \"value\": \"#324478\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.secondary\",\n      \"use\": \"var(--color-secondary)\",\n      \"type\": \"color\",\n      \"value\": \"#595e72\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-secondary\",\n      \"use\": \"var(--color-on-secondary)\",\n      \"type\": \"color\",\n      \"value\": \"#ffffff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.secondary-container\",\n      \"use\": \"var(--color-secondary-container)\",\n      \"type\": \"color\",\n      \"value\": \"#dde1f9\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-secondary-container\",\n      \"use\": \"var(--color-on-secondary-container)\",\n      \"type\": \"color\",\n      \"value\": \"#414659\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.tertiary\",\n      \"use\": \"var(--color-tertiary)\",\n      \"type\": \"color\",\n      \"value\": \"#745470\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-tertiary\",\n      \"use\": \"var(--color-on-tertiary)\",\n      \"type\": \"color\",\n      \"value\": \"#ffffff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.tertiary-container\",\n      \"use\": \"var(--color-tertiary-container)\",\n      \"type\": \"color\",\n      \"value\": \"#ffd6f8\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-tertiary-container\",\n      \"use\": \"var(--color-on-tertiary-container)\",\n      \"type\": \"color\",\n      \"value\": \"#5a3d58\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.error\",\n      \"use\": \"var(--color-error)\",\n      \"type\": \"color\",\n      \"value\": \"#ba1a1a\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-error\",\n      \"use\": \"var(--color-on-error)\",\n      \"type\": \"color\",\n      \"value\": \"#ffffff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.error-container\",\n      \"use\": \"var(--color-error-container)\",\n      \"type\": \"color\",\n      \"value\": \"#ffdad6\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-error-container\",\n      \"use\": \"var(--color-on-error-container)\",\n      \"type\": \"color\",\n      \"value\": \"#93000a\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface\",\n      \"use\": \"var(--color-surface)\",\n      \"type\": \"color\",\n      \"value\": \"#faf8ff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-surface\",\n      \"use\": \"var(--color-on-surface)\",\n      \"type\": \"color\",\n      \"value\": \"#1a1b21\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-surface-variant\",\n      \"use\": \"var(--color-on-surface-variant)\",\n      \"type\": \"color\",\n      \"value\": \"#45464f\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-dim\",\n      \"use\": \"var(--color-surface-dim)\",\n      \"type\": \"color\",\n      \"value\": \"#dad9e0\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-bright\",\n      \"use\": \"var(--color-surface-bright)\",\n      \"type\": \"color\",\n      \"value\": \"#faf8ff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-container-lowest\",\n      \"use\": \"var(--color-surface-container-lowest)\",\n      \"type\": \"color\",\n      \"value\": \"#ffffff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-container-low\",\n      \"use\": \"var(--color-surface-container-low)\",\n      \"type\": \"color\",\n      \"value\": \"#f4f3fa\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-container\",\n      \"use\": \"var(--color-surface-container)\",\n      \"type\": \"color\",\n      \"value\": \"#eeedf4\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-container-high\",\n      \"use\": \"var(--color-surface-container-high)\",\n      \"type\": \"color\",\n      \"value\": \"#e8e7ef\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-container-highest\",\n      \"use\": \"var(--color-surface-container-highest)\",\n      \"type\": \"color\",\n      \"value\": \"#e3e2e9\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-variant\",\n      \"use\": \"var(--color-surface-variant)\",\n      \"type\": \"color\",\n      \"value\": \"#e2e2ec\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.background\",\n      \"use\": \"var(--color-background)\",\n      \"type\": \"color\",\n      \"value\": \"#faf8ff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-background\",\n      \"use\": \"var(--color-on-background)\",\n      \"type\": \"color\",\n      \"value\": \"#1a1b21\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.outline\",\n      \"use\": \"var(--color-outline)\",\n      \"type\": \"color\",\n      \"value\": \"#757680\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.outline-variant\",\n      \"use\": \"var(--color-outline-variant)\",\n      \"type\": \"color\",\n      \"value\": \"#c5c6d0\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.inverse-surface\",\n      \"use\": \"var(--color-inverse-surface)\",\n      \"type\": \"color\",\n      \"value\": \"#2f3036\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.inverse-on-surface\",\n      \"use\": \"var(--color-inverse-on-surface)\",\n      \"type\": \"color\",\n      \"value\": \"#f1f0f7\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.inverse-primary\",\n      \"use\": \"var(--color-inverse-primary)\",\n      \"type\": \"color\",\n      \"value\": \"#b4c5ff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.surface-tint\",\n      \"use\": \"var(--color-surface-tint)\",\n      \"type\": \"color\",\n      \"value\": \"#4b5c92\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.shadow\",\n      \"use\": \"var(--color-shadow)\",\n      \"type\": \"color\",\n      \"value\": \"#000000\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.scrim\",\n      \"use\": \"var(--color-scrim)\",\n      \"type\": \"color\",\n      \"value\": \"#000000\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.primary-fixed\",\n      \"use\": \"var(--color-primary-fixed)\",\n      \"type\": \"color\",\n      \"value\": \"#dbe1ff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.primary-fixed-dim\",\n      \"use\": \"var(--color-primary-fixed-dim)\",\n      \"type\": \"color\",\n      \"value\": \"#b4c5ff\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-primary-fixed\",\n      \"use\": \"var(--color-on-primary-fixed)\",\n      \"type\": \"color\",\n      \"value\": \"#00174b\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-primary-fixed-variant\",\n      \"use\": \"var(--color-on-primary-fixed-variant)\",\n      \"type\": \"color\",\n      \"value\": \"#324478\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.secondary-fixed\",\n      \"use\": \"var(--color-secondary-fixed)\",\n      \"type\": \"color\",\n      \"value\": \"#dde1f9\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.secondary-fixed-dim\",\n      \"use\": \"var(--color-secondary-fixed-dim)\",\n      \"type\": \"color\",\n      \"value\": \"#c1c5dd\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-secondary-fixed\",\n      \"use\": \"var(--color-on-secondary-fixed)\",\n      \"type\": \"color\",\n      \"value\": \"#161b2c\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-secondary-fixed-variant\",\n      \"use\": \"var(--color-on-secondary-fixed-variant)\",\n      \"type\": \"color\",\n      \"value\": \"#414659\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.tertiary-fixed\",\n      \"use\": \"var(--color-tertiary-fixed)\",\n      \"type\": \"color\",\n      \"value\": \"#ffd6f8\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.tertiary-fixed-dim\",\n      \"use\": \"var(--color-tertiary-fixed-dim)\",\n      \"type\": \"color\",\n      \"value\": \"#e2bbdb\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-tertiary-fixed\",\n      \"use\": \"var(--color-on-tertiary-fixed)\",\n      \"type\": \"color\",\n      \"value\": \"#2b122b\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.on-tertiary-fixed-variant\",\n      \"use\": \"var(--color-on-tertiary-fixed-variant)\",\n      \"type\": \"color\",\n      \"value\": \"#5a3d58\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.ring-exercise\",\n      \"use\": \"var(--color-ring-exercise)\",\n      \"type\": \"color\",\n      \"value\": \"#a6ff00\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.ring-move\",\n      \"use\": \"var(--color-ring-move)\",\n      \"type\": \"color\",\n      \"value\": \"#fa114f\",\n      \"document\": true\n    },\n    {\n      \"name\": \"color.ring-stand\",\n      \"use\": \"var(--color-ring-stand)\",\n      \"type\": \"color\",\n      \"value\": \"#00d8ff\",\n      \"document\": true\n    }\n  ],\n  \"themes\": {\n    \"dark\": {\n      \"color.primary\": \"#b4c5ff\",\n      \"color.on-primary\": \"#1a2d60\",\n      \"color.primary-container\": \"#324478\",\n      \"color.on-primary-container\": \"#dbe1ff\",\n      \"color.secondary\": \"#c1c5dd\",\n      \"color.on-secondary\": \"#2b3042\",\n      \"color.secondary-container\": \"#414659\",\n      \"color.on-secondary-container\": \"#dde1f9\",\n      \"color.tertiary\": \"#e2bbdb\",\n      \"color.on-tertiary\": \"#422741\",\n      \"color.tertiary-container\": \"#5a3d58\",\n      \"color.on-tertiary-container\": \"#ffd6f8\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#121318\",\n      \"color.on-surface\": \"#e3e2e9\",\n      \"color.on-surface-variant\": \"#c5c6d0\",\n      \"color.surface-dim\": \"#121318\",\n      \"color.surface-bright\": \"#38393f\",\n      \"color.surface-container-lowest\": \"#0d0e13\",\n      \"color.surface-container-low\": \"#1a1b21\",\n      \"color.surface-container\": \"#1e1f25\",\n      \"color.surface-container-high\": \"#292a2f\",\n      \"color.surface-container-highest\": \"#34343a\",\n      \"color.surface-variant\": \"#45464f\",\n      \"color.background\": \"#121318\",\n      \"color.on-background\": \"#e3e2e9\",\n      \"color.outline\": \"#8f909a\",\n      \"color.outline-variant\": \"#45464f\",\n      \"color.inverse-surface\": \"#e3e2e9\",\n      \"color.inverse-on-surface\": \"#2f3036\",\n      \"color.inverse-primary\": \"#4b5c92\",\n      \"color.surface-tint\": \"#b4c5ff\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#dbe1ff\",\n      \"color.primary-fixed-dim\": \"#b4c5ff\",\n      \"color.on-primary-fixed\": \"#00174b\",\n      \"color.on-primary-fixed-variant\": \"#324478\",\n      \"color.secondary-fixed\": \"#dde1f9\",\n      \"color.secondary-fixed-dim\": \"#c1c5dd\",\n      \"color.on-secondary-fixed\": \"#161b2c\",\n      \"color.on-secondary-fixed-variant\": \"#414659\",\n      \"color.tertiary-fixed\": \"#ffd6f8\",\n      \"color.tertiary-fixed-dim\": \"#e2bbdb\",\n      \"color.on-tertiary-fixed\": \"#2b122b\",\n      \"color.on-tertiary-fixed-variant\": \"#5a3d58\"\n    },\n    \"bubblegum\": {\n      \"color.primary\": \"#854b71\",\n      \"color.on-primary\": \"#ffffff\",\n      \"color.primary-container\": \"#ffd8ec\",\n      \"color.on-primary-container\": \"#6a3458\",\n      \"color.secondary\": \"#705765\",\n      \"color.on-secondary\": \"#ffffff\",\n      \"color.secondary-container\": \"#fbd9ea\",\n      \"color.on-secondary-container\": \"#57404d\",\n      \"color.tertiary\": \"#80543e\",\n      \"color.on-tertiary\": \"#ffffff\",\n      \"color.tertiary-container\": \"#ffdbcc\",\n      \"color.on-tertiary-container\": \"#653d29\",\n      \"color.error\": \"#ba1a1a\",\n      \"color.on-error\": \"#ffffff\",\n      \"color.error-container\": \"#ffdad6\",\n      \"color.on-error-container\": \"#93000a\",\n      \"color.surface\": \"#fff8f9\",\n      \"color.on-surface\": \"#211a1d\",\n      \"color.on-surface-variant\": \"#4f4449\",\n      \"color.surface-dim\": \"#e4d6dc\",\n      \"color.surface-bright\": \"#fff8f9\",\n      \"color.surface-container-lowest\": \"#ffffff\",\n      \"color.surface-container-low\": \"#fef0f5\",\n      \"color.surface-container\": \"#f9eaef\",\n      \"color.surface-container-high\": \"#f3e5ea\",\n      \"color.surface-container-highest\": \"#eddfe4\",\n      \"color.surface-variant\": \"#f0dee5\",\n      \"color.background\": \"#fff8f9\",\n      \"color.on-background\": \"#211a1d\",\n      \"color.outline\": \"#81737a\",\n      \"color.outline-variant\": \"#d3c2c9\",\n      \"color.inverse-surface\": \"#362e32\",\n      \"color.inverse-on-surface\": \"#fbedf2\",\n      \"color.inverse-primary\": \"#f9b1dc\",\n      \"color.surface-tint\": \"#854b71\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#ffd8ec\",\n      \"color.primary-fixed-dim\": \"#f9b1dc\",\n      \"color.on-primary-fixed\": \"#37072a\",\n      \"color.on-primary-fixed-variant\": \"#6a3458\",\n      \"color.secondary-fixed\": \"#fbd9ea\",\n      \"color.secondary-fixed-dim\": \"#debece\",\n      \"color.on-secondary-fixed\": \"#281621\",\n      \"color.on-secondary-fixed-variant\": \"#57404d\",\n      \"color.tertiary-fixed\": \"#ffdbcc\",\n      \"color.tertiary-fixed-dim\": \"#f4ba9f\",\n      \"color.on-tertiary-fixed\": \"#311303\",\n      \"color.on-tertiary-fixed-variant\": \"#653d29\"\n    },\n    \"bubblegum-dark\": {\n      \"color.primary\": \"#f9b1dc\",\n      \"color.on-primary\": \"#501e41\",\n      \"color.primary-container\": \"#6a3458\",\n      \"color.on-primary-container\": \"#ffd8ec\",\n      \"color.secondary\": \"#debece\",\n      \"color.on-secondary\": \"#3f2a37\",\n      \"color.secondary-container\": \"#57404d\",\n      \"color.on-secondary-container\": \"#fbd9ea\",\n      \"color.tertiary\": \"#f4ba9f\",\n      \"color.on-tertiary\": \"#4b2714\",\n      \"color.tertiary-container\": \"#653d29\",\n      \"color.on-tertiary-container\": \"#ffdbcc\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#181115\",\n      \"color.on-surface\": \"#eddfe4\",\n      \"color.on-surface-variant\": \"#d3c2c9\",\n      \"color.surface-dim\": \"#181115\",\n      \"color.surface-bright\": \"#3f373b\",\n      \"color.surface-container-lowest\": \"#130c10\",\n      \"color.surface-container-low\": \"#211a1d\",\n      \"color.surface-container\": \"#251e21\",\n      \"color.surface-container-high\": \"#30282c\",\n      \"color.surface-container-highest\": \"#3b3237\",\n      \"color.surface-variant\": \"#4f4449\",\n      \"color.background\": \"#181115\",\n      \"color.on-background\": \"#eddfe4\",\n      \"color.outline\": \"#9c8d93\",\n      \"color.outline-variant\": \"#4f4449\",\n      \"color.inverse-surface\": \"#eddfe4\",\n      \"color.inverse-on-surface\": \"#362e32\",\n      \"color.inverse-primary\": \"#854b71\",\n      \"color.surface-tint\": \"#f9b1dc\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#ffd8ec\",\n      \"color.primary-fixed-dim\": \"#f9b1dc\",\n      \"color.on-primary-fixed\": \"#37072a\",\n      \"color.on-primary-fixed-variant\": \"#6a3458\",\n      \"color.secondary-fixed\": \"#fbd9ea\",\n      \"color.secondary-fixed-dim\": \"#debece\",\n      \"color.on-secondary-fixed\": \"#281621\",\n      \"color.on-secondary-fixed-variant\": \"#57404d\",\n      \"color.tertiary-fixed\": \"#ffdbcc\",\n      \"color.tertiary-fixed-dim\": \"#f4ba9f\",\n      \"color.on-tertiary-fixed\": \"#311303\",\n      \"color.on-tertiary-fixed-variant\": \"#653d29\"\n    },\n    \"cinder\": {\n      \"color.primary\": \"#904a46\",\n      \"color.on-primary\": \"#ffffff\",\n      \"color.primary-container\": \"#ffdad7\",\n      \"color.on-primary-container\": \"#733330\",\n      \"color.secondary\": \"#775654\",\n      \"color.on-secondary\": \"#ffffff\",\n      \"color.secondary-container\": \"#ffdad7\",\n      \"color.on-secondary-container\": \"#5d3f3d\",\n      \"color.tertiary\": \"#735b2e\",\n      \"color.on-tertiary\": \"#ffffff\",\n      \"color.tertiary-container\": \"#ffdea7\",\n      \"color.on-tertiary-container\": \"#594319\",\n      \"color.error\": \"#ba1a1a\",\n      \"color.on-error\": \"#ffffff\",\n      \"color.error-container\": \"#ffdad6\",\n      \"color.on-error-container\": \"#93000a\",\n      \"color.surface\": \"#fff8f7\",\n      \"color.on-surface\": \"#231919\",\n      \"color.on-surface-variant\": \"#534342\",\n      \"color.surface-dim\": \"#e8d6d4\",\n      \"color.surface-bright\": \"#fff8f7\",\n      \"color.surface-container-lowest\": \"#ffffff\",\n      \"color.surface-container-low\": \"#fff0ef\",\n      \"color.surface-container\": \"#fceae8\",\n      \"color.surface-container-high\": \"#f6e4e2\",\n      \"color.surface-container-highest\": \"#f1dedd\",\n      \"color.surface-variant\": \"#f5dddb\",\n      \"color.background\": \"#fff8f7\",\n      \"color.on-background\": \"#231919\",\n      \"color.outline\": \"#857371\",\n      \"color.outline-variant\": \"#d8c2c0\",\n      \"color.inverse-surface\": \"#382e2d\",\n      \"color.inverse-on-surface\": \"#ffedeb\",\n      \"color.inverse-primary\": \"#ffb3ae\",\n      \"color.surface-tint\": \"#904a46\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#ffdad7\",\n      \"color.primary-fixed-dim\": \"#ffb3ae\",\n      \"color.on-primary-fixed\": \"#3b0809\",\n      \"color.on-primary-fixed-variant\": \"#733330\",\n      \"color.secondary-fixed\": \"#ffdad7\",\n      \"color.secondary-fixed-dim\": \"#e7bdb9\",\n      \"color.on-secondary-fixed\": \"#2c1514\",\n      \"color.on-secondary-fixed-variant\": \"#5d3f3d\",\n      \"color.tertiary-fixed\": \"#ffdea7\",\n      \"color.tertiary-fixed-dim\": \"#e2c28c\",\n      \"color.on-tertiary-fixed\": \"#271900\",\n      \"color.on-tertiary-fixed-variant\": \"#594319\"\n    },\n    \"cinder-dark\": {\n      \"color.primary\": \"#ffb3ae\",\n      \"color.on-primary\": \"#571d1c\",\n      \"color.primary-container\": \"#733330\",\n      \"color.on-primary-container\": \"#ffdad7\",\n      \"color.secondary\": \"#e7bdb9\",\n      \"color.on-secondary\": \"#442928\",\n      \"color.secondary-container\": \"#5d3f3d\",\n      \"color.on-secondary-container\": \"#ffdad7\",\n      \"color.tertiary\": \"#e2c28c\",\n      \"color.on-tertiary\": \"#402d04\",\n      \"color.tertiary-container\": \"#594319\",\n      \"color.on-tertiary-container\": \"#ffdea7\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#1a1111\",\n      \"color.on-surface\": \"#f1dedd\",\n      \"color.on-surface-variant\": \"#d8c2c0\",\n      \"color.surface-dim\": \"#1a1111\",\n      \"color.surface-bright\": \"#423736\",\n      \"color.surface-container-lowest\": \"#140c0c\",\n      \"color.surface-container-low\": \"#231919\",\n      \"color.surface-container\": \"#271d1d\",\n      \"color.surface-container-high\": \"#322827\",\n      \"color.surface-container-highest\": \"#3d3231\",\n      \"color.surface-variant\": \"#534342\",\n      \"color.background\": \"#1a1111\",\n      \"color.on-background\": \"#f1dedd\",\n      \"color.outline\": \"#a08c8b\",\n      \"color.outline-variant\": \"#534342\",\n      \"color.inverse-surface\": \"#f1dedd\",\n      \"color.inverse-on-surface\": \"#382e2d\",\n      \"color.inverse-primary\": \"#904a46\",\n      \"color.surface-tint\": \"#ffb3ae\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#ffdad7\",\n      \"color.primary-fixed-dim\": \"#ffb3ae\",\n      \"color.on-primary-fixed\": \"#3b0809\",\n      \"color.on-primary-fixed-variant\": \"#733330\",\n      \"color.secondary-fixed\": \"#ffdad7\",\n      \"color.secondary-fixed-dim\": \"#e7bdb9\",\n      \"color.on-secondary-fixed\": \"#2c1514\",\n      \"color.on-secondary-fixed-variant\": \"#5d3f3d\",\n      \"color.tertiary-fixed\": \"#ffdea7\",\n      \"color.tertiary-fixed-dim\": \"#e2c28c\",\n      \"color.on-tertiary-fixed\": \"#271900\",\n      \"color.on-tertiary-fixed-variant\": \"#594319\"\n    },\n    \"grimoire\": {\n      \"color.primary\": \"#1f3a8a\",\n      \"color.on-primary\": \"#ffffff\",\n      \"color.primary-container\": \"#dbe3ff\",\n      \"color.on-primary-container\": \"#12245c\",\n      \"color.secondary\": \"#5d5e67\",\n      \"color.on-secondary\": \"#ffffff\",\n      \"color.secondary-container\": \"#e2e1ec\",\n      \"color.on-secondary-container\": \"#45464f\",\n      \"color.tertiary\": \"#a3291c\",\n      \"color.on-tertiary\": \"#ffffff\",\n      \"color.tertiary-container\": \"#ffdad4\",\n      \"color.on-tertiary-container\": \"#7a1810\",\n      \"color.error\": \"#ba1a1a\",\n      \"color.on-error\": \"#ffffff\",\n      \"color.error-container\": \"#ffdad6\",\n      \"color.on-error-container\": \"#93000a\",\n      \"color.surface\": \"#fcf8fa\",\n      \"color.on-surface\": \"#1c1b1d\",\n      \"color.on-surface-variant\": \"#474648\",\n      \"color.surface-dim\": \"#dcd9db\",\n      \"color.surface-bright\": \"#fcf8fa\",\n      \"color.surface-container-lowest\": \"#ffffff\",\n      \"color.surface-container-low\": \"#f6f3f4\",\n      \"color.surface-container\": \"#f0edef\",\n      \"color.surface-container-high\": \"#eae7e9\",\n      \"color.surface-container-highest\": \"#e5e2e3\",\n      \"color.surface-variant\": \"#e5e2e3\",\n      \"color.background\": \"#fcf8fa\",\n      \"color.on-background\": \"#1c1b1d\",\n      \"color.outline\": \"#787678\",\n      \"color.outline-variant\": \"#c8c6c7\",\n      \"color.inverse-surface\": \"#313032\",\n      \"color.inverse-on-surface\": \"#f3f0f1\",\n      \"color.inverse-primary\": \"#c4c5d6\",\n      \"color.surface-tint\": \"#5b5e6c\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#e0e1f3\",\n      \"color.primary-fixed-dim\": \"#c4c5d6\",\n      \"color.on-primary-fixed\": \"#181b27\",\n      \"color.on-primary-fixed-variant\": \"#434654\",\n      \"color.secondary-fixed\": \"#e2e1ec\",\n      \"color.secondary-fixed-dim\": \"#c6c6d0\",\n      \"color.on-secondary-fixed\": \"#1a1b23\",\n      \"color.on-secondary-fixed-variant\": \"#45464f\",\n      \"color.tertiary-fixed\": \"#dee1f9\",\n      \"color.tertiary-fixed-dim\": \"#c2c5dd\",\n      \"color.on-tertiary-fixed\": \"#161b2c\",\n      \"color.on-tertiary-fixed-variant\": \"#424659\"\n    },\n    \"grimoire-dark\": {\n      \"color.primary\": \"#b4c5ff\",\n      \"color.on-primary\": \"#0d2470\",\n      \"color.primary-container\": \"#2a3f8f\",\n      \"color.on-primary-container\": \"#dbe3ff\",\n      \"color.secondary\": \"#c6c6d0\",\n      \"color.on-secondary\": \"#2f3038\",\n      \"color.secondary-container\": \"#45464f\",\n      \"color.on-secondary-container\": \"#e2e1ec\",\n      \"color.tertiary\": \"#ffb4a8\",\n      \"color.on-tertiary\": \"#5f150c\",\n      \"color.tertiary-container\": \"#7a1f14\",\n      \"color.on-tertiary-container\": \"#ffdad4\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#131315\",\n      \"color.on-surface\": \"#e5e2e3\",\n      \"color.on-surface-variant\": \"#c8c6c7\",\n      \"color.surface-dim\": \"#131315\",\n      \"color.surface-bright\": \"#39393a\",\n      \"color.surface-container-lowest\": \"#0e0e0f\",\n      \"color.surface-container-low\": \"#1c1b1d\",\n      \"color.surface-container\": \"#201f21\",\n      \"color.surface-container-high\": \"#2a2a2b\",\n      \"color.surface-container-highest\": \"#353436\",\n      \"color.surface-variant\": \"#474648\",\n      \"color.background\": \"#131315\",\n      \"color.on-background\": \"#e5e2e3\",\n      \"color.outline\": \"#929092\",\n      \"color.outline-variant\": \"#474648\",\n      \"color.inverse-surface\": \"#e5e2e3\",\n      \"color.inverse-on-surface\": \"#313032\",\n      \"color.inverse-primary\": \"#5b5e6c\",\n      \"color.surface-tint\": \"#c4c5d6\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#e0e1f3\",\n      \"color.primary-fixed-dim\": \"#c4c5d6\",\n      \"color.on-primary-fixed\": \"#181b27\",\n      \"color.on-primary-fixed-variant\": \"#434654\",\n      \"color.secondary-fixed\": \"#e2e1ec\",\n      \"color.secondary-fixed-dim\": \"#c6c6d0\",\n      \"color.on-secondary-fixed\": \"#1a1b23\",\n      \"color.on-secondary-fixed-variant\": \"#45464f\",\n      \"color.tertiary-fixed\": \"#dee1f9\",\n      \"color.tertiary-fixed-dim\": \"#c2c5dd\",\n      \"color.on-tertiary-fixed\": \"#161b2c\",\n      \"color.on-tertiary-fixed-variant\": \"#424659\"\n    },\n    \"grove\": {\n      \"color.primary\": \"#3d6838\",\n      \"color.on-primary\": \"#ffffff\",\n      \"color.primary-container\": \"#bef0b2\",\n      \"color.on-primary-container\": \"#255023\",\n      \"color.secondary\": \"#53634e\",\n      \"color.on-secondary\": \"#ffffff\",\n      \"color.secondary-container\": \"#d6e8ce\",\n      \"color.on-secondary-container\": \"#3c4b38\",\n      \"color.tertiary\": \"#38656a\",\n      \"color.on-tertiary\": \"#ffffff\",\n      \"color.tertiary-container\": \"#bcebf0\",\n      \"color.on-tertiary-container\": \"#1e4d51\",\n      \"color.error\": \"#ba1a1a\",\n      \"color.on-error\": \"#ffffff\",\n      \"color.error-container\": \"#ffdad6\",\n      \"color.on-error-container\": \"#93000a\",\n      \"color.surface\": \"#f7fbf1\",\n      \"color.on-surface\": \"#191d17\",\n      \"color.on-surface-variant\": \"#42493f\",\n      \"color.surface-dim\": \"#d8dbd2\",\n      \"color.surface-bright\": \"#f7fbf1\",\n      \"color.surface-container-lowest\": \"#ffffff\",\n      \"color.surface-container-low\": \"#f2f5eb\",\n      \"color.surface-container\": \"#ecefe6\",\n      \"color.surface-container-high\": \"#e6e9e0\",\n      \"color.surface-container-highest\": \"#e0e4da\",\n      \"color.surface-variant\": \"#dee4d8\",\n      \"color.background\": \"#f7fbf1\",\n      \"color.on-background\": \"#191d17\",\n      \"color.outline\": \"#73796f\",\n      \"color.outline-variant\": \"#c2c8bc\",\n      \"color.inverse-surface\": \"#2d322b\",\n      \"color.inverse-on-surface\": \"#eff2e8\",\n      \"color.inverse-primary\": \"#a2d398\",\n      \"color.surface-tint\": \"#3d6838\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#bef0b2\",\n      \"color.primary-fixed-dim\": \"#a2d398\",\n      \"color.on-primary-fixed\": \"#002202\",\n      \"color.on-primary-fixed-variant\": \"#255023\",\n      \"color.secondary-fixed\": \"#d6e8ce\",\n      \"color.secondary-fixed-dim\": \"#baccb3\",\n      \"color.on-secondary-fixed\": \"#111f0f\",\n      \"color.on-secondary-fixed-variant\": \"#3c4b38\",\n      \"color.tertiary-fixed\": \"#bcebf0\",\n      \"color.tertiary-fixed-dim\": \"#a0cfd3\",\n      \"color.on-tertiary-fixed\": \"#002022\",\n      \"color.on-tertiary-fixed-variant\": \"#1e4d51\"\n    },\n    \"grove-dark\": {\n      \"color.primary\": \"#a2d398\",\n      \"color.on-primary\": \"#0d380e\",\n      \"color.primary-container\": \"#255023\",\n      \"color.on-primary-container\": \"#bef0b2\",\n      \"color.secondary\": \"#baccb3\",\n      \"color.on-secondary\": \"#263423\",\n      \"color.secondary-container\": \"#3c4b38\",\n      \"color.on-secondary-container\": \"#d6e8ce\",\n      \"color.tertiary\": \"#a0cfd3\",\n      \"color.on-tertiary\": \"#00363a\",\n      \"color.tertiary-container\": \"#1e4d51\",\n      \"color.on-tertiary-container\": \"#bcebf0\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#10140f\",\n      \"color.on-surface\": \"#e0e4da\",\n      \"color.on-surface-variant\": \"#c2c8bc\",\n      \"color.surface-dim\": \"#10140f\",\n      \"color.surface-bright\": \"#363a34\",\n      \"color.surface-container-lowest\": \"#0b0f0a\",\n      \"color.surface-container-low\": \"#191d17\",\n      \"color.surface-container\": \"#1d211b\",\n      \"color.surface-container-high\": \"#272b25\",\n      \"color.surface-container-highest\": \"#323630\",\n      \"color.surface-variant\": \"#42493f\",\n      \"color.background\": \"#10140f\",\n      \"color.on-background\": \"#e0e4da\",\n      \"color.outline\": \"#8c9388\",\n      \"color.outline-variant\": \"#42493f\",\n      \"color.inverse-surface\": \"#e0e4da\",\n      \"color.inverse-on-surface\": \"#2d322b\",\n      \"color.inverse-primary\": \"#3d6838\",\n      \"color.surface-tint\": \"#a2d398\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#bef0b2\",\n      \"color.primary-fixed-dim\": \"#a2d398\",\n      \"color.on-primary-fixed\": \"#002202\",\n      \"color.on-primary-fixed-variant\": \"#255023\",\n      \"color.secondary-fixed\": \"#d6e8ce\",\n      \"color.secondary-fixed-dim\": \"#baccb3\",\n      \"color.on-secondary-fixed\": \"#111f0f\",\n      \"color.on-secondary-fixed-variant\": \"#3c4b38\",\n      \"color.tertiary-fixed\": \"#bcebf0\",\n      \"color.tertiary-fixed-dim\": \"#a0cfd3\",\n      \"color.on-tertiary-fixed\": \"#002022\",\n      \"color.on-tertiary-fixed-variant\": \"#1e4d51\"\n    },\n    \"marathon\": {\n      \"color.primary\": \"#c62f12\",\n      \"color.on-primary\": \"#ffffff\",\n      \"color.primary-container\": \"#ffdad2\",\n      \"color.on-primary-container\": \"#3b0900\",\n      \"color.secondary\": \"#6c5b57\",\n      \"color.on-secondary\": \"#ffffff\",\n      \"color.secondary-container\": \"#f5ddd9\",\n      \"color.on-secondary-container\": \"#534340\",\n      \"color.tertiary\": \"#775750\",\n      \"color.on-tertiary\": \"#ffffff\",\n      \"color.tertiary-container\": \"#ffdad3\",\n      \"color.on-tertiary-container\": \"#5d3f39\",\n      \"color.error\": \"#ba1a1a\",\n      \"color.on-error\": \"#ffffff\",\n      \"color.error-container\": \"#ffdad6\",\n      \"color.on-error-container\": \"#93000a\",\n      \"color.surface\": \"#fff8f6\",\n      \"color.on-surface\": \"#1e1b1a\",\n      \"color.on-surface-variant\": \"#4a4645\",\n      \"color.surface-dim\": \"#e0d8d7\",\n      \"color.surface-bright\": \"#fff8f6\",\n      \"color.surface-container-lowest\": \"#ffffff\",\n      \"color.surface-container-low\": \"#faf2f0\",\n      \"color.surface-container\": \"#f4ecea\",\n      \"color.surface-container-high\": \"#efe6e5\",\n      \"color.surface-container-highest\": \"#e9e1df\",\n      \"color.surface-variant\": \"#e9e1df\",\n      \"color.background\": \"#fff8f6\",\n      \"color.on-background\": \"#1e1b1a\",\n      \"color.outline\": \"#7c7675\",\n      \"color.outline-variant\": \"#ccc5c3\",\n      \"color.inverse-surface\": \"#332f2f\",\n      \"color.inverse-on-surface\": \"#f7efed\",\n      \"color.inverse-primary\": \"#e0bfb9\",\n      \"color.surface-tint\": \"#715953\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#fddbd4\",\n      \"color.primary-fixed-dim\": \"#e0bfb9\",\n      \"color.on-primary-fixed\": \"#291713\",\n      \"color.on-primary-fixed-variant\": \"#58413d\",\n      \"color.secondary-fixed\": \"#f5ddd9\",\n      \"color.secondary-fixed-dim\": \"#d8c2bd\",\n      \"color.on-secondary-fixed\": \"#251916\",\n      \"color.on-secondary-fixed-variant\": \"#534340\",\n      \"color.tertiary-fixed\": \"#ffdad3\",\n      \"color.tertiary-fixed-dim\": \"#e7bdb4\",\n      \"color.on-tertiary-fixed\": \"#2c1510\",\n      \"color.on-tertiary-fixed-variant\": \"#5d3f39\"\n    },\n    \"marathon-dark\": {\n      \"color.primary\": \"#ffb4a2\",\n      \"color.on-primary\": \"#5c1200\",\n      \"color.primary-container\": \"#8a2410\",\n      \"color.on-primary-container\": \"#ffdad2\",\n      \"color.secondary\": \"#d8c2bd\",\n      \"color.on-secondary\": \"#3b2d2a\",\n      \"color.secondary-container\": \"#534340\",\n      \"color.on-secondary-container\": \"#f5ddd9\",\n      \"color.tertiary\": \"#e7bdb4\",\n      \"color.on-tertiary\": \"#442a24\",\n      \"color.tertiary-container\": \"#5d3f39\",\n      \"color.on-tertiary-container\": \"#ffdad3\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#161312\",\n      \"color.on-surface\": \"#e9e1df\",\n      \"color.on-surface-variant\": \"#ccc5c3\",\n      \"color.surface-dim\": \"#161312\",\n      \"color.surface-bright\": \"#3c3837\",\n      \"color.surface-container-lowest\": \"#100d0d\",\n      \"color.surface-container-low\": \"#1e1b1a\",\n      \"color.surface-container\": \"#221f1e\",\n      \"color.surface-container-high\": \"#2d2928\",\n      \"color.surface-container-highest\": \"#383433\",\n      \"color.surface-variant\": \"#4a4645\",\n      \"color.background\": \"#161312\",\n      \"color.on-background\": \"#e9e1df\",\n      \"color.outline\": \"#968f8e\",\n      \"color.outline-variant\": \"#4a4645\",\n      \"color.inverse-surface\": \"#e9e1df\",\n      \"color.inverse-on-surface\": \"#332f2f\",\n      \"color.inverse-primary\": \"#715953\",\n      \"color.surface-tint\": \"#e0bfb9\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#fddbd4\",\n      \"color.primary-fixed-dim\": \"#e0bfb9\",\n      \"color.on-primary-fixed\": \"#291713\",\n      \"color.on-primary-fixed-variant\": \"#58413d\",\n      \"color.secondary-fixed\": \"#f5ddd9\",\n      \"color.secondary-fixed-dim\": \"#d8c2bd\",\n      \"color.on-secondary-fixed\": \"#251916\",\n      \"color.on-secondary-fixed-variant\": \"#534340\",\n      \"color.tertiary-fixed\": \"#ffdad3\",\n      \"color.tertiary-fixed-dim\": \"#e7bdb4\",\n      \"color.on-tertiary-fixed\": \"#2c1510\",\n      \"color.on-tertiary-fixed-variant\": \"#5d3f39\"\n    },\n    \"oath\": {\n      \"color.primary\": \"#425e91\",\n      \"color.on-primary\": \"#ffffff\",\n      \"color.primary-container\": \"#d7e2ff\",\n      \"color.on-primary-container\": \"#294677\",\n      \"color.secondary\": \"#565e71\",\n      \"color.on-secondary\": \"#ffffff\",\n      \"color.secondary-container\": \"#dae2f9\",\n      \"color.on-secondary-container\": \"#3e4759\",\n      \"color.tertiary\": \"#705574\",\n      \"color.on-tertiary\": \"#ffffff\",\n      \"color.tertiary-container\": \"#fad8fc\",\n      \"color.on-tertiary-container\": \"#573e5b\",\n      \"color.error\": \"#ba1a1a\",\n      \"color.on-error\": \"#ffffff\",\n      \"color.error-container\": \"#ffdad6\",\n      \"color.on-error-container\": \"#93000a\",\n      \"color.surface\": \"#f9f9ff\",\n      \"color.on-surface\": \"#1a1c20\",\n      \"color.on-surface-variant\": \"#44474e\",\n      \"color.surface-dim\": \"#d9d9e0\",\n      \"color.surface-bright\": \"#f9f9ff\",\n      \"color.surface-container-lowest\": \"#ffffff\",\n      \"color.surface-container-low\": \"#f3f3fa\",\n      \"color.surface-container\": \"#ededf4\",\n      \"color.surface-container-high\": \"#e8e7ee\",\n      \"color.surface-container-highest\": \"#e2e2e9\",\n      \"color.surface-variant\": \"#e0e2ec\",\n      \"color.background\": \"#f9f9ff\",\n      \"color.on-background\": \"#1a1c20\",\n      \"color.outline\": \"#74777f\",\n      \"color.outline-variant\": \"#c4c6d0\",\n      \"color.inverse-surface\": \"#2e3036\",\n      \"color.inverse-on-surface\": \"#f0f0f7\",\n      \"color.inverse-primary\": \"#abc7ff\",\n      \"color.surface-tint\": \"#425e91\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#d7e2ff\",\n      \"color.primary-fixed-dim\": \"#abc7ff\",\n      \"color.on-primary-fixed\": \"#001b3f\",\n      \"color.on-primary-fixed-variant\": \"#294677\",\n      \"color.secondary-fixed\": \"#dae2f9\",\n      \"color.secondary-fixed-dim\": \"#bec6dc\",\n      \"color.on-secondary-fixed\": \"#131c2c\",\n      \"color.on-secondary-fixed-variant\": \"#3e4759\",\n      \"color.tertiary-fixed\": \"#fad8fc\",\n      \"color.tertiary-fixed-dim\": \"#ddbce0\",\n      \"color.on-tertiary-fixed\": \"#29132e\",\n      \"color.on-tertiary-fixed-variant\": \"#573e5b\"\n    },\n    \"oath-dark\": {\n      \"color.primary\": \"#abc7ff\",\n      \"color.on-primary\": \"#0d2f5f\",\n      \"color.primary-container\": \"#294677\",\n      \"color.on-primary-container\": \"#d7e2ff\",\n      \"color.secondary\": \"#bec6dc\",\n      \"color.on-secondary\": \"#283041\",\n      \"color.secondary-container\": \"#3e4759\",\n      \"color.on-secondary-container\": \"#dae2f9\",\n      \"color.tertiary\": \"#ddbce0\",\n      \"color.on-tertiary\": \"#3f2844\",\n      \"color.tertiary-container\": \"#573e5b\",\n      \"color.on-tertiary-container\": \"#fad8fc\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#111318\",\n      \"color.on-surface\": \"#e2e2e9\",\n      \"color.on-surface-variant\": \"#c4c6d0\",\n      \"color.surface-dim\": \"#111318\",\n      \"color.surface-bright\": \"#37393e\",\n      \"color.surface-container-lowest\": \"#0c0e13\",\n      \"color.surface-container-low\": \"#1a1c20\",\n      \"color.surface-container\": \"#1e2025\",\n      \"color.surface-container-high\": \"#282a2f\",\n      \"color.surface-container-highest\": \"#33353a\",\n      \"color.surface-variant\": \"#44474e\",\n      \"color.background\": \"#111318\",\n      \"color.on-background\": \"#e2e2e9\",\n      \"color.outline\": \"#8e9099\",\n      \"color.outline-variant\": \"#44474e\",\n      \"color.inverse-surface\": \"#e2e2e9\",\n      \"color.inverse-on-surface\": \"#2e3036\",\n      \"color.inverse-primary\": \"#425e91\",\n      \"color.surface-tint\": \"#abc7ff\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#d7e2ff\",\n      \"color.primary-fixed-dim\": \"#abc7ff\",\n      \"color.on-primary-fixed\": \"#001b3f\",\n      \"color.on-primary-fixed-variant\": \"#294677\",\n      \"color.secondary-fixed\": \"#dae2f9\",\n      \"color.secondary-fixed-dim\": \"#bec6dc\",\n      \"color.on-secondary-fixed\": \"#131c2c\",\n      \"color.on-secondary-fixed-variant\": \"#3e4759\",\n      \"color.tertiary-fixed\": \"#fad8fc\",\n      \"color.tertiary-fixed-dim\": \"#ddbce0\",\n      \"color.on-tertiary-fixed\": \"#29132e\",\n      \"color.on-tertiary-fixed-variant\": \"#573e5b\"\n    },\n    \"torchlight\": {\n      \"color.primary\": \"#7b5800\",\n      \"color.on-primary\": \"#ffffff\",\n      \"color.primary-container\": \"#ffdea6\",\n      \"color.on-primary-container\": \"#261900\",\n      \"color.secondary\": \"#675d50\",\n      \"color.on-secondary\": \"#ffffff\",\n      \"color.secondary-container\": \"#efe0cf\",\n      \"color.on-secondary-container\": \"#4f4539\",\n      \"color.tertiary\": \"#6f5b40\",\n      \"color.on-tertiary\": \"#ffffff\",\n      \"color.tertiary-container\": \"#fadebb\",\n      \"color.on-tertiary-container\": \"#56442a\",\n      \"color.error\": \"#ba1a1a\",\n      \"color.on-error\": \"#ffffff\",\n      \"color.error-container\": \"#ffdad6\",\n      \"color.on-error-container\": \"#93000a\",\n      \"color.surface\": \"#fff8f4\",\n      \"color.on-surface\": \"#1d1b19\",\n      \"color.on-surface-variant\": \"#494643\",\n      \"color.surface-dim\": \"#dfd9d5\",\n      \"color.surface-bright\": \"#fff8f4\",\n      \"color.surface-container-lowest\": \"#ffffff\",\n      \"color.surface-container-low\": \"#f9f2ee\",\n      \"color.surface-container\": \"#f3ede8\",\n      \"color.surface-container-high\": \"#ede7e3\",\n      \"color.surface-container-highest\": \"#e8e1dd\",\n      \"color.surface-variant\": \"#e8e1dd\",\n      \"color.background\": \"#fff8f4\",\n      \"color.on-background\": \"#1d1b19\",\n      \"color.outline\": \"#7b7673\",\n      \"color.outline-variant\": \"#cbc5c1\",\n      \"color.inverse-surface\": \"#33302d\",\n      \"color.inverse-on-surface\": \"#f6efeb\",\n      \"color.inverse-primary\": \"#d8c3ab\",\n      \"color.surface-tint\": \"#6b5c48\",\n      \"color.shadow\": \"#000000\",\n      \"color.scrim\": \"#000000\",\n      \"color.primary-fixed\": \"#f5dfc6\",\n      \"color.primary-fixed-dim\": \"#d8c3ab\",\n      \"color.on-primary-fixed\": \"#241a0a\",\n      \"color.on-primary-fixed-variant\": \"#524532\",\n      \"color.secondary-fixed\": \"#efe0cf\",\n      \"color.secondary-fixed-dim\": \"#d3c4b4\",\n      \"color.on-secondary-fixed\": \"#221a10\",\n      \"color.on-secondary-fixed-variant\": \"#4f4539\",\n      \"color.tertiary-fixed\": \"#fadebb\",\n      \"color.tertiary-fixed-dim\": \"#dcc3a1\",\n      \"color.on-tertiary-fixed\": \"#271904\",\n      \"color.on-tertiary-fixed-variant\": \"#56442a\"\n    },\n    \"torchlight-dark\": {\n      \"color.primary\": \"#f2be5c\",\n      \"color.on-primary\": \"#412d00\",\n      \"color.primary-container\": \"#5d4200\",\n      \"color.on-primary-container\": \"#ffdea6\",\n      \"color.secondary\": \"#d3c4b4\",\n      \"color.on-secondary\": \"#382f24\",\n      \"color.secondary-container\": \"#4f4539\",\n      \"color.on-secondary-container\": \"#efe0cf\",\n      \"color.tertiary\": \"#dcc3a1\",\n      \"color.on-tertiary\": \"#3d2e16\",\n      \"color.tertiary-container\": \"#56442a\",\n      \"color.on-tertiary-container\": \"#fadebb\",\n      \"color.error\": \"#ffb4ab\",\n      \"color.on-error\": \"#690005\",\n      \"color.error-container\": \"#93000a\",\n      \"color.on-error-container\": \"#ffdad6\",\n      \"color.surface\": \"#151311\",\n      \"color.on-surface\": \"#e8e1dd\",\n      \"color.on-surface-variant\": \"#cbc5c1\",\n      \"color.surface-dim\": \"#151311\",\n      \"color.surface-bright\": \"#3c3936\",\n      \"color.surface-container-lowest\": \"#100e0c\",\n      \"color.surface-container-low\": \"#1d1b19\",\n      \"color.surface-container\": \"#221f1d\",\n      \"color.surface-container-high\": \"#2c2927\",\n      \"color.surface-container-highest\": \"#373432\",\n      \"color.surface-variant\": \"#494643\",\n      \"color.background\": \"#151311\",\n      \"color.on-background\": \"#e8e1dd\",\n      \"color.outlin\n[Cut off: 48528 characters, showing the first 39322. Don't repeat this call or raise maxDepth. Pass rootId to read one part, or detail \"outline\" to find ids.]"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "search_icons",
+      "arguments": {
+       "limit": 10,
+       "query": "favorite"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "search_icons",
+   "content": "{\n  \"icons\": [\n    {\n      \"name\": \"favorite\",\n      \"tags\": [\n        \"appreciate\",\n        \"love\",\n        \"like\",\n        \"heart\",\n        \"remember\",\n        \"save\"\n      ]\n    },\n    {\n      \"name\": \"favorite_border\",\n      \"tags\": [\n        \"love\",\n        \"like\",\n        \"heart\",\n        \"remember\",\n        \"save\"\n      ]\n    },\n    {\n      \"name\": \"bookmark_add\",\n      \"tags\": [\n        \"ribbon\",\n        \"remember\",\n        \"favorite\",\n        \"save\"\n      ]\n    },\n    {\n      \"name\": \"bookmark_added\",\n      \"tags\": [\n        \"remember\",\n        \"validate\",\n        \"favorite\",\n        \"approve\",\n        \"done\",\n        \"ok\"\n      ]\n    },\n    {\n      \"name\": \"folder_special\",\n      \"tags\": [\n        \"marked\",\n        \"saved\",\n        \"highlight\",\n        \"bookmark\",\n        \"slide\",\n        \"favorite\"\n      ]\n    },\n    {\n      \"name\": \"bookmark_remove\",\n      \"tags\": [\n        \"subtract\",\n        \"minus\",\n        \"ribbon\",\n        \"remember\",\n        \"delete\",\n        \"favorite\"\n      ]\n    },\n    {\n      \"name\": \"personal_places\",\n      \"tags\": [\n        \"neighbourhood\",\n        \"district\",\n        \"vicinity\",\n        \"favorites\",\n        \"coordinates\",\n        \"territory\"\n      ]\n    },\n    {\n      \"name\": \"bookmark_manager\",\n      \"tags\": [\n        \"bookmarking\",\n        \"favorites\",\n        \"saved\",\n        \"browser\",\n        \"draft\",\n        \"compose\"\n      ]\n    },\n    {\n      \"name\": \"bookmark_stacks\",\n      \"tags\": [\n        \"archived\",\n        \"articles\",\n        \"bookmarks\",\n        \"marking\",\n        \"favorites\",\n        \"catalog\"\n      ]\n    }\n  ],\n  \"fonts\": [\n    \"Material Symbols Outlined\",\n    \"Material Symbols Rounded\",\n    \"Material Symbols Sharp\"\n  ],\n  \"node\": {\n    \"type\": \"text\",\n    \"tag\": \"span\",\n    \"name\": \"Icon\",\n    \"text\": \"<icon name>\",\n    \"styles\": {\n      \"fontSize\": \"24px\",\n      \"fontWeight\": \"400\",\n      \"lineHeight\": \"1\",\n      \"letterSpacing\": \"normal\",\n      \"textTransform\": \"none\",\n      \"whiteSpace\": \"nowrap\",\n      \"fontFamily\": \"var(--font-family-material-symbols-outlined)\"\n    },\n    \"attributes\": {\n      \"aria-hidden\": \"true\"\n    }\n  },\n  \"howTo\": \"Add the font once (add_fonts \\\"Material Symbols Outlined\\\"), then create the node with the icon's name as its text. Set color and fontSize like text. Keep aria-hidden on decorative icons; an icon-only button needs its own aria-label.\"\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "search_fonts",
+      "arguments": {
+       "limit": 6,
+       "query": "rounded"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "search_fonts",
+   "content": "{\n  \"fonts\": [\n    {\n      \"family\": \"M PLUS Rounded 1c\",\n      \"category\": \"sans-serif\",\n      \"weights\": [\n        100,\n        300,\n        400,\n        500,\n        700,\n        800,\n        900\n      ],\n      \"italic\": false\n    },\n    {\n      \"family\": \"Tsukimi Rounded\",\n      \"category\": \"sans-serif\",\n      \"weights\": [\n        300,\n        400,\n        500,\n        600,\n        700\n      ],\n      \"italic\": false\n    },\n    {\n      \"family\": \"Flow Rounded\",\n      \"category\": \"display\",\n      \"weights\": [\n        400\n      ],\n      \"italic\": false\n    },\n    {\n      \"family\": \"Material Symbols Rounded\",\n      \"category\": \"icons\",\n      \"weights\": [\n        100,\n        200,\n        300,\n        400,\n        500,\n        600,\n        700\n      ],\n      \"italic\": false\n    },\n    {\n      \"family\": \"Material Symbols Rounded\",\n      \"category\": \"icons\",\n      \"weights\": [\n        100,\n        200,\n        300,\n        400,\n        500,\n        600,\n        700\n      ],\n      \"italic\": false\n    }\n  ]\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "add_fonts",
+      "arguments": {
+       "fonts": [
+        {
+         "family": "M PLUS Rounded 1c",
+         "weights": [
+          400,
+          500,
+          700,
+          800
+         ]
+        },
+        {
+         "family": "Material Symbols Rounded"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "add_fonts",
+   "content": "{\n  \"fonts\": [\n    {\n      \"family\": \"M PLUS Rounded 1c\",\n      \"weights\": [\n        400,\n        500,\n        700,\n        800\n      ]\n    },\n    {\n      \"family\": \"Material Symbols Rounded\",\n      \"weights\": [\n        400\n      ]\n    }\n  ],\n  \"use\": {\n    \"M PLUS Rounded 1c\": \"var(--font-family-m-plus-rounded-1c)\",\n    \"Material Symbols Rounded\": \"var(--font-family-material-symbols-rounded)\"\n  }\n}"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "function": {
+      "name": "set_tokens",
+      "arguments": {
+       "theme": "bubblegum",
+       "tokens": {
+        "font-family.body": "{font-family.m-plus-rounded-1c}",
+        "font-family.heading": "{font-family.m-plus-rounded-1c}"
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_name": "set_tokens",
+   "content": "{\n  \"alsoIn\": {\n    \"theme\": \"bubblegum-dark\",\n    \"tokens\": [\n      \"font-family.body\",\n      \"font-family.heading\"\n    ]\n  },\n  \"theme\": \"bubblegum\",\n  \"set\": [\n    {\n      \"name\": \"font-family.body\",\n      \"use\": \"var(--font-family-body)\",\n      \"value\": \"var(--font-family-m-plus-rounded-1c)\"\n    },\n    {\n      \"name\": \"font-family.heading\",\n      \"use\": \"var(--font-family-heading)\",\n      \"value\": \"var(--font-family-m-plus-rounded-1c)\"\n    }\n  ]\n}"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_canvas",
+    "description": "Returns the scene graph as nested JSON: every artboard, or the subtree under rootId. Deep subtrees are truncated to childCount past maxDepth. detail \"outline\" returns only id, name, tag and short text per node (far smaller): use it to orient and find ids, then read the parts you will restyle in full.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "rootId": {
+       "description": "Return only this node and its descendants",
+       "type": "string"
+      },
+      "maxDepth": {
+       "default": 12,
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 50
+      },
+      "detail": {
+       "default": "full",
+       "description": "\"outline\": structure and text only, no styles or attributes",
+       "type": "string",
+       "enum": [
+        "full",
+        "outline"
+       ]
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "get_selection",
+    "description": "Returns what each person with the document open has selected, with each selected subtree.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "maxDepth": {
+       "default": 6,
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 50
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "create_nodes",
+    "description": "Creates one or more node subtrees in a single atomic step. parentId null (or omitted) creates new artboards, auto-placed to the right of existing ones unless frame is given. A new node can wrap existing layers: \"adopt\" moves them into it, and with no parentId it goes where the first of them was, so one call can wrap layers in several places. Returns the new ids.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "parentId": {
+       "default": null,
+       "description": "Container to insert into; null for new artboards",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "beforeId": {
+       "default": null,
+       "description": "Insert before this sibling; null appends",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "nodes": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "$ref": "#/definitions/__schema0"
+       }
+      }
+     },
+     "required": [
+      "nodes"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false,
+     "definitions": {
+      "__schema0": {
+       "type": "object",
+       "properties": {
+        "type": {
+         "description": "Inferred when left out: \"text\" for a node with text and no children, otherwise \"frame\"",
+         "type": "string",
+         "enum": [
+          "frame",
+          "text"
+         ]
+        },
+        "tag": {
+         "description": "Semantic HTML tag; defaults to div (frame) or p (text)",
+         "type": "string"
+        },
+        "name": {
+         "description": "Layer name shown in the layers panel",
+         "type": "string"
+        },
+        "text": {
+         "description": "Text content (text nodes only)",
+         "type": "string"
+        },
+        "styles": {
+         "description": "Standard CSS properties in camelCase (gridTemplateColumns, backgroundColor, textWrap, WebkitLineClamp), values as CSS strings. Not supported: background, font, animation, content, float, clear. No url() or other external resources. An unknown property is rejected with the closest match.",
+         "type": "object",
+         "propertyNames": {
+          "type": "string"
+         },
+         "additionalProperties": {
+          "type": "string"
+         }
+        },
+        "breakpoints": {
+         "description": "Style overrides per breakpoint (desktop, tablet, mobile), layered over styles",
+         "type": "object",
+         "propertyNames": {
+          "type": "string",
+          "enum": [
+           "desktop",
+           "tablet",
+           "mobile"
+          ]
+         },
+         "additionalProperties": {
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": "string"
+          }
+         }
+        },
+        "states": {
+         "description": "Style overrides per interaction state (hover = :hover, focus = :focus-visible, active = :active), layered over styles and breakpoints",
+         "type": "object",
+         "propertyNames": {
+          "type": "string",
+          "enum": [
+           "hover",
+           "focus",
+           "active"
+          ]
+         },
+         "additionalProperties": {
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": "string"
+          }
+         }
+        },
+        "attributes": {
+         "description": "HTML attributes such as aria-label, href, type, alt",
+         "type": "object",
+         "propertyNames": {
+          "type": "string"
+         },
+         "additionalProperties": {
+          "type": "string"
+         }
+        },
+        "frame": {
+         "description": "Canvas placement; only for new artboards (parentId null)",
+         "type": "object",
+         "properties": {
+          "x": {
+           "type": "number"
+          },
+          "y": {
+           "type": "number"
+          },
+          "width": {
+           "type": "number",
+           "exclusiveMinimum": 0
+          },
+          "height": {
+           "type": "number",
+           "exclusiveMinimum": 0,
+           "description": "Fixed height; setting it without heightMode makes the artboard fixed"
+          },
+          "heightMode": {
+           "type": "string",
+           "enum": [
+            "fixed",
+            "hug"
+           ],
+           "description": "\"hug\" sizes the artboard to its content (height is then the last measured value); \"fixed\" clips overflow"
+          }
+         },
+         "additionalProperties": false
+        },
+        "theme": {
+         "description": "Theme for this frame and everything in it (list_tokens lists themes; \"dark\" is built in): its token values replace the defaults inside it. Frames only",
+         "type": "string"
+        },
+        "component": {
+         "description": "true makes this layer a component, to place instances of. Not an artboard, and not inside another component",
+         "type": "boolean"
+        },
+        "bind": {
+         "description": "Inside a component: {\"text\": \"buttonLabel\"} lets each instance set this text layer's text through its prop \"buttonLabel\"; {\"styles\": {\"height\": \"barHeight\"}} lets it set a style property through a prop the same way, and {\"attributes\": {\"aria-current\": \"current\"}} an attribute. Prop names are camelCase",
+         "type": "object",
+         "properties": {
+          "text": {
+           "type": "string"
+          },
+          "styles": {
+           "type": "object",
+           "propertyNames": {
+            "type": "string"
+           },
+           "additionalProperties": {
+            "type": "string"
+           }
+          },
+          "attributes": {
+           "type": "object",
+           "propertyNames": {
+            "type": "string"
+           },
+           "additionalProperties": {
+            "type": "string"
+           }
+          }
+         },
+         "additionalProperties": false
+        },
+        "instance": {
+         "description": "Makes this node an instance: it draws that component's layers and follows its changes. No tag, text or children; styles apply to its root (width, gridColumn, alignSelf)",
+         "type": "object",
+         "properties": {
+          "component": {
+           "type": "string",
+           "description": "The component's id, or its name"
+          },
+          "props": {
+           "description": "Values for its props (a style prop takes a CSS value; an attribute prop set to \"\" leaves the attribute off); one left out shows the component's own",
+           "type": "object",
+           "propertyNames": {
+            "type": "string"
+           },
+           "additionalProperties": {
+            "type": "string"
+           }
+          }
+         },
+         "required": [
+          "component"
+         ],
+         "additionalProperties": false
+        },
+        "key": {
+         "description": "A name for this new node within this call only, for later nodes in the list to name as their \"parent\"",
+         "type": "string"
+        },
+        "parent": {
+         "description": "The \"key\" of a node earlier in this call's nodes list: this node goes inside it, after the ones before it. Lets a page be sent as a flat list instead of one deeply nested tree. Top-level list entries only",
+         "type": "string"
+        },
+        "adopt": {
+         "description": "Ids of existing layers to move into this new node, in this order and ahead of any children: wraps them (a card's contents in a button, rows in a section). They keep their ids and everything else",
+         "minItems": 1,
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        },
+        "children": {
+         "description": "Child nodes (frames only)",
+         "type": "array",
+         "items": {
+          "$ref": "#/definitions/__schema0"
+         }
+        }
+       },
+       "additionalProperties": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "update_nodes",
+    "description": "Applies patches to existing nodes in one atomic step. styles/attributes are merged; a null value removes that property. frame applies to artboards only.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "updates": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string"
+         },
+         "type": {
+          "description": "The node's type as get_canvas shows it. Never changed: accepted when it matches, so a node copied from get_canvas can be sent back",
+          "type": "string",
+          "enum": [
+           "frame",
+           "text"
+          ]
+         },
+         "name": {
+          "type": "string"
+         },
+         "tag": {
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         },
+         "hidden": {
+          "type": "boolean"
+         },
+         "locked": {
+          "type": "boolean"
+         },
+         "frame": {
+          "type": "object",
+          "properties": {
+           "x": {
+            "type": "number"
+           },
+           "y": {
+            "type": "number"
+           },
+           "width": {
+            "type": "number",
+            "exclusiveMinimum": 0
+           },
+           "height": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Fixed height; setting it without heightMode makes the artboard fixed"
+           },
+           "heightMode": {
+            "type": "string",
+            "enum": [
+             "fixed",
+             "hug"
+            ],
+            "description": "\"hug\" sizes the artboard to its content (height is then the last measured value); \"fixed\" clips overflow"
+           }
+          },
+          "additionalProperties": false
+         },
+         "theme": {
+          "description": "Theme for this frame and everything in it (list_tokens lists themes; \"dark\" is built in): its token values replace the defaults inside it. Frames only; null removes it",
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "styles": {
+          "description": "Standard CSS properties in camelCase (gridTemplateColumns, backgroundColor, textWrap, WebkitLineClamp), values as CSS strings. Not supported: background, font, animation, content, float, clear. No url() or other external resources. An unknown property is rejected with the closest match.",
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "breakpoints": {
+          "description": "Style overrides per breakpoint (desktop, tablet, mobile), layered over styles; merged like styles, null clears a whole breakpoint",
+          "type": "object",
+          "propertyNames": {
+           "type": "string",
+           "enum": [
+            "desktop",
+            "tablet",
+            "mobile"
+           ]
+          },
+          "additionalProperties": {
+           "anyOf": [
+            {
+             "type": "object",
+             "propertyNames": {
+              "type": "string"
+             },
+             "additionalProperties": {
+              "type": [
+               "string",
+               "null"
+              ]
+             }
+            },
+            {
+             "type": "null"
+            }
+           ]
+          }
+         },
+         "states": {
+          "description": "Style overrides per interaction state (hover = :hover, focus = :focus-visible, active = :active), layered over styles and breakpoints; merged like styles, null clears a whole state",
+          "type": "object",
+          "propertyNames": {
+           "type": "string",
+           "enum": [
+            "hover",
+            "focus",
+            "active"
+           ]
+          },
+          "additionalProperties": {
+           "anyOf": [
+            {
+             "type": "object",
+             "propertyNames": {
+              "type": "string"
+             },
+             "additionalProperties": {
+              "type": [
+               "string",
+               "null"
+              ]
+             }
+            },
+            {
+             "type": "null"
+            }
+           ]
+          }
+         },
+         "attributes": {
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "component": {
+          "description": "true makes this layer a component; false unmarks one that has no instances",
+          "type": "boolean"
+         },
+         "bind": {
+          "description": "Inside a component: {\"text\": \"buttonLabel\"} exposes this text layer's text as the prop \"buttonLabel\"; {\"styles\": {\"height\": \"barHeight\"}} exposes a style property as a prop, {\"attributes\": {\"aria-current\": \"current\"}} an attribute (both merged by key). Prop names are camelCase; null removes a binding, or all of them",
+          "anyOf": [
+           {
+            "type": "object",
+            "properties": {
+             "text": {
+              "type": [
+               "string",
+               "null"
+              ]
+             },
+             "styles": {
+              "anyOf": [
+               {
+                "type": "object",
+                "propertyNames": {
+                 "type": "string"
+                },
+                "additionalProperties": {
+                 "type": [
+                  "string",
+                  "null"
+                 ]
+                }
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "attributes": {
+              "anyOf": [
+               {
+                "type": "object",
+                "propertyNames": {
+                 "type": "string"
+                },
+                "additionalProperties": {
+                 "type": [
+                  "string",
+                  "null"
+                 ]
+                }
+               },
+               {
+                "type": "null"
+               }
+              ]
+             }
+            },
+            "additionalProperties": false
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "props": {
+          "description": "An instance's prop values, merged (a style prop takes a CSS value, and \"\" shows the component's; an attribute prop set to \"\" leaves the attribute off); null goes back to the component's own",
+          "type": "object",
+          "propertyNames": {
+           "type": "string"
+          },
+          "additionalProperties": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "instance": {
+          "description": "{\"component\": \"<name or id>\"} turns this existing layer into an instance of that component, in place: its own text fills the props and the component's layers replace its own. null detaches an instance into ordinary layers under the same id; send it with only the id",
+          "anyOf": [
+           {
+            "type": "object",
+            "properties": {
+             "component": {
+              "type": "string",
+              "description": "The component's id, or its name"
+             },
+             "props": {
+              "description": "Only for text the layer does not already hold",
+              "type": "object",
+              "propertyNames": {
+               "type": "string"
+              },
+              "additionalProperties": {
+               "type": "string"
+              }
+             }
+            },
+            "required": [
+             "component"
+            ],
+            "additionalProperties": false
+           },
+           {
+            "type": "null"
+           }
+          ]
+         }
+        },
+        "required": [
+         "id"
+        ],
+        "additionalProperties": false
+       }
+      }
+     },
+     "required": [
+      "updates"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "move_node",
+    "description": "Moves a node to a new parent and/or position among its siblings.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "parentId": {
+       "description": "New parent; null makes it a top-level artboard",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "beforeId": {
+       "default": null,
+       "description": "Insert before this sibling; null appends",
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "id",
+      "parentId"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "duplicate_node",
+    "description": "Deep-copies a node and its subtree with fresh ids, and returns ids: a map from every original node id to its copy, so you can edit the copy without reading it again. A copy of a component is an instance of it. A copied artboard lands to the right of the artboards on its row; pass frame (e.g. {\"width\": 390}) to clone it at another width, which previews its breakpoint overrides. Other nodes are inserted right after the original.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "name": {
+       "description": "Name for the copy; defaults to the original's",
+       "type": "string"
+      },
+      "frame": {
+       "description": "Artboards only: placement/size overrides for the copy",
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "number"
+        },
+        "y": {
+         "type": "number"
+        },
+        "width": {
+         "type": "number",
+         "exclusiveMinimum": 0
+        },
+        "height": {
+         "type": "number",
+         "exclusiveMinimum": 0,
+         "description": "Fixed height; setting it without heightMode makes the artboard fixed"
+        },
+        "heightMode": {
+         "type": "string",
+         "enum": [
+          "fixed",
+          "hug"
+         ],
+         "description": "\"hug\" sizes the artboard to its content (height is then the last measured value); \"fixed\" clips overflow"
+        }
+       },
+       "additionalProperties": false
+      }
+     },
+     "required": [
+      "id"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "align_nodes",
+    "description": "Aligns nodes to an edge or center. Artboards (two or more) line up by canvas frame. Elements are aligned with CSS through their flex or grid parent: the flex main axis sets the parent's justifyContent (affecting all its children), the cross axis sets the child's alignSelf, and grid children get justifySelf/alignSelf. Fails if a parent is not a flex or grid container.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "align": {
+       "type": "string",
+       "enum": [
+        "left",
+        "center",
+        "right",
+        "top",
+        "middle",
+        "bottom"
+       ],
+       "description": "left/center/right are horizontal, top/middle/bottom vertical"
+      }
+     },
+     "required": [
+      "ids",
+      "align"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "distribute_nodes",
+    "description": "Spaces nodes evenly along an axis. Artboards (three or more) get equal gaps between their frames, the outermost staying put. Flex children set justifyContent: space-between on their parent when the axis is its main axis. Fails for grid children and for the flex cross axis.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "axis": {
+       "type": "string",
+       "enum": [
+        "horizontal",
+        "vertical"
+       ]
+      }
+     },
+     "required": [
+      "ids",
+      "axis"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "delete_nodes",
+    "description": "Deletes nodes and all their descendants in one atomic step.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "ids"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "undo_agent_change",
+    "description": "Reverts your most recent tool call (create/update/move/delete). Edits by people and by other agents are not affected.",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "list_tokens",
+    "description": "Lists design tokens with the CSS value to use in styles, e.g. \"var(--space-4)\".",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "group": {
+       "description": "Filter by top-level group: color, space, radius, font-family, font-size, …",
+       "type": "string"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "set_tokens",
+    "description": "Sets this document's design tokens. Colors are the Material 3 color roles (49: color.primary, color.on-surface, color.surface-container-high…; Material's md.sys.color.<role>), which every document has. For a brand palette, pass \"seed\" (one hex color): it generates every role from it, light (the document's colors) and dark (the built-in \"dark\" theme), with contrast built in, like Material Theme Builder; \"variant\" picks how (tonal-spot, fidelity, content, vibrant, expressive, neutral, monochrome; \"fidelity\" keeps the seed's own color for primary-container). With \"seed\" and \"theme\" (\"ember\"), it makes the theme pair \"ember\" and \"ember-dark\" instead. \"tokens\" changes single tokens: {\"color.primary\": \"#c2410c\"}; with \"seed\" in the same call they apply after it, so they override what it generated. Groups: color, space, radius, font-size, font-weight, line-height, font-family, letter-spacing, shadow; font-family only for the roles font-family.heading and font-family.body, pointed at a font add_fonts added ({\"font-family.heading\": \"{font-family.fraunces}\"}). An existing name overrides it everywhere it's used; a new name adds a token (style layers with roles, not new color tokens). \"{group.name}\" refers to another token. null removes one of the document's tokens, bringing back the default it replaced. With \"theme\", \"tokens\" override existing tokens only inside frames with that theme (creating it if new, or changing the built-in \"dark\"). For a pair, tokens set on \"ember\" that aren't colors (fonts, type, radius, spacing) also go to \"ember-dark\"; colors stay per theme, so set the dark accent with theme \"ember-dark\". \"theme\" with tokens null removes that theme. One atomic, undoable step.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "tokens": {
+       "description": "Token path → value, or null to remove one; null for all of them removes the theme",
+       "anyOf": [
+        {
+         "type": "object",
+         "propertyNames": {
+          "type": "string"
+         },
+         "additionalProperties": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "seed": {
+       "description": "A hex color (#b85c38) to generate every color role from, light and dark",
+       "type": "string"
+      },
+      "variant": {
+       "description": "How the seed becomes roles (default tonal-spot, Material's default)",
+       "type": "string",
+       "enum": [
+        "tonal-spot",
+        "fidelity",
+        "content",
+        "vibrant",
+        "expressive",
+        "neutral",
+        "monochrome"
+       ]
+      },
+      "theme": {
+       "description": "Kebab-case theme name (dark, ember, high-contrast); apply it with update_nodes {\"theme\"}",
+       "type": "string"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "get_layout",
+    "description": "Measures nodes as actually rendered by the browser: boxes relative to their artboard (CSS px), key computed styles, and overflow flags. Requires the editor to be open. Defaults to the user selection, else all artboards.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "includeDescendants": {
+       "default": false,
+       "type": "boolean"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "select_nodes",
+    "description": "Selects nodes in every open editor and (by default) zooms the viewport to them, to show the user your work.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "focus": {
+       "default": true,
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "ids"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "import_image",
+    "description": "Fetches an image from a public http(s) URL into Weft's image store. From then on it's local: it works offline and is saved and exported with the document. Returns its src (asset:…) and pixel size, with an img node to copy into create_nodes (or set the src with update_nodes). Only use a URL the user gave you or that you have seen in a page or search result; a guessed URL fails or returns the wrong picture. PNG, JPEG, WebP, GIF or AVIF up to 10 MB; not SVG. Needs a network.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "url": {
+       "type": "string",
+       "maxLength": 2000,
+       "description": "Address of the image file itself (https://…), not of a page that shows it"
+      }
+     },
+     "required": [
+      "url"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "import_model",
+    "description": "Fetches a binary glTF 2.0 (.glb) 3D model from a public http(s) URL into Weft's local asset store. Returns its src (asset:….glb) and a ready-to-use <weft-3d> node to copy into create_nodes. Up to 50 MB. For procedural 3D schematics without an external file, create a <weft-3d> node with a declarative JSON data-scene attribute instead.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "url": {
+       "type": "string",
+       "maxLength": 2000,
+       "description": "Address of the .glb file (https://…)"
+      }
+     },
+     "required": [
+      "url"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_icons",
+    "description": "Searches the bundled Material Symbols icon names (works offline) by name or meaning (\"heart\" finds favorite), most popular first. An icon is a text node whose text is the name, set in an icon font added with add_fonts; the result includes a node to copy.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "description": "What the icon shows, e.g. \"search\", \"heart\", \"chevron down\"; omit for the most popular",
+       "type": "string"
+      },
+      "limit": {
+       "default": 12,
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 50
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_fonts",
+    "description": "Searches the bundled Google Fonts catalog (works offline), most popular first. Returns each family with its category and available weights. Add the ones you use with add_fonts.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "description": "Part of a family name, e.g. \"playfair\"; omit for the most popular",
+       "type": "string"
+      },
+      "category": {
+       "type": "string",
+       "enum": [
+        "sans-serif",
+        "serif",
+        "display",
+        "handwriting",
+        "monospace",
+        "icons"
+       ]
+      },
+      "limit": {
+       "default": 12,
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 50
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "add_fonts",
+    "description": "Adds Google Fonts to the document (or more weights to one it has). Each becomes a token, e.g. \"Playfair Display\" → {font-family.playfair-display}: point a role at it with set_tokens {\"font-family.heading\": \"{font-family.playfair-display}\"} and style with var(--font-family-heading) (or font-family.body / var(--font-family-body)), so themes can swap it. Weights default to the usual 400–700 the family has. Fonts are cached locally after first use, so they keep working offline.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "fonts": {
+       "minItems": 1,
+       "maxItems": 10,
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "family": {
+          "type": "string"
+         },
+         "weights": {
+          "type": "array",
+          "items": {
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          }
+         }
+        },
+        "required": [
+         "family"
+        ],
+        "additionalProperties": false
+       }
+      }
+     },
+     "required": [
+      "fonts"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "remove_fonts",
+    "description": "Removes Google Fonts from the document. Text that used them falls back to the token fallback stack (e.g. system-ui, sans-serif).",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "families": {
+       "minItems": 1,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "families"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "import_file",
+    "description": "Adds the artboards from a saved Weft document (the JSON of a .weft or .weft.json file) to this document, beside the existing ones, with its fonts. One atomic, undoable step. Returns the new artboard ids.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "json": {
+       "type": "string",
+       "maxLength": 20000000,
+       "description": "The file contents"
+      }
+     },
+     "required": [
+      "json"
+     ],
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "export_html",
+    "description": "Returns an artboard as a standalone HTML page: tokens, reset, styles, breakpoints as @media rules and states (:hover…), with the document's Google Fonts linked. The same page get_screenshot renders. Use it when the user wants the code.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "description": "Artboard id; defaults to the first artboard",
+       "type": "string"
+      }
+     },
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false
+    }
+   }
+  }
+ ],
+ "stream": true,
+ "think": false,
+ "options": {
+  "temperature": 0.2
+ }
+}

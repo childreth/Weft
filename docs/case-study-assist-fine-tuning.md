@@ -135,6 +135,20 @@ It trained in 7.75 GB in 1 hour 40 minutes (Studio added about 5 warmup steps on
 
 It's slower: 10.3 seconds per fix against 4.2. Not the runtime: both models write about 30 tokens a second, and the cache is reused between steps. The XML call format takes about twice the tokens of JSON for the same call (85 against 41 in one case), and every step is mostly a call. For a fix that should feel instant, that's the trade: five more fixed in 60, at more than twice the wait.
 
+## Lost calls in a page build: Inkling 2 Mini
+
+Not every Assist failure needs training. Asked to "create me a health app for someone who is more diabetic, use the bubblegum theme", `inkling-2-mini:26b-a5b-nvfp4` read the canvas, picked a font and set the theme, then failed at the step that builds the page. Ollama refused the call ("invalid Inkling2 tool call: invalid character ']' after object key:value pair"), so Assist got nothing back. One failure can't separate the model from Weft, so that step was captured once (`evals/replay/capture.mts`) and sent to the model 10 times per variant, changing only one paragraph of the prompt each time (thinking off, temperature 0.2, 128k context):
+
+| Prompt says | Page calls readable | Lost | Other |
+|---|---|---|---|
+| Nothing (one nested tree, as before) | 0 | 6 | 4 searched icons instead |
+| Build one section per call | 3 (1 to 7 layers each) | 6 | 1 cut off by the runtime's timeout |
+| Send the page flat, `key` / `parent` | 7 (31 to 84 layers) | 2 | 1 searched icons |
+
+The lost calls were correct except at the very end. A whole page written as one nested tree ends in about 15 levels of closing brackets, and the model miscounted them. Asking for smaller calls didn't help: the section calls were lost just as often, and the ones that came back held a header at most. A flat list of nodes, each naming its parent's `key`, never nests deeper than one object, so there's nothing to miscount. Weft accepted all 7 flat pages (`evals/replay/check.mts` applies each call to a copy of the document and undoes it). `create_nodes` now takes that form (PR #60), and nested `children` still work for small branches.
+
+Two smaller lessons. The section run's one error was `fetch failed` at exactly 300 seconds: Node's `fetch` has a hidden five-minute timeout, and these calls take 4 to 6 minutes to write, so the replay now uses `node:http` like Assist does. And the same pattern showed up with Gemma 4 on component conversions (`evals/results/2026-11-13-gemma-tool-calls.md`): long calls lose their end. When a tool's arguments are a deep tree, make them flatter before training a model to write them.
+
 ## What's next
 
 - Find which Studio difference gained the five (every layer, or the prompt in the loss), one at a time.
@@ -146,6 +160,7 @@ It's slower: 10.3 seconds per fix against 4.2. Not the runtime: both models writ
 ## Where the code is
 
 - `evals/generate/`: the breakages, checks and generator
+- `evals/replay/`: capture one Assist step, send it to a model many times, check the calls against the document
 - `evals/traces/export.mts`: traces to mlx-lm examples (`--profile small`, `--max-reads`, `--max-tokens`)
 - `evals/traces/render-text.py`: an export as one `text` column per example, for Unsloth Studio
 - `evals/traces/unfuse-qwen35.py`: splits a Qwen 3.5 GGUF's stacked tensors for runtimes that predate them
